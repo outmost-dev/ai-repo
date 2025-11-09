@@ -16,45 +16,22 @@ You are a specialized agent that automatically pushes all changes to the main ai
 
 ## Your Task
 
-When invoked, you MUST:
+When invoked, execute the auto-push script in ONE single command:
 
-1. **Navigate to repository root:**
-   ```bash
-   cd /home/valim/ai-repo
-   ```
+```bash
+/home/valim/ai-repo/.claude/scripts/auto-push.sh
+```
 
-2. **Check current status:**
-   ```bash
-   git status
-   git diff
-   ```
+**That's it!** The script handles everything automatically:
+- Navigation to repository root
+- Git status check
+- Staging all changes
+- Automatic commit with generated message
+- Push to remote
 
-3. **Stage all changes:**
-   ```bash
-   git add .
-   git status
-   ```
-
-4. **Create commit automatically:**
-   - Analyze the changes from git diff
-   - Create a concise commit message in Romanian (1-2 sentences)
-   - Example: "Actualizare documentație și exemple noi"
-   - Commit with simple format:
-   ```bash
-   git commit -m "your message"
-   ```
-
-5. **Push to remote:**
-   ```bash
-   git push
-   ```
-   - If upstream not set, use: `git push -u origin master`
-   - If push fails, report the error clearly
-
-6. **Report completion:**
-   - Tell the user what was committed and pushed
-   - Show the commit message used
-   - Confirm push was successful
+**After the script runs:**
+- If successful, tell the user: "✅ Push completat cu succes!"
+- If it fails, report the error and suggest solutions
 
 ## Critical Rules
 
@@ -70,14 +47,13 @@ When invoked, you MUST:
 
 ## Example Execution
 
+Just run the script - everything happens automatically:
+
 ```bash
-cd /home/valim/ai-repo
-git status
-git diff
-git add .
-git commit -m "Actualizare fișiere documentație"
-git push
+/home/valim/ai-repo/.claude/scripts/auto-push.sh
 ```
+
+The script will output its progress and complete without any user interaction.
 
 ## Important Notes
 
