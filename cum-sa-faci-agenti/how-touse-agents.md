@@ -279,12 +279,12 @@ Parcurge acest traseu de învățare pas cu pas pentru a stăpâni utilizarea ag
 
 ## 📊 Progres General
 
-- [ ] **Nivel 1: Începător** (0/5 exerciții completate)
-- [ ] **Nivel 2: Intermediar** (0/5 exerciții completate)
+- [x] **Nivel 1: Începător** (5/5 exerciții completate) ✅
+- [ ] **Nivel 2: Intermediar** (2/5 exerciții completate)
 - [ ] **Nivel 3: Avansat** (0/4 exerciții completate)
 - [ ] **Proiect Final** (0/1 completat)
 
-**Progres total: 0/15 exerciții (0%)**
+**Progres total: 7/15 exerciții (47%)**
 
 ---
 
@@ -293,7 +293,7 @@ Parcurge acest traseu de învățare pas cu pas pentru a stăpâni utilizarea ag
 **Obiectiv:** Familiarizare cu agenții built-in și invocare de bază
 
 ### Exercițiul 1.1: Prima ta interacțiune cu un agent
-- [ ] **Status:** Neînceput
+- [x] **Status:** Completat ✅
 - **Sarcină:** Rulează comanda `/agents` și explorează agenții disponibili
 - **Ce vei învăța:** Să vezi ce agenți sunt disponibili în sistemul tău
 - **Când ești gata:** Spune-mi "Am rulat /agents" și descrie-mi ce agenți ai văzut
@@ -304,7 +304,7 @@ Pur și simplu scrie `/agents` în conversație și observă lista de agenți di
 ---
 
 ### Exercițiul 1.2: Invocare explicită - Explore Agent
-- [ ] **Status:** Neînceput
+- [x] **Status:** Completat ✅
 - **Sarcină:** Cere-mi să folosesc agentul Explore pentru a găsi toate fișierele `.md` din proiectul tău
 - **Ce vei învăța:** Cum să ceri explicit un agent să facă o sarcină
 - **Când ești gata:** Spune-mi "Folosește agentul Explore să găsești toate fișierele .md"
@@ -315,7 +315,7 @@ Formulează o cerere explicită către mine pentru a folosi agentul Explore. Obs
 ---
 
 ### Exercițiul 1.3: Înțelegerea output-ului unui agent
-- [ ] **Status:** Neînceput
+- [x] **Status:** Completat ✅
 - **Sarcină:** După ce agentul Explore își termină căutarea, identifică câte fișiere `.md` au fost găsite
 - **Ce vei învăța:** Să interpretezi rezultatele returnate de un agent
 - **Când ești gata:** Spune-mi câte fișiere au fost găsite și listează-le
@@ -326,7 +326,7 @@ Citește cu atenție output-ul pe care ți l-am dat și extrage informația rele
 ---
 
 ### Exercițiul 1.4: Code Review simplu
-- [ ] **Status:** Neînceput
+- [x] **Status:** Completat ✅
 - **Sarcină:** Creează un fișier Python simplu cu o funcție care adună două numere, apoi cere-mi să folosesc code-reviewer pentru a o analiza
 - **Ce vei învăța:** Cum funcționează agentul code-reviewer pe cod simplu
 - **Când ești gata:** Spune-mi "Creează o funcție Python simplă și apoi folosește code-reviewer să o verifice"
@@ -337,7 +337,7 @@ Voi crea o funcție simplă și apoi voi folosi code-reviewer. Observă ce fel d
 ---
 
 ### Exercițiul 1.5: Delegare automată
-- [ ] **Status:** Neînceput
+- [x] **Status:** Completat ✅
 - **Sarcină:** Pune-mi o întrebare generală despre structura proiectului (ex: "Care este structura generală a proiectului?")
 - **Ce vei învăța:** Cum Claude decide automat ce agent să folosească
 - **Când ești gata:** Pune-mi întrebarea și observă dacă folosesc un agent automat
@@ -352,7 +352,7 @@ Nu specifica ce agent să folosesc - lasă-mă să decid automat. Observă proce
 **Obiectiv:** Lucrul cu agenți multipli și scenarii mai complexe
 
 ### Exercițiul 2.1: Crearea primului tău agent personalizat
-- [ ] **Status:** Neînceput
+- [x] **Status:** Completat ✅
 - **Sarcină:** Creează un agent personalizat simplu care documentează funcții Python
 - **Ce vei învăța:** Structura unui agent și cum să îl configurezi
 - **Când ești gata:** Spune-mi "Vreau să creez un agent care documentează funcții Python"
@@ -363,7 +363,7 @@ Voi folosi `/agents` pentru a crea împreună un agent personalizat. Vei învă�
 ---
 
 ### Exercițiul 2.2: Testarea agentului personalizat
-- [ ] **Status:** Neînceput
+- [x] **Status:** Completat ✅
 - **Sarcină:** Folosește agentul pe care l-ai creat pentru a documenta o funcție Python
 - **Ce vei învăța:** Cum să testezi și validezi un agent personalizat
 - **Când ești gata:** Cere-mi explicit să folosesc agentul tău personalizat pe o funcție
