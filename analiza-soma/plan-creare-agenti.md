@@ -17,44 +17,46 @@ Acest document trackează procesul de creare a tuturor cei 26 de agenți AI nece
 
 Creăm agenții în **4 WAVE-uri**, prioritizând cei mai critici:
 
-**WAVE 0 - META QUALITY (1 agent)** ⭐ CREEAT PRIMA!
-- Agent Quality Gatekeeper - evaluează TOȚI ceilalți agenți
+**WAVE 0 - META QUALITY (1 agent)** ⭐ CREAT PRIMUL!
+- Gandalf 🧙‍♂️ - wizardul care evaluează TOȚI ceilalți agenți
 - MUST be created FIRST - evaluează fiecare agent înainte să fie marcat DONE
-- Standard: 95%+ pentru producție
+- Standard: 95%+ pentru producție ("You shall not pass!")
+- Motto: *"You shall not pass... unless you score 95%+"*
 
 **WAVE 1 - AUDIT & ORCHESTRARE (5 agenți)** - Săptămâna 1
 - Trebuie creați PRIMII pentru că blochează tot
 - Fără aceștia, nu putem începe niciun fel de implementare
-- Fiecare evaluat de AQG înainte de DONE
+- Fiecare evaluat de Gandalf înainte de DONE
 
 **WAVE 2 - BACKEND CORE (8 agenți)** - Săptămâna 2
 - Backend-ul este fundația pentru frontend
 - Fără API-uri, frontend-ul nu poate fi testat
-- Fiecare evaluat de AQG înainte de DONE
+- Fiecare evaluat de Gandalf înainte de DONE
 
 **WAVE 3 - FRONTEND & QA (13 agenți)** - Săptămâna 3
 - Depind de backend-ul finalizat
 - QA poate rula în paralel cu development
-- Fiecare evaluat de AQG înainte de DONE
+- Fiecare evaluat de Gandalf înainte de DONE
 
 ---
 
 ## WAVE 0: META QUALITY (1 agent) ⭐ PRIORITATE ABSOLUTĂ
 
-### 🔴 Agent 0: Agent Quality Gatekeeper (AQG)
+### 🔴 Agent 0: Gandalf - The Quality Wizard 🧙‍♂️
 
 **Status**: ✅ DONE
-**Prioritate**: META-CRITICAL (Prima dată!)
-**Locație**: `.claude/agents/meta-quality/agent-quality-gatekeeper.md`
+**Prioritate**: META-CRITICAL (Primul creat!)
+**Locație**: `.claude/agents/meta-quality/gandalf.md`
 **Durată**: 60 minute (creare completă)
 **Data finalizare**: 11 Ianuarie 2025
 
 **Ce face**:
-- Evaluează FIECARE agent creat pentru calitate
+- Wizardul care păzește podul calității
+- Evaluează FIECARE agent creat înainte să treacă
 - Scorează pe 5 dimensiuni (Clarity, Completeness, Correctness, Actionability, Robustness)
 - Standard: 95%+ pentru producție
-- Expert tehnologic ultra-critic
-- Final quality gatekeeper pentru toți agenții
+- Battle cry: *"You shall not pass... unless you score 95%+"*
+- Final guardian la podul către producție
 
 **Framework de evaluare**:
 - [ ] Clarity & Specificity (20%) - Zero ambiguități
@@ -76,10 +78,11 @@ Creăm agenții în **4 WAVE-uri**, prioritizând cei mai critici:
 **Testare**: Va fi testat pe el însuși (meta-evaluation) și pe primul agent din WAVE 1
 
 **Reguli CRITICE**:
-- ❌ NICUN agent nu poate fi marcat DONE fără evaluare AQG
-- ❌ Score <95 = agent nu e production-ready
+- ❌ NICIUN agent nu poate fi marcat DONE fără evaluare Gandalf
+- ❌ Score <95 = "You shall NOT pass!"
 - ❌ Nu se trece la următorul agent până când cel curent are 95+
-- ✅ AQG trebuie invocat după crearea FIECĂRUI agent
+- ✅ Gandalf trebuie invocat după crearea FIECĂRUI agent
+- 🧙‍♂️ Gandalf păzește podul cu toiagul său de putere
 
 ---
 
