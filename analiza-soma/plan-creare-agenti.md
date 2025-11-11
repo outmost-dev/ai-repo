@@ -15,19 +15,71 @@ Acest document trackează procesul de creare a tuturor cei 26 de agenți AI nece
 
 ### Ordinea de Prioritate
 
-Creăm agenții în **3 WAVE-uri**, prioritizând cei mai critici:
+Creăm agenții în **4 WAVE-uri**, prioritizând cei mai critici:
+
+**WAVE 0 - META QUALITY (1 agent)** ⭐ CREEAT PRIMA!
+- Agent Quality Gatekeeper - evaluează TOȚI ceilalți agenți
+- MUST be created FIRST - evaluează fiecare agent înainte să fie marcat DONE
+- Standard: 95%+ pentru producție
 
 **WAVE 1 - AUDIT & ORCHESTRARE (5 agenți)** - Săptămâna 1
 - Trebuie creați PRIMII pentru că blochează tot
 - Fără aceștia, nu putem începe niciun fel de implementare
+- Fiecare evaluat de AQG înainte de DONE
 
 **WAVE 2 - BACKEND CORE (8 agenți)** - Săptămâna 2
 - Backend-ul este fundația pentru frontend
 - Fără API-uri, frontend-ul nu poate fi testat
+- Fiecare evaluat de AQG înainte de DONE
 
 **WAVE 3 - FRONTEND & QA (13 agenți)** - Săptămâna 3
 - Depind de backend-ul finalizat
 - QA poate rula în paralel cu development
+- Fiecare evaluat de AQG înainte de DONE
+
+---
+
+## WAVE 0: META QUALITY (1 agent) ⭐ PRIORITATE ABSOLUTĂ
+
+### 🔴 Agent 0: Agent Quality Gatekeeper (AQG)
+
+**Status**: ✅ DONE
+**Prioritate**: META-CRITICAL (Prima dată!)
+**Locație**: `.claude/agents/meta-quality/agent-quality-gatekeeper.md`
+**Durată**: 60 minute (creare completă)
+**Data finalizare**: 11 Ianuarie 2025
+
+**Ce face**:
+- Evaluează FIECARE agent creat pentru calitate
+- Scorează pe 5 dimensiuni (Clarity, Completeness, Correctness, Actionability, Robustness)
+- Standard: 95%+ pentru producție
+- Expert tehnologic ultra-critic
+- Final quality gatekeeper pentru toți agenții
+
+**Framework de evaluare**:
+- [ ] Clarity & Specificity (20%) - Zero ambiguități
+- [ ] Completeness (25%) - Toate edge cases
+- [ ] Correctness (25%) - Tehnic corect
+- [ ] Actionability (15%) - Executabil autonom
+- [ ] Robustness (15%) - Error handling complet
+
+**Output**:
+- Raport detaliat cu score per dimensiune
+- Status: ✅ PRODUCTION READY (95+) | 🟡 CONDITIONAL (90-94) | 🔴 REJECT (<90)
+- Liste puncte tari/slabe
+- Blocker-e critice
+- Recomandări îmbunătățire
+- Verdic final: APPROVE / FIX / REJECT
+
+**Dependențe**: Niciunul (primul agent creat!)
+
+**Testare**: Va fi testat pe el însuși (meta-evaluation) și pe primul agent din WAVE 1
+
+**Reguli CRITICE**:
+- ❌ NICUN agent nu poate fi marcat DONE fără evaluare AQG
+- ❌ Score <95 = agent nu e production-ready
+- ❌ Nu se trece la următorul agent până când cel curent are 95+
+- ✅ AQG trebuie invocat după crearea FIECĂRUI agent
 
 ---
 
@@ -713,19 +765,21 @@ Structură fișier:
 
 | Wave | Total | Creați | %   | Status |
 |------|-------|--------|-----|--------|
+| WAVE 0 (Meta Quality) | 1 | 1 | 100% | ✅ |
 | WAVE 1 (Audit & Orchestrare) | 5 | 0 | 0%  | ⏳ |
 | WAVE 2 (Backend Core) | 8 | 0 | 0%  | ⏳ |
 | WAVE 3 (Frontend & QA) | 13 | 0 | 0%  | ⏳ |
-| **TOTAL** | **26** | **0** | **0%** | ⏳ |
+| **TOTAL** | **27** | **1** | **3.7%** | ⏳ |
 
 ### Time Estimates
 
 | Wave | Timp estimat | Timp real | Status |
 |------|--------------|-----------|--------|
+| WAVE 0 | ~1 oră | 1 oră | ✅ |
 | WAVE 1 | ~4 ore | - | ⏳ |
 | WAVE 2 | ~7 ore | - | ⏳ |
 | WAVE 3 | ~11 ore | - | ⏳ |
-| **TOTAL** | **~22 ore** | **-** | ⏳ |
+| **TOTAL** | **~23 ore** | **1 oră** | ⏳ |
 
 ---
 
