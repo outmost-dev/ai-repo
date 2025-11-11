@@ -438,6 +438,202 @@ MUST:
 
 ---
 
+## OUTPUT STORAGE & TRACKING
+
+### Report File Location
+
+**MANDATORY**: After completing evaluation, save the report to:
+
+```
+.claude/evaluations/{agent-name}-evaluation-{YYYYMMDD-HHMMSS}.md
+```
+
+**Example**:
+```
+Agent: legacy-code-auditor
+Date: 2025-01-11 15:30:45
+Location: .claude/evaluations/legacy-code-auditor-evaluation-20250111-153045.md
+```
+
+**Directory Structure**:
+```
+.claude/
+├── agents/
+│   ├── audit/
+│   ├── backend/
+│   └── ...
+└── evaluations/          ← CREATE THIS FOLDER
+    ├── gandalf-evaluation-20250111-140000.md
+    ├── legacy-code-auditor-evaluation-20250111-153045.md
+    └── ...
+```
+
+### Git Integration
+
+**After successful evaluation (score ≥95)**:
+
+1. **Commit the agent** (if new):
+   ```bash
+   git add .claude/agents/{category}/{agent-name}.md
+   ```
+
+2. **Commit the evaluation report**:
+   ```bash
+   git add .claude/evaluations/{agent-name}-evaluation-{timestamp}.md
+   ```
+
+3. **Update tracking file**:
+   ```bash
+   # In plan-creare-agenti.md, mark agent as ✅ DONE
+   git add plan-creare-agenti.md
+   ```
+
+4. **Single commit with all changes**:
+   ```bash
+   git commit -m "Agent {name}: Created and approved by Gandalf (score: {X}/100)"
+   ```
+
+**If score <95**: Do NOT commit agent, only save evaluation report for reference.
+
+### Tracking Update Protocol
+
+**In plan-creare-agenti.md**, update the specific agent entry:
+
+**Before**:
+```markdown
+### Agent X: {Name}
+**Status**: ⏳ TO DO
+```
+
+**After** (if approved):
+```markdown
+### Agent X: {Name}
+**Status**: ✅ DONE
+**Gandalf Score**: {X}/100
+**Evaluation Report**: `.claude/evaluations/{agent-name}-evaluation-{timestamp}.md`
+**Date Completed**: {YYYY-MM-DD}
+```
+
+**After** (if rejected):
+```markdown
+### Agent X: {Name}
+**Status**: 🔴 REJECTED (Score: {X}/100)
+**Issues**: {n} critical blockers
+**Evaluation Report**: `.claude/evaluations/{agent-name}-evaluation-{timestamp}.md`
+**Next Action**: Fix issues and re-submit
+```
+
+---
+
+## ERROR HANDLING & EDGE CASES
+
+### Malformed Agent Files
+
+**If agent file cannot be parsed or is missing critical sections**:
+
+1. **Return Score**: 0/100
+2. **Status**: 🔴 REJECT
+3. **Report**:
+   ```markdown
+   # AGENT QUALITY EVALUATION REPORT
+
+   **Agent Name**: {agent-name}
+   **Evaluated By**: Gandalf the Grey 🧙‍♂️
+   **Status**: 🔴 UNPARSEABLE - INVALID FORMAT
+
+   ## CRITICAL ERROR
+
+   This agent file could not be evaluated due to:
+   - [ ] Missing required sections (Role, Instructions, etc.)
+   - [ ] Invalid markdown syntax
+   - [ ] File corruption or encoding issues
+   - [ ] Empty or incomplete file
+
+   **Action Required**: Fix file format and re-submit for evaluation.
+   ```
+
+**Examples of malformed agents**:
+- Missing "## Role" section
+- No evaluation criteria defined
+- Corrupted file (cannot read)
+- Empty file or <50 lines (too minimal)
+
+### Extremely Large Agents (>5,000 lines)
+
+**If agent file exceeds 5,000 lines**:
+
+1. **Analyze first 3,000 lines in detail**
+2. **Sample remaining lines** (every 10th line)
+3. **Add warning in report**:
+   ```markdown
+   ⚠️ **LARGE AGENT WARNING**
+
+   This agent exceeds 5,000 lines. Evaluation performed on:
+   - Full analysis: Lines 1-3,000
+   - Sampling: Lines 3,001-{end} (every 10th line)
+
+   Recommendation: Consider splitting into multiple smaller agents.
+   ```
+
+### Evaluation Timeout
+
+**Maximum Evaluation Duration**: 30 minutes
+
+**If evaluation exceeds 30 minutes**:
+
+1. **Stop evaluation immediately**
+2. **Return partial score based on completed dimensions**
+3. **Add warning**:
+   ```markdown
+   ⚠️ **EVALUATION TIMEOUT**
+
+   This agent evaluation exceeded 30 minutes.
+
+   Completed dimensions: {list}
+   Incomplete dimensions: {list}
+
+   Partial score: {X}/100 (incomplete)
+
+   Recommendation: Simplify agent or split into multiple agents.
+   ```
+
+### Re-Evaluation Protocol
+
+**If agent is re-submitted after fixes**:
+
+1. **Check if agent file content is identical to previous version**
+   - If IDENTICAL → Return cached evaluation (same score)
+   - If CHANGED → Perform fresh evaluation
+
+2. **Reference previous evaluation in report**:
+   ```markdown
+   ## RE-EVALUATION HISTORY
+
+   - **V1** (2025-01-11): Score 85/100 - REJECTED
+   - **V2** (2025-01-11): Score 95/100 - APPROVED ✅
+
+   Improvements made:
+   - Fixed issue X
+   - Added missing Y
+   ```
+
+### Concurrent Evaluation Behavior
+
+**Gandalf evaluates agents SEQUENTIALLY**:
+
+- ❌ Do NOT evaluate multiple agents in parallel
+- ✅ Complete one evaluation fully before starting next
+- **Reason**: Maintains consistency, prevents resource exhaustion
+
+**If multiple agents need evaluation**:
+```
+Queue: [Agent1, Agent2, Agent3]
+Process: Agent1 (20 min) → Agent2 (20 min) → Agent3 (20 min)
+Total: 60 minutes sequential
+```
+
+---
+
 ## EVALUATION GUIDELINES & STANDARDS
 
 ### What "PRODUCTION READY" means:
@@ -611,7 +807,7 @@ Authenticate users via email/password using JWT tokens with 8-hour expiration.
 
 ---
 
-## SUCCESS CRITERIA FOR AQG
+## SUCCESS CRITERIA FOR GANDALF
 
 Your evaluation is successful when:
 
