@@ -2,12 +2,83 @@
 
 ## Prezentare generală
 
-Această listă conține cei 23 de agenți AI specializați pentru implementarea completă a platformei Somaway (somaway.ro) - o platformă de video learning cu 3 aplicații:
+Această listă conține cei 26 de agenți AI specializați pentru implementarea completă a platformei Somaway (somaway.ro) - o platformă de video learning cu 3 aplicații:
 - **Backend**: Node.js/NestJS → .NET Core
 - **Admin Dashboard**: React 18 → Vue 3
 - **Web Client**: Next.js 15 → Nuxt 3
 
 Fiecare agent are un rol specific și bine definit pentru a asigura consistență și calitate în implementare.
+
+**IMPORTANT**: Proiectul urmează strategia **Audit-First Migration** - codul vechi este auditat complet pentru bug-uri și vulnerabilități ÎNAINTE de migrare, asigurând că platforma nouă pornește cu cod curat.
+
+---
+
+## TIER 0: PRE-MIGRATION AUDIT (3 agenți) ⭐ NOU
+
+### 1. Legacy Code Auditor Agent (LCAA)
+**Ce face**: Analizează și auditează complet codul vechi (Node.js/NestJS/React/Next.js) pentru a identifica bug-uri, anti-patterns, code smells, race conditions, memory leaks și probleme de logică ÎNAINTE de migrare. Generează rapoarte cu bug-uri categorizate pe severitate (CRITICAL/MEDIUM/LOW).
+
+**Responsabilități cheie**:
+- Scanare completă cod vechi pentru bug-uri
+- Detectare anti-patterns (callback hell, God objects, etc.)
+- Identificare race conditions și memory leaks
+- Detectare probleme de performance
+- Analiză consistență logică business
+- Generare rapoarte cu categorizare severitate
+- Recomandări fix pentru fiecare bug găsit
+
+**Exemple bug-uri detectate**:
+- Race conditions în operații async
+- Memory leaks (event listeners necurățați)
+- Infinite loops în React useEffect
+- Logic bugs (validări incomplete, edge cases)
+- Probleme timezone în date calculations
+- Inconsistențe între frontend și backend
+
+---
+
+### 2. Business Logic Validator Agent (BLVA)
+**Ce face**: Verifică că logica business din codul vechi este CORECTĂ prin comparare cu documentația JIRA și specificațiile. Identifică inconsistențe între cerințe și implementare, edge cases neacoperite și logică business incompletă sau greșită.
+
+**Responsabilități cheie**:
+- Comparare cod vechi cu JIRA specifications
+- Validare logică business vs requirements
+- Identificare edge cases neacoperite
+- Verificare calcule și formule critice
+- Validare flow-uri business complexe
+- Detectare inconsistențe între module
+- Raportare discrepanțe cod vs documentație
+
+**Exemple validări**:
+- Stripe subscription scheduling (AA1, AA2, BB scenarios)
+- Calcule status subscription (ACTIVE/INACTIVE)
+- Validări payment amounts și currency (RON)
+- Flow-uri email verification complete
+- Logic token expiration și refresh
+
+---
+
+### 3. Security Vulnerability Scanner Agent (SVSA)
+**Ce face**: Scanează codul vechi pentru vulnerabilități de securitate conform OWASP Top 10, credentials expuse, API keys hardcodate, weak cryptography, injection vulnerabilities și alte riscuri de securitate. Asigură că vulnerabilitățile NU sunt migrate în platforma nouă.
+
+**Responsabilități cheie**:
+- Scan OWASP Top 10 vulnerabilities
+- Detectare SQL injection potential
+- Identificare XSS și CSRF vulnerabilities
+- Scan credentials și secrets hardcodate
+- Verificare weak password policies
+- Audit JWT implementation și token management
+- Scan dependency vulnerabilities
+- Verificare CORS și rate limiting
+
+**Exemple vulnerabilități**:
+- API keys hardcoded în cod
+- Weak password validation (< 8 chars)
+- Missing rate limiting pe endpoints critice
+- JWT tokens fără expiration
+- CORS permisiv (origin: '*')
+- SQL injection prin string concatenation
+- XSS prin dangerouslySetInnerHTML
 
 ---
 
@@ -309,12 +380,13 @@ Fiecare agent are un rol specific și bine definit pentru a asigura consistenț�
 
 | Categorie | Număr agenți | Scope principal |
 |-----------|--------------|-----------------|
+| Pre-Migration Audit | 3 | Audit cod vechi, bug detection, security |
 | Orchestrare & Coordonare | 2 | Management și coordonare |
 | Backend Specializare | 8 | Node.js → .NET migration |
 | Frontend Specializare | 7 | React/Next.js → Vue/Nuxt migration |
 | QA & Deployment | 4 | Testing, optimization, deployment |
 | Specialist Support | 2 | Validation și security |
-| **TOTAL** | **23 agenți** | **Implementare completă** |
+| **TOTAL** | **26 agenți** | **Audit + Implementare completă** |
 
 ---
 
@@ -344,17 +416,20 @@ Rezultat: Modul complet de autentificare în .NET
 
 ---
 
-## Timeline estimat cu agenții
+## Timeline estimat cu agenții (Audit-First Strategy)
 
 | Fază | Durata | Agenți principali |
 |------|--------|-------------------|
-| **PHASE 1: Foundation** | Săptămâni 1-2 | CAA, BMA, DCA |
-| **PHASE 2: Backend Core** | Săptămâni 3-6 | DEA, ASA, ATDA |
-| **PHASE 3: Backend Services** | Săptămâni 7-9 | PIA, VLSA, EMA, ARA |
-| **PHASE 4: Admin Dashboard** | Săptămâni 10-12 | ADMA, SCA, TAA |
-| **PHASE 5: Web Client** | Săptămâni 13-15 | WCMA, AUIA, CVPA, SPUA, DPA |
-| **PHASE 6: Optimization** | Săptămână 16 | POA, SAA, DA, DCA |
-| **TOTAL** | **16 săptămâni** | **4 luni** |
+| **PHASE 0: Pre-Migration Audit** ⭐ | Săptămâni 1-2 | LCAA, BLVA, SVSA |
+| **PHASE 1: Foundation** | Săptămâni 3-4 | CAA, BMA, DCA |
+| **PHASE 2: Backend Core** | Săptămâni 5-8 | DEA, ASA, ATDA |
+| **PHASE 3: Backend Services** | Săptămâni 9-11 | PIA, VLSA, EMA, ARA |
+| **PHASE 4: Admin Dashboard** | Săptămâni 12-14 | ADMA, SCA, TAA |
+| **PHASE 5: Web Client** | Săptămâni 15-17 | WCMA, AUIA, CVPA, SPUA, DPA |
+| **PHASE 6: Optimization & Deployment** | Săptămână 18 | POA, MVA, SAA, DA, DCA |
+| **TOTAL** | **18 săptămâni** | **4.5 luni** |
+
+**Notă CRITICĂ**: PHASE 0 (Audit) este OBLIGATORIE și blochează începerea migrării. Nu se începe PHASE 1 până când raportul de audit este complet și Chief Architect Agent decide ce bug-uri trebuie fixate.
 
 ---
 
@@ -362,6 +437,11 @@ Rezultat: Modul complet de autentificare în .NET
 
 Pentru coordonare și instrucțiuni despre cum să creezi agenți custom controlați de tine, consultă documentația de orchestrare.
 
-**Status**: ✅ Lista completă de agenți definită
+**Status**: ✅ Lista completă de agenți definită + Audit-First Strategy
 **Data**: 11 Ianuarie 2025
-**Versiune**: 1.0
+**Versiune**: 2.0
+**Ultimele modificări**:
+- ⭐ Adăugat TIER 0: Pre-Migration Audit (3 agenți noi)
+- 📊 Actualizat total: 23 → 26 agenți
+- ⏱️ Actualizat timeline: 16 → 18 săptămâni (4.5 luni)
+- 🔒 Implementat Audit-First Migration Strategy
