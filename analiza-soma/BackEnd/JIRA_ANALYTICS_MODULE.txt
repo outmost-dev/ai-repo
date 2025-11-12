@@ -1,0 +1,463 @@
+================================================================================
+STORY: Analytics Module
+================================================================================
+
+Modulul Analytics gestionează tracking-ul activității utilizatorilor pe platformă. Sistemul înregistrează evenimente de tip: vizualizări cursuri, vizualizări lecții, vizualizări sesiuni live, și timp petrecut. Există două entități separate: Analytics (pentru evenimente discrete) și AnalyticsTime (pentru tracking timp cumulat).
+
+Locație cod sursă: src/v1/Analytics/
+
+Endpoints implementate: 4
+
+Services utilizate:
+- AnalyticsRepository (pentru evenimente)
+- AnalyticsTimeRepository (pentru tracking timp)
+
+Dependencies:
+- AuthGuard('jwt') pe toate endpoint-urile
+- AnalyticsTypes enum: NO_ANALYTICS (0), TIME_SPENT (1), VIEW_COURSE (2), VIEW_LESSON (3), VIEW_LIVE_SESSION (4)
+
+Notes:
+- Două tipuri de analytics: evenimente (Analytics) și timp petrecut (AnalyticsTime)
+- TIME_SPENT folosește tabel separat (AnalyticsTime) pentru tracking cumulat
+- clientId se extrage din JWT, nu din body
+- getAnalytics(analyticsId) există în service dar NU e expusă în controller
+
+
+================================================================================
+TASK 1: GET /v1/analytics/user/all - Listă activități utilizator
+================================================================================
+
+Business Logic:
+1. Primește parametri de paginare și filtrare prin query (GetAnalyticsDTO)
+2. Verifică tipul de analytics solicitat din query.type
+3. Dacă type === TIME_SPENT (1):
+   - Interogează doar AnalyticsTimeRepository pentru timp cumulat
+   - Returnează un singur record cu timpul total petrecut
+4. Altfel (orice alt tip sau fără tip):
+   - Interogează AnalyticsRepository pentru evenimente (VIEW_COURSE, VIEW_LESSON, etc.)
+   - Interogează AnalyticsTimeRepository pentru timp
+   - Combină rezultatele: timp petrecut la început + lista de evenimente
+   - Returnează lista combinată cu count incrementat (+1 pentru timp)
+5. User-ul vede doar propriile analytics (clientId din JWT)
+
+Cod sursă:
+- Controller: src/v1/Analytics/Controller/analytics.controller.ts:33-41
+- Service: src/v1/Analytics/Service/analytics.service.ts:24-49
+
+Request:
+GET /v1/analytics/user/all?type=2&page=1&limit=10
+Authorization: Bearer {jwt_token}
+
+Query Parameters:
+- type (optional): Tip analytics (0-4 din AnalyticsTypes enum)
+  - 0: NO_ANALYTICS
+  - 1: TIME_SPENT (returnează doar timp cumulat)
+  - 2: VIEW_COURSE
+  - 3: VIEW_LESSON
+  - 4: VIEW_LIVE_SESSION
+- page (optional): Număr pagină pentru paginare
+- limit (optional): Număr elemente per pagină
+- value (optional): Filtrare după value (courseId/lessonId)
+- createdAt (optional): Filtrare după dată
+
+Response Success (200) - toate tipurile (type != 1):
+{
+  "analytics": [
+    {
+      "id": null,
+      "type": 1,
+      "value": 3600,
+      "clientId": 123,
+      "createdAt": "2024-11-02T00:00:00.000Z",
+      "updatedAt": "2024-11-02T00:00:00.000Z"
+    },
+    {
+      "id": 456,
+      "type": 2,
+      "value": 10,
+      "clientId": 123,
+      "createdAt": "2024-11-01T10:00:00.000Z",
+      "updatedAt": "2024-11-01T10:00:00.000Z"
+    },
+    {
+      "id": 457,
+      "type": 3,
+      "value": 25,
+      "clientId": 123,
+      "createdAt": "2024-11-01T10:30:00.000Z",
+      "updatedAt": "2024-11-01T10:30:00.000Z"
+    }
+  ],
+  "count": 3
+}
+
+Response Success (200) - doar timp (type = 1):
+{
+  "analytics": [
+    {
+      "id": null,
+      "type": 1,
+      "value": 3600,
+      "clientId": 123,
+      "createdAt": "2024-11-02T00:00:00.000Z",
+      "updatedAt": "2024-11-02T00:00:00.000Z"
+    }
+  ],
+  "count": 1
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+- Ownership: User vede doar propriile analytics (clientId din JWT)
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- AnalyticsRepository.fetchUserAnalytics() - pentru evenimente
+- AnalyticsTimeRepository.fetchTimeAnalytics() - pentru timp cumulat
+
+Notes:
+- TIME_SPENT (type=1) returnează un singur record din AnalyticsTime entity
+- Alte tipuri returnează TIME_SPENT + evenimente din Analytics entity
+- value în TIME_SPENT = secunde totale petrecute pe platformă
+- value în VIEW_COURSE/VIEW_LESSON = courseId sau lessonId vizualizat
+- AnalyticsTime nu are ID (sau este null în răspuns)
+
+
+================================================================================
+TASK 2: POST /v1/analytics - Creare eveniment analytics
+================================================================================
+
+Business Logic:
+1. Primește datele evenimentului în body (CreateAnalyticsDto)
+2. Extrage clientId din JWT (suprascrie orice valoare din body)
+3. Creează înregistrarea în baza de date (în Analytics entity, NU AnalyticsTime)
+4. Returnează evenimentul creat cu ID-ul generat
+5. Tracking pentru evenimente discrete: VIEW_COURSE, VIEW_LESSON, VIEW_LIVE_SESSION
+
+Cod sursă:
+- Controller: src/v1/Analytics/Controller/analytics.controller.ts:43-52
+- Service: src/v1/Analytics/Service/analytics.service.ts:57-61
+
+Request:
+POST /v1/analytics
+Authorization: Bearer {jwt_token}
+
+Body:
+{
+  "type": 2,
+  "value": 10
+}
+
+Note: clientId din DTO este ignorat - se ia din JWT
+
+Response Success (201):
+{
+  "id": 789,
+  "type": 2,
+  "value": 10,
+  "clientId": 123,
+  "createdAt": "2024-11-02T10:00:00.000Z",
+  "updatedAt": "2024-11-02T10:00:00.000Z"
+}
+
+Response Error (400):
+{
+  "statusCode": 400,
+  "message": ["type should not be empty", "value should not be empty"],
+  "error": "Bad Request"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+
+Rate Limiting:
+- Nu există rate limiting specific (⚠️ risc de spam - ar trebui limitat!)
+
+Dependencies:
+- AnalyticsRepository.createAnalytics()
+
+Validation:
+- type: NotEmpty, number (0-4 din AnalyticsTypes enum)
+- value: NotEmpty, number (ID-ul resursei vizualizate: courseId, lessonId, etc.)
+- clientId: Optional, number (IGNORAT - se ia din JWT)
+
+Notes:
+- Pentru TIME_SPENT (type=1) ar trebui folosit PATCH /v1/analytics (update), nu POST
+- value reprezintă ID-ul resursei vizualizate (courseId pentru VIEW_COURSE, lessonId pentru VIEW_LESSON)
+- ⚠️ Nu verifică dacă resursa (course/lesson) există în baza de date
+- ⚠️ Permite duplicate - același user poate crea multiple events pentru aceeași resursă
+- ⚠️ Rate limiting lipsă - risc de spam cu analytics events
+
+
+================================================================================
+TASK 3: PATCH /v1/analytics - Actualizare analytics
+================================================================================
+
+Business Logic:
+1. Primește datele de actualizat în body (UpdateAnalyticsDto)
+2. Extrage clientId din JWT (suprascrie orice valoare din body)
+3. Verifică tipul analytics din dto.type:
+   - Dacă type === TIME_SPENT (1):
+     - Actualizează sau creează înregistrare în AnalyticsTime entity
+     - Incrementează timpul cumulat (value = secunde)
+   - Altfel (VIEW_COURSE, VIEW_LESSON, etc.):
+     - Actualizează înregistrare existentă în Analytics entity
+     - Necesită dto.id pentru a identifica înregistrarea
+4. Returnează analytics actualizat
+
+Cod sursă:
+- Controller: src/v1/Analytics/Controller/analytics.controller.ts:54-63
+- Service: src/v1/Analytics/Service/analytics.service.ts:63-72
+
+Request (TIME_SPENT):
+PATCH /v1/analytics
+Authorization: Bearer {jwt_token}
+
+Body:
+{
+  "type": 1,
+  "value": 60
+}
+
+Request (alte tipuri):
+PATCH /v1/analytics
+Authorization: Bearer {jwt_token}
+
+Body:
+{
+  "id": 456,
+  "type": 2,
+  "value": 15
+}
+
+Response Success (200) - TIME_SPENT:
+{
+  "id": null,
+  "type": 1,
+  "value": 3660,
+  "clientId": 123,
+  "createdAt": "2024-11-01T00:00:00.000Z",
+  "updatedAt": "2024-11-02T10:30:00.000Z"
+}
+
+Response Success (200) - alte tipuri:
+{
+  "id": 456,
+  "type": 2,
+  "value": 15,
+  "clientId": 123,
+  "createdAt": "2024-11-01T10:00:00.000Z",
+  "updatedAt": "2024-11-02T10:30:00.000Z"
+}
+
+Response Error (400):
+{
+  "statusCode": 400,
+  "message": "Analytics not found"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- AnalyticsTimeRepository.updateTimeAnalytics() - pentru TIME_SPENT
+- AnalyticsRepository.updateAnalytics() - pentru alte tipuri
+
+Validation:
+- id: Optional, number (obligatoriu pentru type != TIME_SPENT)
+- type: Required, number (0-4 din AnalyticsTypes enum)
+- value: Required, number
+- clientId: Optional, number (IGNORAT - se ia din JWT)
+- createdAt: Optional, Date
+- updatedAt: Optional, Date
+
+Notes:
+- Pentru TIME_SPENT: value este incrementat, nu înlocuit (tracking cumulat)
+- Pentru alte tipuri: value este înlocuit cu noua valoare
+- ⚠️ Pentru tipuri != TIME_SPENT, nu verifică ownership (dto.id poate aparține altui user!)
+- UpdateAnalyticsDto extends PaginationDTO (moștenit fără motiv aparent)
+
+
+================================================================================
+TASK 4: DELETE /v1/analytics/:analyticsId - Ștergere analytics
+================================================================================
+
+Business Logic:
+1. Primește analyticsId din URL params
+2. Șterge înregistrarea din baza de date (probabil HARD DELETE)
+3. ⚠️ Șterge doar din Analytics entity, NU din AnalyticsTime
+4. Returnează status ok
+
+Cod sursă:
+- Controller: src/v1/Analytics/Controller/analytics.controller.ts:65-73
+- Service: src/v1/Analytics/Service/analytics.service.ts:74-77
+
+Request:
+DELETE /v1/analytics/456
+Authorization: Bearer {jwt_token}
+
+Path Parameters:
+- analyticsId (required): ID-ul evenimentului analytics
+
+Response Success (200):
+{
+  "status": "ok",
+  "message": "Analytics has been deleted"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Response Error (404):
+{
+  "statusCode": 404,
+  "message": "Analytics not found"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.ADMIN) - Doar administratori
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- AnalyticsRepository.deleteAnalytics()
+
+Notes:
+- Doar ADMIN poate șterge analytics
+- ⚠️ Șterge doar din Analytics entity (evenimente discrete)
+- ⚠️ Nu există endpoint pentru ștergerea AnalyticsTime (timp cumulat)
+- ⚠️ Probabil HARD DELETE - consideră soft delete pentru istoric
+
+
+================================================================================
+ADDITIONAL NOTES - SERVICE METHODS NOT EXPOSED
+================================================================================
+
+Metodă: getAnalytics(analyticsId: number)
+Locație: src/v1/Analytics/Service/analytics.service.ts:51-55
+
+Business Logic:
+- Returnează un eveniment analytics specific după ID
+- Interogează Analytics entity (nu AnalyticsTime)
+
+Utilizare:
+- Probabil folosită intern sau pentru debugging
+
+Recomandare pentru .NET:
+- Consideră expunerea ca endpoint: GET /v1/analytics/:analyticsId
+- Util pentru debugging și verificarea evenimentelor individuale
+- Ar trebui să verifice ownership (user poate vedea doar propriile analytics)
+
+
+================================================================================
+ANALYTICS TYPES - Enumerare
+================================================================================
+
+Locație: src/shared/Enums/analytics-types.enum.ts
+
+enum AnalyticsTypes {
+  NO_ANALYTICS = 0,        // Fără analytics
+  TIME_SPENT = 1,          // Timp petrecut pe platformă (tracking cumulat în AnalyticsTime)
+  VIEW_COURSE = 2,         // Vizualizare curs (value = courseId)
+  VIEW_LESSON = 3,         // Vizualizare lecție (value = lessonId)
+  VIEW_LIVE_SESSION = 4,   // Vizualizare sesiune live (value = sessionId?)
+}
+
+Notes:
+- TIME_SPENT folosește tabel separat (AnalyticsTime) pentru tracking cumulat
+- Celelalte tipuri folosesc Analytics entity pentru evenimente discrete
+- value reprezintă ID-ul resursei vizualizate (courseId, lessonId, etc.)
+
+
+================================================================================
+SUMMARY - Analytics Module
+================================================================================
+
+Total Endpoints: 4 (nu 3 cum era în inventar inițial!)
+
+Authenticated Endpoints (toate cu JWT):
+- GET /v1/analytics/user/all (orice rol)
+- POST /v1/analytics (orice rol)
+- PATCH /v1/analytics (orice rol)
+- DELETE /v1/analytics/:analyticsId (ADMIN only)
+
+Concept - Două sisteme de tracking:
+1. **Analytics Entity**: Evenimente discrete
+   - VIEW_COURSE, VIEW_LESSON, VIEW_LIVE_SESSION
+   - Înregistrări multiple per user, fiecare cu timestamp
+   - CRUD complet (create, update, delete)
+
+2. **AnalyticsTime Entity**: Tracking timp cumulat
+   - TIME_SPENT - un singur record per user
+   - value = secunde totale petrecute pe platformă
+   - Update incrementează, nu înlocuiește
+   - NU poate fi șters prin endpoint
+
+Security Issues:
+1. ⚠️ PATCH pentru tipuri != TIME_SPENT nu verifică ownership - user poate modifica analytics-ul altui user prin ID
+2. ⚠️ POST nu are rate limiting - risc de spam cu analytics events
+3. ⚠️ POST nu verifică dacă resursa (course/lesson) există
+
+Missing Features:
+1. getAnalytics(:analyticsId) nu e expusă ca endpoint GET
+2. Nu există endpoint pentru ștergerea AnalyticsTime (timp cumulat)
+3. Nu există endpoint pentru reset timp cumulat
+4. Nu există endpoint pentru analytics agregate (top courses vizualizate, statistici)
+
+Bugs/Issues:
+1. UpdateAnalyticsDto extends PaginationDTO fără motiv (moștenire inutilă)
+2. GetAnalyticsDTO.value este string (line 26), dar CreateDto.value este number - inconsistență
+3. POST permite duplicate - același user poate crea N evenimente pentru același curs
+
+Recomandări pentru .NET:
+1. ⚠️ URGENT: Adaugă verificare ownership pentru PATCH (doar user-ul proprietar poate modifica)
+2. Implementează rate limiting pentru POST (max 100 events/hour per user)
+3. Validează existența resources (course/lesson) înainte de create
+4. Expune getAnalytics ca endpoint GET /v1/analytics/:analyticsId cu verificare ownership
+5. Adaugă endpoint pentru ștergerea AnalyticsTime: DELETE /v1/analytics/time (ADMIN only)
+6. Implementează soft delete pentru Analytics (IsDeleted flag) pentru istoric
+7. Adaugă endpoints pentru statistici agregate:
+   - GET /v1/analytics/stats/user - statistici personale
+   - GET /v1/analytics/stats/top-courses - top cursuri vizualizate (ADMIN)
+8. Fixează inconsistența de tipuri între DTOs (value: string vs number)
+9. Consideră deduplicare pentru POST - evită evenimente duplicate în interval scurt (same type + value în ultimele 5 min)
+10. Adaugă indexing pe (clientId, type, createdAt) pentru performanță
+11. Consideră partitioning pentru Analytics entity dacă volumul de date crește (partition by month)

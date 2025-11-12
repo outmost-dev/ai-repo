@@ -1,0 +1,3909 @@
+================================================================================
+JIRA STORY: CAMPAIGNS MANAGEMENT MODULE
+================================================================================
+
+**Story Title**: Campaigns Management Module
+
+**Story Description**:
+Modulul Campaigns Management gestionează campaniile de marketing prin asignarea unor
+tipuri de abonamente (subscription types) la utilizatori selectați, cu dată de expirare
+și opțiuni de vizualizare (timer, counter). Admin-ul poate filtra utilizatorii după
+diverse criterii, selecta unul sau mai mulți useri, și crea campanii
+
+ pentru aceștia.
+
+**Locație cod sursă**:
+- Page: admin/src/pages/dashboards/Campaigns.tsx
+- Components: admin/src/components/dashboard/learning/CampaignsCard/
+- Types: admin/src/types/campaigns.ts
+
+**Componente implementate**: 3
+- CampaignsCard (tabel utilizatori cu campanii)
+- CampaignForm (formular create/edit campanii)
+- TitleBar (filtre și acțiuni bulk)
+
+**Features**: 10 tasks
+- Page layout cu stats cards
+- User table cu campaigns column
+- Active subscription badge
+- Campaign display & delete individual
+- Row selection (multi-select cu preserve across pages)
+- Filters & search (5 filtre + search cu debounce)
+- Campaign form (create/edit cu 6 fields)
+- Bulk campaign assignment (multi-select users)
+- Bulk delete campaigns
+- Custom pagination cu debounce
+
+**Dependencies**:
+- Subscription Types (status=2 pentru campanii)
+- MailerLite Service (email marketing integration)
+- Users API (getAllUsersForCampaignsApi)
+
+**Business Rules**:
+1. **Campanii bazate pe utilizatori**: Admin selectează utilizatori și le asignează un subscription type cu dată expirare
+2. **Filtrare avansată**: 5 filtre (search, date range, subscription type, campaign title, active subscription)
+3. **Bulk operations**: Multi-select cu preserve across pages pentru adăugare/ștergere în masă
+4. **Campaign subscription types**: Doar subscription types cu status=2 (Campanie) sunt disponibile
+5. **Timer & Counter**: Opțiuni pentru afișare countdown timer și achiziții rămase pe card-ul campaniei (client-side)
+
+**Migration Priority**: MEDIUM-HIGH (campanii marketing, bulk operations)
+
+**Total Estimated Effort**: 7-9 zile (1 developer)
+
+================================================================================
+TASKS BREAKDOWN
+================================================================================
+
+Task 1: Page Layout & Stats Cards (4 Cards - All Mock Data)
+Task 2: User Table with Campaigns Column
+Task 3: Active Subscription Badge (Real-time Check)
+Task 4: Campaign Display & Delete Individual
+Task 5: Row Selection (Multi-select with Preserve Across Pages)
+Task 6: Filters & Search (5 Filters + Debounced Search)
+Task 7: Campaign Form (Create/Edit with 6 Fields)
+Task 8: Bulk Campaign Assignment (Multi-select Users)
+Task 9: Bulk Delete Campaigns
+Task 10: Custom Pagination with Debounce
+
+================================================================================
+TASK 1: Page Layout & Stats Cards (4 Cards - All Mock Data)
+================================================================================
+
+**Descriere Business:**
+Pagina Campaigns afișează 4 stats cards în partea de sus cu date MOCK (pentru showcase):
+1. **Cursuri prezente în platformă** (hardcoded 41)
+2. **Cursuri completate** (hardcoded 5)
+3. **Cursuri în desfășurare** (hardcoded 3)
+4. **Conturi active în listare** (REAL DATA - countUsers din API)
+
+**Important**: Aceste stats NU sunt specifice campaniilor - sunt generic stats pentru platform.
+
+**User Flow:**
+1. Admin navighează la /dashboards/campaigns
+2. Sistemul încarcă users cu campanii și subscription types (status=2)
+3. Se afișează 4 cards în row cu mock data
+4. Sub cards se afișează tabelul cu utilizatori și campanii
+
+**Cod sursă:**
+- File: admin/src/pages/dashboards/Campaigns.tsx:206-245 (stats cards)
+- Component: LearningStatsCard (shared component)
+- Mock data: 41, 5, 3 (hardcoded), 78 (progress)
+- Real data: countUsers (din API response)
+
+**Current Implementation (React):**
+```typescript
+import { LearningStatsCard } from '../../components';
+import {
+  SafetyCertificateOutlined,
+  FileProtectOutlined,
+  FileSyncOutlined,
+  UsergroupAddOutlined,
+} from '@ant-design/icons';
+
+// In Campaigns page JSX
+<Row {...stylesContext?.rowProps}>
+  <Col xs={24} xl={24}>
+    <Row {...stylesContext?.rowProps}>
+      {/* Card 1 - Total Courses (MOCK DATA) */}
+      <Col xs={24} sm={12} xl={6}>
+        <LearningStatsCard
+          title="Cursuri prezente în platformă"
+          value={41}  // HARDCODED MOCK DATA
+          icon={SafetyCertificateOutlined}
+          color="blue"
+          progress={76}  // MOCK PROGRESS
+          style={{ height: '100%' }}
+        />
+      </Col>
+
+      {/* Card 2 - Completed Courses (MOCK DATA) */}
+      <Col xs={24} sm={12} xl={6}>
+        <LearningStatsCard
+          title="Cursuri completate"
+          value={5}  // HARDCODED MOCK DATA
+          icon={FileProtectOutlined}
+          color="green"
+          progress={90}  // MOCK PROGRESS
+          style={{ height: '100%' }}
+        />
+      </Col>
+
+      {/* Card 3 - Ongoing Courses (MOCK DATA) */}
+      <Col xs={24} sm={12} xl={6}>
+        <LearningStatsCard
+          title="Cursuri în desfășurare"
+          value={3}  // HARDCODED MOCK DATA
+          icon={FileSyncOutlined}
+          color="teal"
+          progress={30}  // MOCK PROGRESS
+          style={{ height: '100%' }}
+        />
+      </Col>
+
+      {/* Card 4 - Active Accounts (REAL DATA) */}
+      <Col xs={24} sm={12} xl={6}>
+        <LearningStatsCard
+          title="Conturi active in listare"
+          value={countUsers}  // REAL DATA from API
+          icon={UsergroupAddOutlined}
+          color="purple"
+          progress={78}  // MOCK PROGRESS
+          style={{ height: '100%' }}
+        />
+      </Col>
+
+      {/* Users table below cards */}
+      <Col span={24}>
+        <CampaignsCard
+          data={usersData}
+          subTypesData={subTypesData}
+          loading={loading}
+          // ... other props
+        />
+      </Col>
+    </Row>
+  </Col>
+</Row>
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useAuthStore } from '@/stores/auth'
+import LearningStatsCard from '@/components/LearningStatsCard.vue'
+import {
+  SafetyCertificateOutlined,
+  FileProtectOutlined,
+  FileSyncOutlined,
+  UsergroupAddOutlined,
+} from '@ant-design/icons-vue'
+
+const authStore = useAuthStore()
+
+// Stats data
+const totalCourses = 41  // MOCK DATA
+const completedCourses = 5  // MOCK DATA
+const ongoingCourses = 3  // MOCK DATA
+const activeAccounts = computed(() => countUsers.value || 0)  // REAL DATA
+</script>
+
+<template>
+  <a-row :gutter="[16, 16]">
+    <a-col :xs="24" :xl="24">
+      <a-row :gutter="[16, 16]">
+        <!-- Card 1 - Total Courses (MOCK) -->
+        <a-col :xs="24" :sm="12" :xl="6">
+          <LearningStatsCard
+            title="Cursuri prezente în platformă"
+            :value="totalCourses"
+            :icon="SafetyCertificateOutlined"
+            color="blue"
+            :progress="76"
+            :style="{ height: '100%' }"
+          >
+            <template #extra>
+              <a-tag color="orange">MOCK DATA</a-tag>
+            </template>
+          </LearningStatsCard>
+        </a-col>
+
+        <!-- Card 2 - Completed Courses (MOCK) -->
+        <a-col :xs="24" :sm="12" :xl="6">
+          <LearningStatsCard
+            title="Cursuri completate"
+            :value="completedCourses"
+            :icon="FileProtectOutlined"
+            color="green"
+            :progress="90"
+            :style="{ height: '100%' }"
+          >
+            <template #extra>
+              <a-tag color="orange">MOCK DATA</a-tag>
+            </template>
+          </LearningStatsCard>
+        </a-col>
+
+        <!-- Card 3 - Ongoing Courses (MOCK) -->
+        <a-col :xs="24" :sm="12" :xl="6">
+          <LearningStatsCard
+            title="Cursuri în desfășurare"
+            :value="ongoingCourses"
+            :icon="FileSyncOutlined"
+            color="teal"
+            :progress="30"
+            :style="{ height: '100%' }"
+          >
+            <template #extra>
+              <a-tag color="orange">MOCK DATA</a-tag>
+            </template>
+          </LearningStatsCard>
+        </a-col>
+
+        <!-- Card 4 - Active Accounts (REAL DATA) -->
+        <a-col :xs="24" :sm="12" :xl="6">
+          <LearningStatsCard
+            title="Conturi active in listare"
+            :value="activeAccounts"
+            :icon="UsergroupAddOutlined"
+            color="purple"
+            :progress="78"
+            :style="{ height: '100%' }"
+          />
+        </a-col>
+
+        <!-- Users table -->
+        <a-col :span="24">
+          <CampaignsCard
+            :data="usersData"
+            :subTypesData="subTypesData"
+            :loading="loading"
+            :countUsers="countUsers"
+            :pageLimit="pageLimit"
+            :filters="filters"
+            @pagination="handlePagination"
+            @editModal="handleEditModal"
+            @deleteRecords="handleDeleteRecords"
+            @search="handleSearch"
+            @updateFilters="setFilters"
+            @resetSearch="resetSearch"
+          />
+        </a-col>
+      </a-row>
+    </a-col>
+  </a-row>
+</template>
+```
+
+**Notes:**
+- **ALL MOCK DATA**: 3 din 4 cards au mock data (pentru showcase only)
+- **Single Real Data**: Doar "Conturi active în listare" este real (countUsers din API)
+- **Generic Stats**: Stats NU sunt specifice campaniilor - sunt platform-wide stats
+- **Progress Values**: Toate progress values sunt mock (76%, 90%, 30%, 78%)
+- **Same Layout**: Identical cu Subscriptions dashboard (copy-paste cu alt title)
+
+**Recommendations:**
+1. **Replace cu Campaign-Specific Stats**:
+   - Total Campaigns Active
+   - Total Users in Campaigns
+   - Campaigns Expiring Soon (next 7 days)
+   - Total Campaign Conversions (acquisitions)
+2. **Real Progress**: Calculate based on targets (nu hardcoded)
+3. **Clickable Cards**: Navigate to filtered views
+4. **Trend Indicators**: Show trend vs previous month
+
+**Migration Complexity**: LOW (simple stat cards rendering, mostly mock data)
+
+**Estimated Effort**: 2-3 ore (1 developer)
+
+================================================================================
+TASK 2: User Table with Campaigns Column
+================================================================================
+
+**Descriere Business:**
+Tabelul afișează toți utilizatorii cu următoarele coloane:
+- **#Id**: User ID
+- **Nume**: Full name
+- **Email**: User email
+- **Active Sub**: Badge verde/roșu pentru subscription activ
+- **Tip abonament**: Lista subscripțiilor active ale userului cu end date
+- **Titlu Campanie**: Lista campaniilor assigned la user cu delete button per campaign
+
+**User Flow:**
+1. Admin navighează la /dashboards/campaigns
+2. Sistemul încarcă utilizatori cu pagination (40/page default)
+3. Fiecare row afișează user info + subscriptions + campaigns
+4. Admin vede badge colored pentru active subscription (green=activ, red=inactiv)
+5. Admin vede lista completă de subscriptions și campaigns per user
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/learning/CampaignsCard/CampaignsCard.tsx:109-199 (table columns)
+- Columns: 6 (#Id, Nume, Email, Active Sub, Tip abonament, Titlu Campanie)
+- Row selection: Multi-select cu checkbox (preserveSelectedRowKeys: true)
+
+**Current Implementation (React):**
+```typescript
+const CAMPAIGNS_COLUMNS: ColumnsType<User> = [
+  // Column 1: User ID
+  {
+    title: '#Id',
+    dataIndex: 'id',
+    key: 'id',
+    render: (id: string) => <span>#{id}</span>,
+  },
+
+  // Column 2: Full Name
+  {
+    title: 'Nume',
+    dataIndex: 'fullName',
+    key: 'fullName',
+    render: (fullName: string) => <span>{fullName}</span>,
+  },
+
+  // Column 3: Email
+  {
+    title: 'email',
+    dataIndex: 'email',
+    key: 'email',
+    render: (email: string) => <span>{email}</span>,
+  },
+
+  // Column 4: Active Subscription Badge
+  {
+    title: 'Active Sub',
+    dataIndex: 'hasActiveSubscription',
+    key: 'hasActiveSubscription',
+    render: (_: unknown, user: User) => {
+      const hasActive = user.subscriptions?.some(
+        subscription => subscription.status === 3 &&
+          dayjs(subscription.endDate).isAfter(dayjs())
+      );
+      return (
+        <Badge
+          status={hasActive ? "success" : "error"}
+          text={hasActive ? "Activ" : "Inactiv"}
+        />
+      );
+    },
+    width: '100px',
+  },
+
+  // Column 5: Subscription Types List
+  {
+    title: 'Tip abonament',
+    dataIndex: 'subTypeId',
+    key: 'subTypeId',
+    render: (_subTypeId, user) => {
+      return (
+        <>
+          {Boolean(user?.subscriptions?.length) && user.subscriptions?.map((subscription) => (
+            (subscription.status > 2) && (
+              <div key={subscription.id}>
+                <Badge status={subscription.status === 3 && dayjs(subscription?.endDate) >= dayjs() ? 'success' : 'error'} />
+                <strong className="subscription-title">
+                  {subTypesData?.find(item => item.id === Number(subscription?.subTypeId))?.productName}
+                </strong>
+                <span className="subscription-end-date"> pana la {dayjs(subscription?.endDate).format('DD-MM-YYYY')}</span>
+              </div>)
+          ))}
+        </>
+      )
+    },
+  },
+
+  // Column 6: Campaigns List with Delete
+  {
+    title: 'Titlu Campanie',
+    dataIndex: 'campaignTitle',
+    key: 'campaignTitle',
+    render: (_campaigns, user) => (
+      <>
+        {user.campaigns?.length ? user.campaigns.map((campaign: Campaign, index: number) => (
+          <div key={index} className="campaign-item">
+            <strong className="campaign-title">{campaign.title}</strong>
+            <span className="campaign-subtype">
+              {campaign?.subTypeId && '(' +
+                subTypesData?.find(item => item.id === Number(campaign?.subTypeId))?.productName + ')'}
+            </span>
+            <span className="campaign-end-date"> expira la {dayjs(campaign?.endDate).format('DD-MM-YYYY')}</span>
+            <span>
+              <Popconfirm title={`Esti sigur? Datele sterse nu se mai pot recupera!`} onConfirm={() => handleDeleteRecords([user.id], [campaign.id!])} okText="Yes" cancelText="No" >
+                <Button type="link" danger style={{ padding: '7px' }}>
+                  <DeleteOutlined />
+                </Button>
+              </Popconfirm>
+            </span>
+          </div>
+        )) : <span style={{ color: '#909090' }}> ... </span>}
+      </>
+    ),
+  },
+];
+
+// Table rendering
+<Table
+  dataSource={data?.length ? data : []}
+  rowSelection={rowSelection}  // Multi-select with checkboxes
+  columns={CAMPAIGNS_COLUMNS}
+  loading={loading}
+  className="overflow-scroll"
+  rowKey="id"
+  pagination={{
+    onChange: handlePagination,
+    pageSize: pageLimit,
+    total: countUsers,
+    showSizeChanger: true,
+    pageSizeOptions: ['40', '50', '100', '200'],
+    // ... custom pagination options
+  }}
+/>
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { h, computed } from 'vue'
+import { Badge, Button, Popconfirm } from 'ant-design-vue'
+import { DeleteOutlined } from '@ant-design/icons-vue'
+import dayjs from 'dayjs'
+import type { TableColumnsType } from 'ant-design-vue'
+import type { User, Campaign } from '@/types'
+
+const campaignsColumns = computed<TableColumnsType<User>>(() => [
+  // Column 1: User ID
+  {
+    title: '#Id',
+    dataIndex: 'id',
+    key: 'id',
+    customRender: ({ text }) => h('span', `#${text}`)
+  },
+
+  // Column 2: Full Name
+  {
+    title: 'Nume',
+    dataIndex: 'fullName',
+    key: 'fullName'
+  },
+
+  // Column 3: Email
+  {
+    title: 'email',
+    dataIndex: 'email',
+    key: 'email'
+  },
+
+  // Column 4: Active Subscription Badge
+  {
+    title: 'Active Sub',
+    dataIndex: 'hasActiveSubscription',
+    key: 'hasActiveSubscription',
+    width: 100,
+    customRender: ({ record }) => {
+      const hasActive = record.subscriptions?.some(
+        (sub: any) => sub.status === 3 && dayjs(sub.endDate).isAfter(dayjs())
+      )
+      return h(Badge, {
+        status: hasActive ? 'success' : 'error',
+        text: hasActive ? 'Activ' : 'Inactiv'
+      })
+    }
+  },
+
+  // Column 5: Subscription Types List
+  {
+    title: 'Tip abonament',
+    dataIndex: 'subTypeId',
+    key: 'subTypeId',
+    customRender: ({ record }) => {
+      if (!record.subscriptions?.length) return null
+
+      return h('div', record.subscriptions
+        .filter((sub: any) => sub.status > 2)
+        .map((subscription: any) => {
+          const subType = subTypesData.value?.find(
+            (item: any) => item.id === Number(subscription.subTypeId)
+          )
+          const isActive = subscription.status === 3 && dayjs(subscription.endDate).isAfter(dayjs())
+
+          return h('div', { key: subscription.id }, [
+            h(Badge, { status: isActive ? 'success' : 'error' }),
+            h('strong', { class: 'subscription-title' }, subType?.productName || ''),
+            h('span', { class: 'subscription-end-date' },
+              ` pana la ${dayjs(subscription.endDate).format('DD-MM-YYYY')}`
+            )
+          ])
+        })
+      )
+    }
+  },
+
+  // Column 6: Campaigns List with Delete
+  {
+    title: 'Titlu Campanie',
+    dataIndex: 'campaignTitle',
+    key: 'campaignTitle',
+    customRender: ({ record }) => {
+      if (!record.campaigns?.length) {
+        return h('span', { style: { color: '#909090' } }, ' ... ')
+      }
+
+      return h('div', record.campaigns.map((campaign: Campaign, index: number) => {
+        const subType = subTypesData.value?.find(
+          (item: any) => item.id === Number(campaign.subTypeId)
+        )
+
+        return h('div', { key: index, class: 'campaign-item' }, [
+          h('strong', { class: 'campaign-title' }, campaign.title),
+          campaign.subTypeId && h('span', { class: 'campaign-subtype' },
+            ` (${subType?.productName})`
+          ),
+          h('span', { class: 'campaign-end-date' },
+            ` expira la ${dayjs(campaign.endDate).format('DD-MM-YYYY')}`
+          ),
+          h('span', [
+            h(Popconfirm, {
+              title: 'Esti sigur? Datele sterse nu se mai pot recupera!',
+              okText: 'Yes',
+              cancelText: 'No',
+              onConfirm: () => handleDeleteRecords([record.id], [campaign.id!])
+            }, {
+              default: () => h(Button, {
+                type: 'link',
+                danger: true,
+                style: { padding: '7px' }
+              }, {
+                default: () => h(DeleteOutlined)
+              })
+            })
+          ])
+        ])
+      }))
+    }
+  }
+])
+</script>
+
+<template>
+  <a-table
+    :dataSource="data?.length ? data : []"
+    :rowSelection="rowSelection"
+    :columns="campaignsColumns"
+    :loading="loading"
+    rowKey="id"
+    class="overflow-scroll"
+    :pagination="{
+      onChange: handlePagination,
+      pageSize: pageLimit,
+      total: countUsers,
+      showSizeChanger: true,
+      pageSizeOptions: ['40', '50', '100', '200']
+    }"
+  />
+</template>
+
+<style scoped>
+.subscription-title {
+  margin-left: 4px;
+}
+
+.subscription-end-date,
+.campaign-end-date,
+.campaign-subtype {
+  font-size: 12px;
+  color: #666;
+}
+
+.campaign-item {
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.campaign-title {
+  color: #1890ff;
+}
+</style>
+```
+
+**Notes:**
+- **6 Columns**: Id, Name, Email, Active Sub Badge, Subscriptions List, Campaigns List
+- **Active Sub Logic**: status=3 (PAYMENT_ACCEPTED) AND endDate > today
+- **Subscriptions Filter**: Doar subscriptions cu status > 2 (PAYMENT_INITIATED și mai sus)
+- **Campaigns**: Afișează toate campaniile userului cu delete button per campaign
+- **Row Selection**: Multi-select cu checkboxes (preserveSelectedRowKeys: true)
+
+**User Type:**
+```typescript
+type User = {
+  id: number;
+  fullName: string;
+  email: string;
+  phone: string;
+  subscriptions?: Subscription[];  // Lista subscripțiilor userului
+  campaigns?: Campaign[];          // Lista campaniilor userului
+};
+
+type Subscription = {
+  id: number;
+  status: number;  // 0-5 (3=PAYMENT_ACCEPTED=activ)
+  subTypeId: number;
+  endDate: Date;
+};
+
+type Campaign = {
+  id: number;
+  title: string;
+  subTypeId: number;
+  endDate: Date;
+  clientId: number;
+};
+```
+
+**Recommendations:**
+1. **Sort Options**: Adaugă sorting pentru fiecare coloană
+2. **Expand Row**: Adaugă expandable row pentru detalii subscription/campaign
+3. **Quick Actions**: Adaugă quick edit button pentru campaigns
+4. **Highlight**: Highlight rows cu campaigns active (expiring soon)
+5. **Export**: Adaugă export to CSV pentru filtered users
+
+**Migration Complexity**: MEDIUM (6 columns, complex renders, nested data)
+
+**Estimated Effort**: 1-1.5 zile (1 developer)
+
+================================================================================
+TASK 3: Active Subscription Badge (Real-time Check)
+================================================================================
+
+**Descriere Business:**
+Badge-ul "Active Sub" afișează status-ul subscription-ului activ al userului în timp real:
+- **Verde (Activ)**: User are cel puțin 1 subscription cu status=3 (PAYMENT_ACCEPTED) și endDate > today
+- **Roșu (Inactiv)**: User NU are subscription activ
+
+**Important**: Check-ul este real-time computed - se verifică pe client-side pentru fiecare user.
+
+**User Flow:**
+1. Admin vede tabelul cu utilizatori
+2. Pentru fiecare user, sistemul verifică subscriptions array
+3. Dacă găsește subscription cu status=3 și endDate > today → Badge VERDE
+4. Altfel → Badge ROȘU
+5. Badge se actualizează instant dacă subscriptions se schimbă (ex: după assign campaign)
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/learning/CampaignsCard/CampaignsCard.tsx:135-150 (Active Sub column)
+- Logic: `user.subscriptions?.some(sub => sub.status === 3 && dayjs(sub.endDate).isAfter(dayjs()))`
+
+**Current Implementation (React):**
+```typescript
+{
+  title: 'Active Sub',
+  dataIndex: 'hasActiveSubscription',
+  key: 'hasActiveSubscription',
+  render: (_: unknown, user: User) => {
+    // Real-time check pentru active subscription
+    const hasActive = user.subscriptions?.some(
+      subscription =>
+        subscription.status === 3 &&  // PAYMENT_ACCEPTED
+        dayjs(subscription.endDate).isAfter(dayjs())  // NOT expired
+    );
+
+    return (
+      <Badge
+        status={hasActive ? "success" : "error"}
+        text={hasActive ? "Activ" : "Inactiv"}
+      />
+    );
+  },
+  width: '100px',
+}
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { h, computed } from 'vue'
+import { Badge } from 'ant-design-vue'
+import dayjs from 'dayjs'
+import type { User } from '@/types'
+
+// Computed function pentru check active subscription
+const hasActiveSubscription = (user: User): boolean => {
+  if (!user.subscriptions?.length) return false
+
+  return user.subscriptions.some(
+    (subscription) =>
+      subscription.status === 3 &&  // PAYMENT_ACCEPTED
+      dayjs(subscription.endDate).isAfter(dayjs())  // NOT expired
+  )
+}
+
+// Column definition
+const activeSubColumn = {
+  title: 'Active Sub',
+  dataIndex: 'hasActiveSubscription',
+  key: 'hasActiveSubscription',
+  width: 100,
+  customRender: ({ record }: { record: User }) => {
+    const hasActive = hasActiveSubscription(record)
+
+    return h(Badge, {
+      status: hasActive ? 'success' : 'error',
+      text: hasActive ? 'Activ' : 'Inactiv'
+    })
+  }
+}
+</script>
+```
+
+**Logic Breakdown:**
+
+**Condition 1 - Status Check:**
+```typescript
+subscription.status === 3  // PAYMENT_ACCEPTED
+
+// Status enum:
+// 0 = PENDING
+// 1 = WAITING_FOR_PAYMENT
+// 2 = PAYMENT_INITIATED
+// 3 = PAYMENT_ACCEPTED  ← ACTIV
+// 4 = PAYMENT_REFUSED
+// 5 = EXPIRED
+```
+
+**Condition 2 - Date Check:**
+```typescript
+dayjs(subscription.endDate).isAfter(dayjs())  // endDate > today
+
+// Example:
+// Today: 2025-11-03
+// endDate: 2025-12-01 → isAfter(today) = true → ACTIV
+// endDate: 2025-10-01 → isAfter(today) = false → EXPIRAT
+```
+
+**Both Conditions Must Be True:**
+```typescript
+const hasActive = user.subscriptions?.some(
+  sub => sub.status === 3 && dayjs(sub.endDate).isAfter(dayjs())
+);
+
+// Examples:
+// User1: [{ status: 3, endDate: '2025-12-01' }] → hasActive = TRUE
+// User2: [{ status: 3, endDate: '2025-10-01' }] → hasActive = FALSE (expired)
+// User3: [{ status: 2, endDate: '2025-12-01' }] → hasActive = FALSE (not accepted)
+// User4: [] → hasActive = FALSE (no subscriptions)
+```
+
+**Notes:**
+- **Real-time Check**: Computed pe client-side pentru fiecare render
+- **Multiple Subscriptions**: User poate avea mai multe subscriptions - badge este verde dacă MĂCAR 1 este activ
+- **Edge Cases**:
+  - User fără subscriptions → Badge roșu
+  - User cu subscriptions expirate → Badge roșu
+  - User cu subscriptions în așteptare (status < 3) → Badge roșu
+- **Badge Colors**: Ant Design Badge component (success=green dot, error=red dot)
+
+**Recommendations:**
+1. **Tooltip**: Adaugă tooltip cu detalii subscription (type, end date) la hover
+2. **Multiple Active**: Dacă user are mai multe subscriptions active, afișează count (ex: "2 Active")
+3. **Expiring Soon**: Adaugă yellow badge pentru subscriptions ce expiră în < 7 zile
+4. **Cache**: Memoize hasActiveSubscription pentru performance (dacă data nu se schimbă)
+
+**Migration Complexity**: LOW (simple computed check)
+
+**Estimated Effort**: 1-2 ore (1 developer)
+
+================================================================================
+TASK 4: Campaign Display & Delete Individual
+================================================================================
+
+**Descriere Business:**
+În coloana "Titlu Campanie", fiecare campanie a userului este afișată ca un item separat cu:
+- **Title**: Titlul campaniei (ex: "Black Friday Promo")
+- **Subscription Type**: Tipul de abonament assigned (ex: "(Abonament Premium)")
+- **End Date**: Data expirării campaniei (ex: "expira la 31-12-2025")
+- **Delete Button**: Buton roșu pentru ștergere individuală cu confirmare
+
+**User Flow:**
+1. Admin vede lista de campanii pentru fiecare user în tabel
+2. Fiecare campanie afișează: title, subscription type, end date
+3. Admin hover pe delete button → apare popconfirm
+4. Admin confirmă ștergerea → API call pentru delete
+5. După success, campania dispare din listă (sync UI)
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/learning/CampaignsCard/CampaignsCard.tsx:173-198 (Campaigns column render)
+- Delete: handleDeleteRecords([userId], [campaignId])
+- Sync: syncAfterDelete (remove campaign from user.campaigns array)
+
+**Current Implementation (React):**
+```typescript
+{
+  title: 'Titlu Campanie',
+  dataIndex: 'campaignTitle',
+  key: 'campaignTitle',
+  render: (_campaigns, user) => (
+    <>
+      {user.campaigns?.length ? user.campaigns.map((campaign: Campaign, index: number) => (
+        <div key={index} className="campaign-item">
+          {/* Campaign Title */}
+          <strong className="campaign-title">{campaign.title}</strong>
+
+          {/* Subscription Type (if assigned) */}
+          <span className="campaign-subtype">
+            {campaign?.subTypeId && '(' +
+              subTypesData?.find(item => item.id === Number(campaign?.subTypeId))?.productName + ')'}
+          </span>
+
+          {/* End Date */}
+          <span className="campaign-end-date">
+            expira la {dayjs(campaign?.endDate).format('DD-MM-YYYY')}
+          </span>
+
+          {/* Delete Button with Popconfirm */}
+          <span>
+            <Popconfirm
+              title={`Esti sigur? Datele sterse nu se mai pot recupera!`}
+              onConfirm={() => handleDeleteRecords([user.id], [campaign.id!])}
+              okText="Yes"
+              cancelText="No"
+            >
+              <Button type="link" danger style={{ padding: '7px' }}>
+                <DeleteOutlined />
+              </Button>
+            </Popconfirm>
+          </span>
+        </div>
+      )) : <span style={{ color: '#909090' }}> ... </span>}
+    </>
+  ),
+}
+
+// Delete function (individual campaign)
+const handleDeleteRecords = async (clientIds: number[], recordIds: number[] = []) => {
+  // Extract campaign IDs from user's campaigns if not provided
+  let stringifiedRecordIds = '';
+  if (recordIds.length === 0 && clientIds?.length > 1) {
+    usersData.map((user) => {
+      if (clientIds.includes(Number(user.id))) {
+        if (user.campaigns?.length) {
+          user.campaigns.map((campaign) => {
+            recordIds.push(campaign.id);
+          });
+        }
+      }
+    });
+    recordIds.length ? stringifiedRecordIds = recordIds.join(',') : stringifiedRecordIds = '';
+  } else {
+    stringifiedRecordIds = recordIds!.join(',');
+  }
+
+  // API call to delete campaigns
+  const res: ResponseT = await handleDeleteCampaignsApi(stringifiedRecordIds) as unknown as ResponseT;
+  if ([200, 201].includes(res?.status)) {
+    syncAfterDelete(clientIds, recordIds);
+    message.open({ 'type': 'success', 'content': `Campaniile ${stringifiedRecordIds} au fost sterse cu succes` });
+  } else {
+    message.open({ 'type': 'error', 'content': `Campaniile ${stringifiedRecordIds} nu au putut fi sterse` });
+  }
+}
+
+// Sync UI after delete
+const syncAfterDelete = (clientIds: number[], recordIds: number[]) => {
+  setUsersData(prevState => prevState?.filter((item) => {
+    clientIds.map((clientId) => {
+      if (item.id === clientId) {
+        // Remove deleted campaigns from user's campaigns array
+        item.campaigns = item.campaigns?.filter((campaign) => !recordIds.includes(Number(campaign.id)));
+      }
+    });
+    return item;
+  }));
+}
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { h } from 'vue'
+import { Button, Popconfirm, message } from 'ant-design-vue'
+import { DeleteOutlined } from '@ant-design/icons-vue'
+import dayjs from 'dayjs'
+import type { Campaign, User } from '@/types'
+import { handleDeleteCampaignsApi } from '@/utils/apiService'
+
+// Delete individual campaign
+const handleDeleteRecords = async (clientIds: number[], recordIds: number[] = []) => {
+  try {
+    // Extract campaign IDs if not provided
+    let stringifiedRecordIds = ''
+    if (recordIds.length === 0 && clientIds?.length > 1) {
+      const campaignIds: number[] = []
+      usersData.value.forEach((user) => {
+        if (clientIds.includes(Number(user.id))) {
+          if (user.campaigns?.length) {
+            user.campaigns.forEach((campaign) => {
+              campaignIds.push(campaign.id)
+            })
+          }
+        }
+      })
+      stringifiedRecordIds = campaignIds.length ? campaignIds.join(',') : ''
+    } else {
+      stringifiedRecordIds = recordIds!.join(',')
+    }
+
+    // API call
+    const res = await handleDeleteCampaignsApi(stringifiedRecordIds)
+    if ([200, 201].includes(res?.status)) {
+      syncAfterDelete(clientIds, recordIds)
+      message.success(`Campaniile ${stringifiedRecordIds} au fost sterse cu succes`)
+    } else {
+      message.error(`Campaniile ${stringifiedRecordIds} nu au putut fi sterse`)
+    }
+  } catch (error) {
+    console.error('Delete campaigns error:', error)
+    message.error('Eroare la stergerea campaniilor')
+  }
+}
+
+// Sync UI after delete
+const syncAfterDelete = (clientIds: number[], recordIds: number[]) => {
+  usersData.value = usersData.value.map((item) => {
+    clientIds.forEach((clientId) => {
+      if (item.id === clientId) {
+        // Remove deleted campaigns from user's campaigns array
+        item.campaigns = item.campaigns?.filter(
+          (campaign) => !recordIds.includes(Number(campaign.id))
+        )
+      }
+    })
+    return item
+  })
+}
+
+// Column render for campaigns
+const renderCampaigns = (record: User) => {
+  if (!record.campaigns?.length) {
+    return h('span', { style: { color: '#909090' } }, ' ... ')
+  }
+
+  return h('div', record.campaigns.map((campaign: Campaign, index: number) => {
+    const subType = subTypesData.value?.find(
+      (item) => item.id === Number(campaign.subTypeId)
+    )
+
+    return h('div', { key: index, class: 'campaign-item' }, [
+      // Campaign Title
+      h('strong', { class: 'campaign-title' }, campaign.title),
+
+      // Subscription Type
+      campaign.subTypeId && h('span', { class: 'campaign-subtype' },
+        ` (${subType?.productName})`
+      ),
+
+      // End Date
+      h('span', { class: 'campaign-end-date' },
+        ` expira la ${dayjs(campaign.endDate).format('DD-MM-YYYY')}`
+      ),
+
+      // Delete Button with Popconfirm
+      h('span', [
+        h(Popconfirm, {
+          title: 'Esti sigur? Datele sterse nu se mai pot recupera!',
+          okText: 'Yes',
+          cancelText: 'No',
+          onConfirm: () => handleDeleteRecords([record.id], [campaign.id!])
+        }, {
+          default: () => h(Button, {
+            type: 'link',
+            danger: true,
+            style: { padding: '7px' }
+          }, {
+            default: () => h(DeleteOutlined)
+          })
+        })
+      ])
+    ])
+  }))
+}
+</script>
+
+<template>
+  <!-- In table column -->
+  <a-table-column
+    title="Titlu Campanie"
+    dataIndex="campaignTitle"
+    key="campaignTitle"
+    :customRender="({ record }) => renderCampaigns(record)"
+  />
+</template>
+
+<style scoped>
+.campaign-item {
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.campaign-title {
+  color: #1890ff;
+  font-weight: 600;
+}
+
+.campaign-subtype,
+.campaign-end-date {
+  font-size: 12px;
+  color: #666;
+}
+</style>
+```
+
+**Campaign Type:**
+```typescript
+type Campaign = {
+  id: number;
+  title: string;           // Ex: "Black Friday Promo"
+  subTypeId: number;       // Subscription type ID
+  endDate: Date;           // Campaign expiration date
+  clientId: number;        // User ID (owner)
+  recipients?: string;     // Comma-separated user IDs (for bulk)
+  value?: number;          // Optional value
+  createdAt?: Date;
+  updatedAt?: Date;
+};
+```
+
+**Delete API:**
+```typescript
+// API: DELETE /v1/campaigns/:campaignIds
+// Params: campaignIds (comma-separated string: "1,2,3")
+// Response: { status: 200, message: 'Campaigns deleted successfully' }
+
+export const handleDeleteCampaignsApi = async (campaignIds: string) => {
+  return await fetch(`/api/v1/campaigns/${campaignIds}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+    },
+  });
+};
+```
+
+**Notes:**
+- **Individual Delete**: Șterge doar 1 campanie (campaignId) pentru 1 user (userId)
+- **Popconfirm**: Confirmă ștergerea pentru a preveni delete accidental
+- **Sync UI**: După delete, campania dispare din user.campaigns array (no re-fetch)
+- **Multiple Campaigns**: User poate avea mai multe campanii - delete se face per campanie
+- **No Campaign**: Dacă user nu are campanii, afișează "..." (gray text)
+
+**Recommendations:**
+1. **Edit Button**: Adaugă edit button lângă delete pentru modificare campanie
+2. **Expired Badge**: Adaugă badge "EXPIRED" pentru campanii expirate (endDate < today)
+3. **Quick Actions**: Adaugă dropdown menu cu Extend, Duplicate, Archive
+4. **Batch Delete**: Adaugă checkbox per campanie pentru bulk delete
+5. **Undo Delete**: Adaugă undo option în success message (5 seconds window)
+
+**Migration Complexity**: MEDIUM (complex render, delete logic, UI sync)
+
+**Estimated Effort**: 1 zi (1 developer)
+
+================================================================================
+TASK 5: Row Selection (Multi-select with Preserve Across Pages)
+================================================================================
+
+**Descriere Business:**
+Tabelul permite selectarea multiplă a utilizatorilor prin checkboxes, cu feature de
+**preserve selection across pages** - selectiile rămân salvate când admin schimbă pagina.
+
+**Important**: Această funcționalitate este ESENȚIALĂ pentru bulk operations (assign campaigns
+la multi-users) - admin poate selecta 10 users din pagina 1, naviga la pagina 2, selecta
+încă 5 users, apoi crea campanie pentru toți cei 15 users.
+
+**User Flow:**
+1. Admin vede tabelul cu utilizatori (pagina 1, 40 items)
+2. Admin selectează 10 users prin checkboxes
+3. Admin navigă la pagina 2
+4. Sistemul PĂSTREAZĂ selecția de 10 users din pagina 1
+5. Admin selectează încă 5 users din pagina 2
+6. Total: 15 users selectați (10 + 5)
+7. Admin click "Adauga in campanie" → formular cu recipients="1,2,3,5,7,..." (15 IDs)
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/learning/CampaignsCard/CampaignsCard.tsx:44-107 (selection logic)
+- State: selectedRowKeys (current page), allSelectedRows (all pages)
+- Row selection: preserveSelectedRowKeys: true (Ant Design Table prop)
+
+**Current Implementation (React):**
+```typescript
+const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);  // Current page selection
+const [allSelectedRows, setAllSelectedRows] = useState<React.Key[]>([]);  // All pages selection
+
+// Reset selection when filters are cleared
+useEffect(() => {
+  if (Object.keys(filters).length === 0) {
+    setSelectedRowKeys([]);
+    setAllSelectedRows([]);
+  }
+}, [filters]);
+
+// Update selected rows when data changes (pagination)
+useEffect(() => {
+  if (data) {
+    // Find which rows from current page are in allSelectedRows
+    const currentPageSelectedRows = data
+      .filter(user => allSelectedRows.includes(user.id))
+      .map(user => user.id);
+    setSelectedRowKeys(currentPageSelectedRows);
+  }
+}, [data, allSelectedRows]);
+
+const onSelectChange = (newSelectedRowKeys: React.Key[]) => {
+  // Get the IDs that were just selected/deselected
+  const newlySelected = newSelectedRowKeys.filter(key => !selectedRowKeys.includes(key));
+  const newlyDeselected = selectedRowKeys.filter(key => !newSelectedRowKeys.includes(key));
+
+  // Update the allSelectedRows state
+  setAllSelectedRows(prev => {
+    // Add newly selected items
+    const withNewSelections = [...prev, ...newlySelected];
+    // Remove newly deselected items
+    return withNewSelections.filter(key => !newlyDeselected.includes(key));
+  });
+
+  // Update the current page selection
+  setSelectedRowKeys(newSelectedRowKeys);
+};
+
+const rowSelection: TableRowSelection<User> = {
+  selectedRowKeys,                // Current page keys
+  onChange: onSelectChange,       // Callback when selection changes
+  preserveSelectedRowKeys: true,  // Preserve across pages (Ant Design feature)
+};
+
+// Table with row selection
+<Table
+  dataSource={data}
+  rowSelection={rowSelection}
+  columns={CAMPAIGNS_COLUMNS}
+  rowKey="id"
+  // ... pagination props
+/>
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref, watch, computed } from 'vue'
+import type { TableRowSelection } from 'ant-design-vue/es/table/interface'
+import type { User } from '@/types'
+
+const selectedRowKeys = ref<number[]>([])  // Current page selection
+const allSelectedRows = ref<number[]>([])  // All pages selection
+
+// Reset selection when filters are cleared
+watch(filters, (newFilters) => {
+  if (Object.keys(newFilters).length === 0) {
+    selectedRowKeys.value = []
+    allSelectedRows.value = []
+  }
+})
+
+// Update selected rows when data changes (pagination)
+watch([data, allSelectedRows], ([newData, newAllSelected]) => {
+  if (newData) {
+    // Find which rows from current page are in allSelectedRows
+    const currentPageSelectedRows = newData
+      .filter((user: User) => newAllSelected.includes(user.id))
+      .map((user: User) => user.id)
+    selectedRowKeys.value = currentPageSelectedRows
+  }
+}, { deep: true })
+
+const onSelectChange = (newSelectedRowKeys: number[]) => {
+  // Get the IDs that were just selected/deselected
+  const newlySelected = newSelectedRowKeys.filter(
+    (key) => !selectedRowKeys.value.includes(key)
+  )
+  const newlyDeselected = selectedRowKeys.value.filter(
+    (key) => !newSelectedRowKeys.includes(key)
+  )
+
+  // Update the allSelectedRows state
+  allSelectedRows.value = [
+    ...allSelectedRows.value.filter((key) => !newlyDeselected.includes(key)),
+    ...newlySelected
+  ]
+
+  // Update the current page selection
+  selectedRowKeys.value = newSelectedRowKeys
+}
+
+const rowSelection = computed<TableRowSelection>(() => ({
+  selectedRowKeys: selectedRowKeys.value,
+  onChange: onSelectChange,
+  preserveSelectedRowKeys: true,  // Preserve across pages
+  type: 'checkbox',
+  columnWidth: 50
+}))
+</script>
+
+<template>
+  <a-table
+    :dataSource="data"
+    :rowSelection="rowSelection"
+    :columns="campaignsColumns"
+    rowKey="id"
+    :pagination="{
+      onChange: handlePagination,
+      pageSize: pageLimit,
+      total: countUsers
+    }"
+  />
+</template>
+```
+
+**Selection Logic Breakdown:**
+
+**State Management:**
+```typescript
+// 2 separate states for tracking selection
+selectedRowKeys: [1, 2, 3]       // IDs visible pe pagina curentă
+allSelectedRows: [1, 2, 3, 5, 7] // TOATE ID-urile selectate (across all pages)
+
+// Example workflow:
+// Page 1: Select users [1, 2, 3]
+// → selectedRowKeys = [1, 2, 3]
+// → allSelectedRows = [1, 2, 3]
+
+// Navigate to Page 2
+// → selectedRowKeys = [] (new page, no selection yet)
+// → allSelectedRows = [1, 2, 3] (PRESERVED!)
+
+// Page 2: Select users [5, 7]
+// → selectedRowKeys = [5, 7]
+// → allSelectedRows = [1, 2, 3, 5, 7] (COMBINED!)
+
+// Navigate back to Page 1
+// → selectedRowKeys = [1, 2, 3] (restored from allSelectedRows)
+// → allSelectedRows = [1, 2, 3, 5, 7] (unchanged)
+```
+
+**Preserve Logic (on pagination change):**
+```typescript
+// When data changes (pagination), restore selection for current page
+useEffect(() => {
+  if (data) {
+    // Filter: which users from current page are in allSelectedRows?
+    const currentPageSelectedRows = data
+      .filter(user => allSelectedRows.includes(user.id))
+      .map(user => user.id);
+
+    // Restore checkboxes for those users
+    setSelectedRowKeys(currentPageSelectedRows);
+  }
+}, [data, allSelectedRows]);
+
+// Example:
+// allSelectedRows = [1, 2, 3, 5, 7]
+// Current page data = [{ id: 1 }, { id: 2 }, { id: 8 }, { id: 9 }]
+// → currentPageSelectedRows = [1, 2] (only 1 și 2 sunt pe pagina curentă)
+// → Checkboxes pentru users 1 și 2 sunt checked automat
+```
+
+**Select/Deselect Logic:**
+```typescript
+const onSelectChange = (newSelectedRowKeys) => {
+  // Calculate changes
+  const newlySelected = newSelectedRowKeys.filter(key => !selectedRowKeys.includes(key));
+  const newlyDeselected = selectedRowKeys.filter(key => !newSelectedRowKeys.includes(key));
+
+  // Update global selection
+  setAllSelectedRows(prev => {
+    // Add new selections
+    const withNewSelections = [...prev, ...newlySelected];
+    // Remove deselections
+    return withNewSelections.filter(key => !newlyDeselected.includes(key));
+  });
+
+  // Update current page selection
+  setSelectedRowKeys(newSelectedRowKeys);
+};
+
+// Example:
+// Current state:
+// selectedRowKeys = [1, 2]
+// allSelectedRows = [1, 2, 5, 7]
+
+// User checks user #3:
+// newSelectedRowKeys = [1, 2, 3]
+// newlySelected = [3]
+// newlyDeselected = []
+// → allSelectedRows = [1, 2, 5, 7, 3]
+
+// User unchecks user #1:
+// newSelectedRowKeys = [2]
+// newlySelected = []
+// newlyDeselected = [1]
+// → allSelectedRows = [2, 5, 7, 3]
+```
+
+**Reset on Filter Clear:**
+```typescript
+// Clear all selections when filters are reset
+useEffect(() => {
+  if (Object.keys(filters).length === 0) {
+    setSelectedRowKeys([]);
+    setAllSelectedRows([]);
+  }
+}, [filters]);
+
+// Why? Când admin resetează filtrele, user-ii se schimbă complet
+// → păstrarea selecțiilor vechi nu mai are sens
+```
+
+**Notes:**
+- **2 State Variables**: selectedRowKeys (current page) + allSelectedRows (all pages)
+- **preserveSelectedRowKeys**: Ant Design Table prop pentru UI persistence
+- **Reset on Filter**: Clear selection când filters se schimbă (previne selection mismatch)
+- **Badge Count**: TitleBar afișează badge cu count-ul total (allSelectedRows.length)
+
+**Recommendations:**
+1. **Select All Pages**: Adaugă buton "Select All {total} Users" pentru select all din toate paginile
+2. **Deselect All**: Adaugă buton "Clear Selection" în TitleBar
+3. **Selection Summary**: Afișează "15 users selected across 3 pages" în TitleBar
+4. **Visual Indicator**: Highlight rows care sunt selected but not visible (different page)
+5. **Max Selection**: Adaugă limit pentru max users selectabili (ex: max 100 pentru performance)
+
+**Migration Complexity**: MEDIUM-HIGH (complex state management, cross-page preservation)
+
+**Estimated Effort**: 1-1.5 zile (1 developer)
+
+================================================================================
+TASK 6: Filters & Search (5 Filters + Debounced Search)
+================================================================================
+
+**Descriere Business:**
+TitleBar conține 5 filtre pentru rafin area listei de utilizatori:
+1. **Search** (text input cu debounce 1s)
+2. **Date Range** (fromEndDate - toEndDate pentru subscription end date)
+3. **Subscription Type** (multi-select)
+4. **Campaign Title** (single select cu opțiuni dinamice)
+5. **Active Subscription** (Yes/No)
+
+Plus buton **Reset** pentru clear all filters.
+
+**User Flow:**
+1. Admin vede TitleBar cu 5 filtre deasupra tabelului
+2. Admin poate folosi unul sau mai multe filtre simultan
+3. Fiecare filter update → API call cu query params
+4. Search are debounce 1 second (evită API spam)
+5. Date range permite "from only" (toEndDate optional)
+6. Reset button → clear toate filtrele și re-fetch all users
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/learning/CampaignsCard/TitleBar.tsx:1-169
+- Filters state: filters (fromEndDate, toEndDate, subTypeIds, campaignTitle, hasActiveSubscription)
+- Search: debounce 1000ms, min 3 chars
+- API: getAllUsersForCampaignsApi(offset, pageLimit, filters)
+
+**Current Implementation (React):**
+```typescript
+import { Input, Badge, Button, DatePicker, Select } from 'antd/lib';
+import { SearchOutlined } from '@ant-design/icons';
+
+type TitleProps = {
+  selectedRows: React.Key[];
+  subTypesData: SubscriptionTypeT[];
+  handleSearch: (searchValue: string) => void;
+  filters: FiltersT;
+  setFilters: React.Dispatch<React.SetStateAction<FiltersT>>;
+  resetSearch: () => void;
+  handleEditModal: (modalAction: MODAL_ACTIONS, recordsToUpdate?: React.Key[]) => void;
+  handleDeleteRecords: (clientIds: number[], recordIds?: number[]) => void;
+};
+
+const TitleBar: React.FC<TitleProps> = ({
+  handleSearch,
+  resetSearch,
+  setFilters,
+  filters,
+  selectedRows,
+  subTypesData,
+  handleEditModal,
+  handleDeleteRecords,
+}) => {
+  const inputRef = useRef<InputRef>(null);
+  const [searchValue, setSearchingVal] = useState<string>('');
+  const [campaignOptions, setCampaignOptions] = useState<string[]>([]);
+
+  // Debounce function
+  function debounce<T extends (...args: any[]) => void>(func: T, wait: number): (...args: Parameters<T>) => void {
+    let timeout: NodeJS.Timeout;
+    return (...args: Parameters<T>) => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func(...args), wait);
+    };
+  }
+
+  const debouncedFetchResults = useCallback(debounce<(searchValue: string) => void>(handleSearch, 1000), []);
+
+  // Filter 1: Search (debounced)
+  const onTypeSearch = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value;
+    setSearchingVal(value);
+    if (value.length > 2) {
+      debouncedFetchResults(value);  // Call API after 1 second
+    }
+  };
+
+  // Filter 2: Date Range (subscription endDate)
+  const onChangeEndDate = (
+    _dates: [Dayjs | null, Dayjs | null] | null,
+    dateStrings: [string, string]
+  ) => {
+    setSearchingVal('');
+    setFilters(prev => ({
+      ...prev,
+      fromEndDate: dateStrings[0],
+      toEndDate: dateStrings[1]
+    }));
+  }
+
+  // Filter 3: Subscription Types (multi-select)
+  const onChangeSubType = (values: string[]) => {
+    setSearchingVal('');
+    setFilters(prev => ({
+      ...prev,
+      subTypeIds: values,
+    }));
+  }
+
+  // Filter 4: Campaign Title (single select)
+  const onChangeCampaignTitle = (value: string) => {
+    setSearchingVal('');
+    setFilters(prev => ({ ...prev, campaignTitle: value }));
+  }
+
+  // Filter 5: Active Subscription (Yes/No)
+  const handleActiveSubscriptionChange = (value: boolean | undefined) => {
+    setFilters(prev => ({
+      ...prev,
+      hasActiveSubscription: value,
+    }));
+  };
+
+  // Reset all filters
+  const onReset = () => {
+    setSearchingVal('');
+    resetSearch();  // Clear filters state + re-fetch all users
+  }
+
+  // Load campaign options (for filter 4)
+  useEffect(() => {
+    const loadCampaignsOptions = async () => {
+      const response = await handleFetchCampaignsApi();
+      setCampaignOptions((response as { data: string[] }).data);
+    };
+    loadCampaignsOptions();
+  }, []);
+
+  return (
+    <div className="flex justify-between items-center" style={{ display: 'flex', padding: '15px 20px', minWidth: '1200px' }}>
+      <h3 className="title-head">Filtre: </h3>
+
+      {/* Filter 1: Search */}
+      <Input
+        className="title-item"
+        ref={inputRef}
+        onChange={onTypeSearch}
+        placeholder='Cautare...'
+        value={searchValue}
+        suffix={<SearchOutlined />}
+      />
+
+      <h3 className="title-head"> Expirare abonament: </h3>
+
+      {/* Filter 2: Date Range */}
+      <DatePicker.RangePicker
+        value={[
+          filters?.fromEndDate ? dayjs(filters?.fromEndDate) : undefined,
+          filters?.toEndDate ? dayjs(filters?.toEndDate) : undefined
+        ]}
+        className="title-item"
+        onChange={onChangeEndDate}
+        placeholder={['de la ', 'pana la']}
+        allowEmpty={[false, true]}  // fromDate required, toDate optional
+      />
+
+      {/* Filter 3: Subscription Types (multi-select) */}
+      <Select
+        className="title-item"
+        mode="multiple"
+        value={filters?.subTypeIds?.map(id => id.toString()) || []}
+        onChange={onChangeSubType}
+        style={{ width: 230 }}
+        placeholder="Filtreaza dupa abonament"
+        maxTagCount="responsive"
+      >
+        {subTypesData.map((item, index) => (
+          <Select.Option key={index} value={item.id.toString()}>
+            {item.title}
+          </Select.Option>
+        ))}
+      </Select>
+
+      {/* Filter 4: Campaign Title (single select) */}
+      <Select
+        className="title-item"
+        value={filters?.campaignTitle?.toString()}
+        onChange={onChangeCampaignTitle}
+        style={{ width: 230 }}
+        placeholder="Filtreaza dupa campanie"
+      >
+        {campaignOptions?.map((item, index) => (
+          <Select.Option key={index} value={item.toString()}>
+            {item}
+          </Select.Option>
+        ))}
+      </Select>
+
+      {/* Filter 5: Active Subscription (Yes/No) */}
+      <Select
+        className="title-item"
+        allowClear
+        style={{ width: 230 }}
+        placeholder="Active Subscription?"
+        onChange={handleActiveSubscriptionChange}
+        value={filters.hasActiveSubscription}
+      >
+        <Select.Option value={true}>Yes</Select.Option>
+        <Select.Option value={false}>No</Select.Option>
+      </Select>
+
+      {/* Reset Button */}
+      <Button className="title-item" type="default" onClick={onReset}>
+        Reset
+      </Button>
+
+      {/* Bulk Actions (visible when rows selected) */}
+      {selectedRows.length > 0 && <>
+        <Badge count={selectedRows.length} style={{ backgroundColor: '#52c41a' }} />
+        <Button type="primary" className="title-item" onClick={() => handleEditModal(MODAL_ACTIONS.ADD_MULTIPLE, selectedRows)}>
+          Adauga in campanie
+        </Button>
+        <Popconfirm title={`Esti sigur? Datele sterse nu se mai pot recupera!`} onConfirm={() => handleDeleteRecords(selectedRows as number[], selectedRows as number[])} okText="Da" cancelText="Nu" >
+          <Button type="default" className="title-item remove-btn">
+            Sterge campanii
+          </Button>
+        </Popconfirm>
+      </>}
+    </div>
+  )
+};
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref, onMounted, computed } from 'vue'
+import { Input, Button, DatePicker, Select, Badge, Popconfirm } from 'ant-design-vue'
+import { SearchOutlined } from '@ant-design/icons-vue'
+import dayjs, { type Dayjs } from 'dayjs'
+import type { FiltersT, SubscriptionTypeT } from '@/types'
+import { handleFetchCampaignsApi } from '@/utils/apiService'
+import { MODAL_ACTIONS } from '@/constants'
+
+interface Props {
+  selectedRows: number[]
+  subTypesData: SubscriptionTypeT[]
+  filters: FiltersT
+  handleSearch: (searchValue: string) => void
+  setFilters: (filters: FiltersT) => void
+  resetSearch: () => void
+  handleEditModal: (modalAction: MODAL_ACTIONS, recordsToUpdate?: number[]) => void
+  handleDeleteRecords: (clientIds: number[], recordIds?: number[]) => void
+}
+
+const props = defineProps<Props>()
+
+const searchValue = ref('')
+const campaignOptions = ref<string[]>([])
+
+// Debounce utility
+const useDebouncedRef = (value: any, delay: number = 1000) => {
+  let timeout: NodeJS.Timeout
+  return (newValue: any) => {
+    clearTimeout(timeout)
+    timeout = setTimeout(() => {
+      value.value = newValue
+    }, delay)
+  }
+}
+
+const debouncedSearch = useDebouncedRef(searchValue, 1000)
+
+// Filter 1: Search (debounced)
+const onTypeSearch = (e: Event) => {
+  const value = (e.target as HTMLInputElement).value
+  searchValue.value = value
+  if (value.length > 2) {
+    debouncedSearch(value)
+    props.handleSearch(value)
+  }
+}
+
+// Filter 2: Date Range
+const onChangeEndDate = (
+  _dates: [Dayjs | null, Dayjs | null] | null,
+  dateStrings: [string, string]
+) => {
+  searchValue.value = ''
+  props.setFilters({
+    ...props.filters,
+    fromEndDate: dateStrings[0],
+    toEndDate: dateStrings[1]
+  })
+}
+
+// Filter 3: Subscription Types (multi-select)
+const onChangeSubType = (values: string[]) => {
+  searchValue.value = ''
+  props.setFilters({
+    ...props.filters,
+    subTypeIds: values
+  })
+}
+
+// Filter 4: Campaign Title
+const onChangeCampaignTitle = (value: string) => {
+  searchValue.value = ''
+  props.setFilters({
+    ...props.filters,
+    campaignTitle: value
+  })
+}
+
+// Filter 5: Active Subscription
+const handleActiveSubscriptionChange = (value: boolean | undefined) => {
+  props.setFilters({
+    ...props.filters,
+    hasActiveSubscription: value
+  })
+}
+
+// Reset all filters
+const onReset = () => {
+  searchValue.value = ''
+  props.resetSearch()
+}
+
+// Load campaign options
+onMounted(async () => {
+  try {
+    const response = await handleFetchCampaignsApi()
+    campaignOptions.value = (response as { data: string[] }).data
+  } catch (error) {
+    console.error('Failed to load campaign options:', error)
+  }
+})
+</script>
+
+<template>
+  <div class="filters-container">
+    <h3 class="title-head">Filtre:</h3>
+
+    <!-- Filter 1: Search -->
+    <a-input
+      v-model:value="searchValue"
+      class="title-item"
+      placeholder="Cautare..."
+      @input="onTypeSearch"
+    >
+      <template #suffix>
+        <SearchOutlined />
+      </template>
+    </a-input>
+
+    <h3 class="title-head">Expirare abonament:</h3>
+
+    <!-- Filter 2: Date Range -->
+    <a-range-picker
+      :value="[
+        filters?.fromEndDate ? dayjs(filters.fromEndDate) : undefined,
+        filters?.toEndDate ? dayjs(filters.toEndDate) : undefined
+      ]"
+      class="title-item"
+      :placeholder="['de la ', 'pana la']"
+      :allowEmpty="[false, true]"
+      @change="onChangeEndDate"
+    />
+
+    <!-- Filter 3: Subscription Types -->
+    <a-select
+      v-model:value="filters.subTypeIds"
+      class="title-item"
+      mode="multiple"
+      :style="{ width: '230px' }"
+      placeholder="Filtreaza dupa abonament"
+      maxTagCount="responsive"
+      @change="onChangeSubType"
+    >
+      <a-select-option
+        v-for="(item, index) in subTypesData"
+        :key="index"
+        :value="item.id.toString()"
+      >
+        {{ item.title }}
+      </a-select-option>
+    </a-select>
+
+    <!-- Filter 4: Campaign Title -->
+    <a-select
+      v-model:value="filters.campaignTitle"
+      class="title-item"
+      :style="{ width: '230px' }"
+      placeholder="Filtreaza dupa campanie"
+      @change="onChangeCampaignTitle"
+    >
+      <a-select-option
+        v-for="(item, index) in campaignOptions"
+        :key="index"
+        :value="item"
+      >
+        {{ item }}
+      </a-select-option>
+    </a-select>
+
+    <!-- Filter 5: Active Subscription -->
+    <a-select
+      v-model:value="filters.hasActiveSubscription"
+      class="title-item"
+      allowClear
+      :style="{ width: '230px' }"
+      placeholder="Active Subscription?"
+      @change="handleActiveSubscriptionChange"
+    >
+      <a-select-option :value="true">Yes</a-select-option>
+      <a-select-option :value="false">No</a-select-option>
+    </a-select>
+
+    <!-- Reset Button -->
+    <a-button class="title-item" type="default" @click="onReset">
+      Reset
+    </a-button>
+
+    <!-- Bulk Actions (visible when rows selected) -->
+    <template v-if="selectedRows.length > 0">
+      <a-badge :count="selectedRows.length" :style="{ backgroundColor: '#52c41a' }" />
+      <a-button
+        type="primary"
+        class="title-item"
+        @click="handleEditModal(MODAL_ACTIONS.ADD_MULTIPLE, selectedRows)"
+      >
+        Adauga in campanie
+      </a-button>
+      <a-popconfirm
+        title="Esti sigur? Datele sterse nu se mai pot recupera!"
+        okText="Da"
+        cancelText="Nu"
+        @confirm="handleDeleteRecords(selectedRows, selectedRows)"
+      >
+        <a-button type="default" class="title-item remove-btn">
+          Sterge campanii
+        </a-button>
+      </a-popconfirm>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+.filters-container {
+  display: flex;
+  padding: 15px 20px;
+  min-width: 1200px;
+  align-items: center;
+  gap: 12px;
+}
+
+.title-head {
+  margin: 0;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.title-item {
+  flex-shrink: 0;
+}
+
+.remove-btn {
+  border-color: #ff4d4f;
+  color: #ff4d4f;
+}
+
+.remove-btn:hover {
+  background-color: #fff1f0;
+}
+</style>
+```
+
+**Filters Type:**
+```typescript
+type FiltersT = {
+  fromEndDate?: string;              // Ex: "2025-01-01"
+  toEndDate?: string;                // Ex: "2025-12-31" (optional)
+  subTypeIds?: string[];             // Ex: ["1", "2", "5"]
+  campaignTitle?: string;            // Ex: "Black Friday Promo"
+  hasActiveSubscription?: boolean;   // true/false/undefined
+};
+```
+
+**API Integration:**
+```typescript
+// API: GET /v1/users/campaigns
+// Query params: offset, limit, fromEndDate, toEndDate, subTypeIds, campaignTitle, hasActiveSubscription
+// Response: { users: User[], count: number, subTypes: { subscriptionTypes: SubscriptionTypeT[], count: number } }
+
+const getAllUsersForCampaignsApi = async (
+  offset: number,
+  pageLimit: number,
+  setLoading: (loading: boolean) => void,
+  filters: FiltersT,
+  accessToken: string
+) => {
+  const queryParams = new URLSearchParams({
+    offset: offset.toString(),
+    limit: pageLimit.toString(),
+    ...(filters.fromEndDate && { fromEndDate: filters.fromEndDate }),
+    ...(filters.toEndDate && { toEndDate: filters.toEndDate }),
+    ...(filters.subTypeIds && { subTypeIds: filters.subTypeIds.join(',') }),
+    ...(filters.campaignTitle && { campaignTitle: filters.campaignTitle }),
+    ...(filters.hasActiveSubscription !== undefined && { hasActiveSubscription: filters.hasActiveSubscription.toString() }),
+  });
+
+  return await fetch(`/api/v1/users/campaigns?${queryParams}`, {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+    },
+  });
+};
+```
+
+**Notes:**
+- **5 Independent Filters**: Pot fi folosite individual sau combinat
+- **Debounced Search**: 1 second delay, min 3 chars pentru a evita API spam
+- **Date Range**: fromEndDate required, toEndDate optional (allow filter "from date onwards")
+- **Multi-select**: Subscription types pot fi multiple (OR condition în backend)
+- **Dynamic Options**: Campaign titles sunt loaded dinamic de la API
+- **Reset**: Clear toate filtrele și re-fetch all users cu default pagination
+- **Bulk Actions**: Visible doar când selectedRows.length > 0
+
+**Recommendations:**
+1. **Filter Count**: Afișează count-ul de filtre active (ex: "3 filters active")
+2. **Save Filters**: Adaugă "Save Filter Preset" pentru re-use frecvent
+3. **Quick Filters**: Adaugă preset buttons ("Expiring Soon", "No Campaigns", "Active Only")
+4. **Clear Individual**: Adaugă X button per filter pentru clear individual (nu doar global reset)
+5. **URL Sync**: Sync filters cu URL query params pentru bookmarking/sharing
+
+**Migration Complexity**: MEDIUM (5 filters, debounce logic, dynamic options)
+
+**Estimated Effort**: 1 zi (1 developer)
+
+================================================================================
+TASK 7: Campaign Form (Create/Edit with 6 Fields)
+================================================================================
+
+**Descriere Business:**
+Formularul de campanie permite admin-ului să creeze sau editeze o campanie pentru unul sau mai mulți utilizatori.
+Campania constă în asignarea unui subscription type cu dată de expirare și opțiuni de afișare (timer, counter).
+
+**Două moduri de utilizare:**
+1. **Single User**: Admin selectează 1 user și deschide formularul → recipients = userId
+2. **Bulk Assignment**: Admin selectează mai mulți users și deschide formularul → recipients = "1,2,3,5,7"
+
+**User Flow:**
+1. Admin selectează unul sau mai mulți users din tabel
+2. Admin click "Adauga in campanie" → Drawer cu formular se deschide
+3. Admin completează: Title, End Date, Subscription Type, Timer Enabled, Counter Enabled, Max Acquisitions
+4. Admin submit → POST/PATCH la API
+5. După success, campaniile sunt adăugate la users și UI se actualizează (sync)
+6. Drawer se închide automat
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/learning/CampaignForm/CampaignForm.tsx:1-219
+- API: POST /v1/campaigns (create), PATCH /v1/campaigns/:id (update)
+- Sync: handleEditModal(SYNC, undefined, resultedRecords) → syncAfterUpdate()
+
+**Current Implementation (React):**
+```typescript
+import { Button, Form, Input, DatePicker, Select, Radio, InputNumber, message } from 'antd/lib';
+import { useAuth } from '../../../../context/auth';
+import { handleCreateCampaignApi, handleUpdateCampaignApi } from '../../../../utils/apiService';
+
+export type CampaignFieldType = {
+  id: number;                    // Hidden field (for update)
+  recipients: string;            // Hidden field (comma-separated user IDs)
+  title: string;                 // Required, min 3 chars
+  endDate: string;               // Required, DatePicker
+  subTypeId: string;             // Required, subscription type select
+  maxAcquisitions?: number;      // Optional, InputNumber
+  timerEnabled: boolean;         // Radio (Da/Nu) - countdown timer on campaign card
+  counterEnabled: boolean;       // Radio (Da/Nu) - acquisitions counter on campaign card
+};
+
+type CampaignFormProps = {
+  recordToUpdate?: Campaign | React.Key[];  // Single campaign OR array of user IDs
+  handleEditModal: (modalAction: MODAL_ACTIONS, recordsToUpdate?: React.Key[], resultedRecords?: Campaign[]) => void;
+  subTypesData: SubscriptionTypeT[];        // Only status=2 (Campanie) types
+};
+
+export const CampaignForm: React.FC<CampaignFormProps> = ({
+  recordToUpdate,
+  handleEditModal,
+  subTypesData,
+}) => {
+  const { authUser } = useAuth();
+  const [form] = Form.useForm<CampaignFieldType>();
+
+  // Determine if create or update mode
+  const isUpdateMode = !Array.isArray(recordToUpdate) && typeof recordToUpdate === 'object';
+  const isBulkMode = Array.isArray(recordToUpdate);
+
+  // Initial values
+  const initialValues: CampaignFieldType = {
+    id: isUpdateMode ? (recordToUpdate as Campaign).id : 0,
+    recipients: Array.isArray(recordToUpdate)
+      ? recordToUpdate?.join(',')  // Bulk: "1,2,3,5"
+      : (recordToUpdate as Campaign)?.clientId?.toString() || '',  // Single: "123"
+    title: isUpdateMode ? (recordToUpdate as Campaign).title : '',
+    endDate: isUpdateMode ? dayjs((recordToUpdate as Campaign).endDate).format('YYYY-MM-DD') : '',
+    subTypeId: isUpdateMode ? (recordToUpdate as Campaign).subTypeId.toString() : '',
+    timerEnabled: isUpdateMode ? (recordToUpdate as Campaign).timerEnabled : false,
+    counterEnabled: isUpdateMode ? (recordToUpdate as Campaign).counterEnabled : false,
+    maxAcquisitions: isUpdateMode ? (recordToUpdate as Campaign).maxAcquisitions : undefined,
+  };
+
+  // Submit handler
+  const handleSubmit = async (values: CampaignFieldType) => {
+    try {
+      // Determine create or update
+      const isUpdate = values.id && !isBulkMode;
+
+      // API call
+      const res = isUpdate
+        ? await handleUpdateCampaignApi(values.id, values, authUser?.accessToken ?? "")
+        : await handleCreateCampaignApi(values, authUser?.accessToken ?? "");
+
+      if ([200, 201].includes(res?.status)) {
+        // Handle response - API returns campaigns array for bulk, single campaign for single
+        if ('campaigns' in res.data) {
+          // Bulk create response: { campaigns: Campaign[] }
+          handleEditModal(MODAL_ACTIONS.SYNC, undefined, res.data.campaigns);
+          message.success(`${res.data.campaigns.length} utilizatori au fost adaugati in campanie`);
+        } else if ('campaign' in res.data) {
+          // Single create/update response: { campaign: Campaign }
+          handleEditModal(MODAL_ACTIONS.SYNC, undefined, [res.data.campaign]);
+          message.success(isUpdate ? 'Campania a fost actualizata' : 'Campania a fost creata');
+        }
+      } else {
+        message.error('Eroare la salvarea campaniei');
+      }
+    } catch (error) {
+      console.error('Campaign form error:', error);
+      message.error('Eroare la salvarea campaniei');
+    }
+  };
+
+  return (
+    <Form
+      form={form}
+      layout="vertical"
+      initialValues={initialValues}
+      onFinish={handleSubmit}
+    >
+      {/* Hidden Field: ID */}
+      <Form.Item name="id" hidden>
+        <Input type="hidden" />
+      </Form.Item>
+
+      {/* Hidden Field: Recipients */}
+      <Form.Item name="recipients" hidden>
+        <Input type="hidden" />
+      </Form.Item>
+
+      {/* Field 1: Campaign Title */}
+      <Form.Item
+        label="Titlu Campanie"
+        name="title"
+        rules={[
+          { required: true, message: 'Titlul este obligatoriu' },
+          { min: 3, message: 'Titlul trebuie sa aiba minim 3 caractere' }
+        ]}
+      >
+        <Input placeholder="Ex: Black Friday Promo" />
+      </Form.Item>
+
+      {/* Field 2: End Date */}
+      <Form.Item
+        label="Data Expirare"
+        name="endDate"
+        rules={[{ required: true, message: 'Data expirare este obligatorie' }]}
+      >
+        <DatePicker
+          style={{ width: '100%' }}
+          format="YYYY-MM-DD"
+          placeholder="Selecteaza data"
+          disabledDate={(current) => current && current < dayjs().startOf('day')}
+        />
+      </Form.Item>
+
+      {/* Field 3: Subscription Type */}
+      <Form.Item
+        label="Tip Abonament"
+        name="subTypeId"
+        rules={[{ required: true, message: 'Tipul abonament este obligatoriu' }]}
+      >
+        <Select placeholder="Selecteaza abonament" allowClear>
+          {subTypesData.map((subType) => (
+            <Select.Option key={subType.id} value={subType.id.toString()}>
+              {subType.productName} ({subType.title})
+            </Select.Option>
+          ))}
+        </Select>
+      </Form.Item>
+
+      {/* Field 4: Timer Enabled */}
+      <Form.Item
+        label="Afiseaza Timer (countdown pe card)"
+        name="timerEnabled"
+        rules={[{ required: true, message: 'Selecteaza o optiune' }]}
+      >
+        <Radio.Group>
+          <Radio value={true}>Da</Radio>
+          <Radio value={false}>Nu</Radio>
+        </Radio.Group>
+      </Form.Item>
+
+      {/* Field 5: Counter Enabled */}
+      <Form.Item
+        label="Afiseaza Counter (achizitii ramase)"
+        name="counterEnabled"
+        rules={[{ required: true, message: 'Selecteaza o optiune' }]}
+      >
+        <Radio.Group>
+          <Radio value={true}>Da</Radio>
+          <Radio value={false}>Nu</Radio>
+        </Radio.Group>
+      </Form.Item>
+
+      {/* Field 6: Max Acquisitions (optional) */}
+      <Form.Item
+        label="Numar Maxim Achizitii (optional)"
+        name="maxAcquisitions"
+      >
+        <InputNumber
+          min={1}
+          placeholder="Ex: 100"
+          style={{ width: '100%' }}
+        />
+      </Form.Item>
+
+      {/* Submit Button */}
+      <Form.Item>
+        <Button type="primary" htmlType="submit" block>
+          {isUpdateMode ? 'Actualizeaza Campanie' : 'Creaza Campanie'}
+        </Button>
+      </Form.Item>
+    </Form>
+  );
+};
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref, reactive, computed } from 'vue'
+import { Form, Input, DatePicker, Select, Radio, InputNumber, Button, message } from 'ant-design-vue'
+import dayjs from 'dayjs'
+import type { Campaign, SubscriptionTypeT } from '@/types'
+import { MODAL_ACTIONS } from '@/constants'
+import { handleCreateCampaignApi, handleUpdateCampaignApi } from '@/utils/apiService'
+import { useAuthStore } from '@/stores/auth'
+
+interface CampaignFieldType {
+  id: number
+  recipients: string
+  title: string
+  endDate: string
+  subTypeId: string
+  maxAcquisitions?: number
+  timerEnabled: boolean
+  counterEnabled: boolean
+}
+
+interface Props {
+  recordToUpdate?: Campaign | number[]
+  subTypesData: SubscriptionTypeT[]
+  handleEditModal: (
+    modalAction: MODAL_ACTIONS,
+    recordsToUpdate?: number[],
+    resultedRecords?: Campaign[]
+  ) => void
+}
+
+const props = defineProps<Props>()
+
+const authStore = useAuthStore()
+const formRef = ref()
+
+// Determine mode
+const isUpdateMode = computed(() =>
+  !Array.isArray(props.recordToUpdate) && typeof props.recordToUpdate === 'object'
+)
+const isBulkMode = computed(() => Array.isArray(props.recordToUpdate))
+
+// Form model
+const formState = reactive<CampaignFieldType>({
+  id: isUpdateMode.value ? (props.recordToUpdate as Campaign).id : 0,
+  recipients: Array.isArray(props.recordToUpdate)
+    ? props.recordToUpdate.join(',')
+    : (props.recordToUpdate as Campaign)?.clientId?.toString() || '',
+  title: isUpdateMode.value ? (props.recordToUpdate as Campaign).title : '',
+  endDate: isUpdateMode.value
+    ? dayjs((props.recordToUpdate as Campaign).endDate).format('YYYY-MM-DD')
+    : '',
+  subTypeId: isUpdateMode.value
+    ? (props.recordToUpdate as Campaign).subTypeId.toString()
+    : '',
+  timerEnabled: isUpdateMode.value ? (props.recordToUpdate as Campaign).timerEnabled : false,
+  counterEnabled: isUpdateMode.value ? (props.recordToUpdate as Campaign).counterEnabled : false,
+  maxAcquisitions: isUpdateMode.value ? (props.recordToUpdate as Campaign).maxAcquisitions : undefined
+})
+
+// Validation rules
+const rules = {
+  title: [
+    { required: true, message: 'Titlul este obligatoriu', trigger: 'blur' },
+    { min: 3, message: 'Titlul trebuie sa aiba minim 3 caractere', trigger: 'blur' }
+  ],
+  endDate: [
+    { required: true, message: 'Data expirare este obligatorie', trigger: 'change' }
+  ],
+  subTypeId: [
+    { required: true, message: 'Tipul abonament este obligatoriu', trigger: 'change' }
+  ],
+  timerEnabled: [
+    { required: true, message: 'Selecteaza o optiune', trigger: 'change' }
+  ],
+  counterEnabled: [
+    { required: true, message: 'Selecteaza o optiune', trigger: 'change' }
+  ]
+}
+
+// Disable past dates
+const disabledDate = (current: dayjs.Dayjs) => {
+  return current && current < dayjs().startOf('day')
+}
+
+// Submit handler
+const handleSubmit = async () => {
+  try {
+    await formRef.value.validate()
+
+    const isUpdate = formState.id && !isBulkMode.value
+
+    // API call
+    const res = isUpdate
+      ? await handleUpdateCampaignApi(
+          formState.id,
+          formState,
+          authStore.accessToken || ''
+        )
+      : await handleCreateCampaignApi(formState, authStore.accessToken || '')
+
+    if ([200, 201].includes(res?.status)) {
+      // Handle response
+      if ('campaigns' in res.data) {
+        // Bulk create response
+        props.handleEditModal(MODAL_ACTIONS.SYNC, undefined, res.data.campaigns)
+        message.success(`${res.data.campaigns.length} utilizatori au fost adaugati in campanie`)
+      } else if ('campaign' in res.data) {
+        // Single create/update response
+        props.handleEditModal(MODAL_ACTIONS.SYNC, undefined, [res.data.campaign])
+        message.success(
+          isUpdate ? 'Campania a fost actualizata' : 'Campania a fost creata'
+        )
+      }
+    } else {
+      message.error('Eroare la salvarea campaniei')
+    }
+  } catch (error) {
+    console.error('Campaign form error:', error)
+    message.error('Eroare la salvarea campaniei')
+  }
+}
+</script>
+
+<template>
+  <a-form
+    ref="formRef"
+    :model="formState"
+    :rules="rules"
+    layout="vertical"
+    @finish="handleSubmit"
+  >
+    <!-- Hidden Field: ID -->
+    <a-form-item name="id" :hidden="true">
+      <a-input v-model:value="formState.id" type="hidden" />
+    </a-form-item>
+
+    <!-- Hidden Field: Recipients -->
+    <a-form-item name="recipients" :hidden="true">
+      <a-input v-model:value="formState.recipients" type="hidden" />
+    </a-form-item>
+
+    <!-- Field 1: Campaign Title -->
+    <a-form-item label="Titlu Campanie" name="title">
+      <a-input
+        v-model:value="formState.title"
+        placeholder="Ex: Black Friday Promo"
+      />
+    </a-form-item>
+
+    <!-- Field 2: End Date -->
+    <a-form-item label="Data Expirare" name="endDate">
+      <a-date-picker
+        v-model:value="formState.endDate"
+        :style="{ width: '100%' }"
+        format="YYYY-MM-DD"
+        placeholder="Selecteaza data"
+        :disabledDate="disabledDate"
+      />
+    </a-form-item>
+
+    <!-- Field 3: Subscription Type -->
+    <a-form-item label="Tip Abonament" name="subTypeId">
+      <a-select
+        v-model:value="formState.subTypeId"
+        placeholder="Selecteaza abonament"
+        allowClear
+      >
+        <a-select-option
+          v-for="subType in subTypesData"
+          :key="subType.id"
+          :value="subType.id.toString()"
+        >
+          {{ subType.productName }} ({{ subType.title }})
+        </a-select-option>
+      </a-select>
+    </a-form-item>
+
+    <!-- Field 4: Timer Enabled -->
+    <a-form-item label="Afiseaza Timer (countdown pe card)" name="timerEnabled">
+      <a-radio-group v-model:value="formState.timerEnabled">
+        <a-radio :value="true">Da</a-radio>
+        <a-radio :value="false">Nu</a-radio>
+      </a-radio-group>
+    </a-form-item>
+
+    <!-- Field 5: Counter Enabled -->
+    <a-form-item label="Afiseaza Counter (achizitii ramase)" name="counterEnabled">
+      <a-radio-group v-model:value="formState.counterEnabled">
+        <a-radio :value="true">Da</a-radio>
+        <a-radio :value="false">Nu</a-radio>
+      </a-radio-group>
+    </a-form-item>
+
+    <!-- Field 6: Max Acquisitions (optional) -->
+    <a-form-item label="Numar Maxim Achizitii (optional)" name="maxAcquisitions">
+      <a-input-number
+        v-model:value="formState.maxAcquisitions"
+        :min="1"
+        placeholder="Ex: 100"
+        :style="{ width: '100%' }"
+      />
+    </a-form-item>
+
+    <!-- Submit Button -->
+    <a-form-item>
+      <a-button type="primary" html-type="submit" block>
+        {{ isUpdateMode ? 'Actualizeaza Campanie' : 'Creaza Campanie' }}
+      </a-button>
+    </a-form-item>
+  </a-form>
+</template>
+
+<style scoped>
+:deep(.ant-form-item) {
+  margin-bottom: 16px;
+}
+</style>
+```
+
+**Campaign Type:**
+```typescript
+type Campaign = {
+  id: number;
+  title: string;               // Ex: "Black Friday Promo"
+  subTypeId: number;           // Subscription type ID (only status=2)
+  endDate: Date;               // Campaign expiration date
+  clientId: number;            // User ID (for single user)
+  recipients?: string;         // Comma-separated user IDs (for bulk: "1,2,3,5")
+  timerEnabled: boolean;       // Show countdown timer on campaign card (client-side UI)
+  counterEnabled: boolean;     // Show acquisitions counter on campaign card (client-side UI)
+  maxAcquisitions?: number;    // Max number of acquisitions (for counter)
+  value?: number;
+  createdAt?: Date;
+  updatedAt?: Date;
+};
+```
+
+**API Endpoints:**
+```typescript
+// Create Campaign (single or bulk)
+// POST /v1/campaigns
+// Body: CampaignFieldType
+// Response (single): { status: 201, data: { campaign: Campaign } }
+// Response (bulk): { status: 201, data: { campaigns: Campaign[] } }
+
+export const handleCreateCampaignApi = async (
+  campaignData: CampaignFieldType,
+  accessToken: string
+) => {
+  return await fetch('/api/v1/campaigns', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(campaignData),
+  });
+};
+
+// Update Campaign
+// PATCH /v1/campaigns/:id
+// Body: CampaignFieldType
+// Response: { status: 200, data: { campaign: Campaign } }
+
+export const handleUpdateCampaignApi = async (
+  campaignId: number,
+  campaignData: CampaignFieldType,
+  accessToken: string
+) => {
+  return await fetch(`/api/v1/campaigns/${campaignId}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(campaignData),
+  });
+};
+```
+
+**Form Modes:**
+
+**1. Single User Mode (Create/Edit)**:
+```typescript
+// User clicks on specific campaign → edit mode
+recordToUpdate = {
+  id: 123,
+  title: "Black Friday Promo",
+  subTypeId: 2,
+  endDate: new Date("2025-12-31"),
+  clientId: 456,
+  timerEnabled: true,
+  counterEnabled: false,
+  maxAcquisitions: 100,
+}
+
+// Form initialized with campaign data
+// Submit → PATCH /v1/campaigns/123
+```
+
+**2. Single User Mode (Create)**:
+```typescript
+// Admin selects 1 user, clicks "Adauga in campanie"
+recordToUpdate = [789]  // Single user ID in array
+
+// Form initialized with:
+// recipients = "789"
+// All other fields empty
+
+// Submit → POST /v1/campaigns
+// Response: { campaign: Campaign }
+```
+
+**3. Bulk Mode (Create)**:
+```typescript
+// Admin selects multiple users, clicks "Adauga in campanie"
+recordToUpdate = [1, 2, 3, 5, 7]  // Multiple user IDs
+
+// Form initialized with:
+// recipients = "1,2,3,5,7"
+// All other fields empty
+
+// Submit → POST /v1/campaigns
+// Response: { campaigns: [Campaign, Campaign, ...] }  // One campaign per user
+```
+
+**Field Details:**
+
+**1. Title** (required, min 3 chars):
+- Input text field
+- Validation: Required, minimum 3 characters
+- Example: "Black Friday Promo", "Summer Campaign"
+
+**2. End Date** (required):
+- DatePicker with disabled past dates
+- Format: YYYY-MM-DD
+- Validation: Required, must be future date
+- Example: "2025-12-31"
+
+**3. Subscription Type** (required):
+- Select dropdown with subscription types
+- Only shows types with status=2 (Campanie)
+- Display: "{productName} ({title})"
+- Example: "Abonament Premium (Premium Access)"
+
+**4. Timer Enabled** (required, boolean):
+- Radio buttons (Da/Nu)
+- Controls if countdown timer appears on campaign card (client-side UI)
+- Default: false
+
+**5. Counter Enabled** (required, boolean):
+- Radio buttons (Da/Nu)
+- Controls if acquisitions counter appears on campaign card (client-side UI)
+- Works in conjunction with maxAcquisitions
+- Default: false
+
+**6. Max Acquisitions** (optional):
+- InputNumber field (min: 1)
+- Used for counter display (X/100 acquisitions remaining)
+- Only relevant if counterEnabled = true
+- Example: 100
+
+**Response Handling:**
+
+**Single Create/Update:**
+```typescript
+// Response: { status: 200/201, data: { campaign: Campaign } }
+if ('campaign' in res.data) {
+  handleEditModal(SYNC, undefined, [res.data.campaign]);
+  message.success('Campania a fost creata/actualizata');
+}
+```
+
+**Bulk Create:**
+```typescript
+// Response: { status: 201, data: { campaigns: Campaign[] } }
+if ('campaigns' in res.data) {
+  handleEditModal(SYNC, undefined, res.data.campaigns);
+  message.success(`${res.data.campaigns.length} utilizatori au fost adaugati in campanie`);
+}
+
+// Example: 5 users selected → 5 campaigns created (one per user)
+```
+
+**Sync After Submit:**
+```typescript
+// After successful create/update, sync UI with new campaigns
+const syncAfterUpdate = (newRecords: Campaign[]) => {
+  setUsersData(prevState => prevState?.map(function (item) {
+    newRecords?.forEach(function (newRecord) {
+      if (Number(item.id) === Number(newRecord?.clientId)) {
+        if (!item.campaigns) {
+          item.campaigns = [];
+        }
+        // Check if campaign already exists (update mode)
+        if (item.campaigns?.some((campaign) => Number(campaign.id) === Number(newRecord.id))) {
+          item.campaigns = item.campaigns.map((campaign) => {
+            if (Number(campaign.id) === Number(newRecord.id)) {
+              return newRecord;  // Replace with updated campaign
+            }
+            return campaign;
+          });
+        } else {
+          item.campaigns.push(newRecord);  // Add new campaign
+        }
+      }
+    });
+    return item;
+  }));
+};
+```
+
+**Notes:**
+- **2 Hidden Fields**: id și recipients (not visible to user)
+- **recipients Field**: Comma-separated user IDs pentru bulk assignment
+- **Subscription Type Filter**: Doar status=2 (Campanie) types disponibile
+- **Timer & Counter**: Client-side display options (NU afectează subscription functionality)
+- **Bulk Response**: API returnează array de campaigns (1 per user)
+- **Auto-close**: Drawer se închide automat după success (via handleEditModal)
+- **No Re-fetch**: UI se actualizează prin syncAfterUpdate (no API re-fetch)
+
+**Recommendations:**
+1. **Preview**: Adaugă preview section pentru campaign card (show how timer/counter look)
+2. **Duplicate Campaign**: Adaugă "Duplicate" button pentru create similar campaign
+3. **Template**: Adaugă campaign templates pentru quick setup
+4. **Validation**: Adaugă warning dacă user already has campaign cu același subTypeId
+5. **Bulk Limits**: Adaugă max limit pentru bulk assignment (ex: max 50 users)
+
+**Migration Complexity**: MEDIUM (8 fields, 3 modes, dual API responses, sync logic)
+
+**Estimated Effort**: 1.5-2 zile (1 developer)
+
+================================================================================
+TASK 8: Bulk Campaign Assignment (Multi-select Users)
+================================================================================
+
+**Descriere Business:**
+Admin poate selecta mai mulți utilizatori din tabel (cross-page selection) și să le asigneze
+tuturor o campanie identică prin același formular. Sistema creează câte o campanie pentru
+fiecare user selectat.
+
+**User Flow:**
+1. Admin navighează prin tabel și selectează multiple users (ex: 15 users din 3 pagini diferite)
+2. Badge verde afișează count-ul total (15) în TitleBar
+3. Admin click buton "Adauga in campanie" (visible doar când selectedRows > 0)
+4. Se deschide Drawer cu CampaignForm
+5. Formular are recipients field = "1,2,3,5,7,..." (comma-separated IDs, hidden)
+6. Admin completează campaign details (title, endDate, subTypeId, etc.)
+7. Admin submit → POST /v1/campaigns cu recipients array
+8. API creează 15 campanii identice (1 per user)
+9. Response: { campaigns: Campaign[] } (array cu 15 campaigns)
+10. UI se actualizează instant (sync without re-fetch)
+11. Success message: "15 utilizatori au fost adaugati in campanie"
+12. Selection se resetează (selectedRows = [])
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/learning/CampaignsCard/TitleBar.tsx:150-162 (bulk button)
+- File: admin/src/pages/dashboards/Campaigns.tsx:153-164 (modal handler)
+- File: admin/src/components/dashboard/learning/CampaignForm/CampaignForm.tsx:40-100 (bulk mode)
+- API: POST /v1/campaigns cu recipients="1,2,3,5"
+
+**Current Implementation (React):**
+
+**TitleBar - Bulk Button (visible when rows selected):**
+```typescript
+{selectedRows.length > 0 && (
+  <>
+    {/* Badge showing selection count */}
+    <Badge count={selectedRows.length} style={{ backgroundColor: '#52c41a' }} />
+
+    {/* Bulk Campaign Assignment Button */}
+    <Button
+      type="primary"
+      className="title-item"
+      onClick={() => handleEditModal(MODAL_ACTIONS.ADD_MULTIPLE, selectedRows)}
+    >
+      Adauga in campanie
+    </Button>
+
+    {/* Bulk Delete Button (separate task) */}
+    <Popconfirm
+      title={`Esti sigur? Datele sterse nu se mai pot recupera!`}
+      onConfirm={() => handleDeleteRecords(selectedRows as number[], selectedRows as number[])}
+      okText="Da"
+      cancelText="Nu"
+    >
+      <Button type="default" className="title-item remove-btn">
+        Sterge campanii
+      </Button>
+    </Popconfirm>
+  </>
+)}
+```
+
+**Campaigns Page - Modal Handler:**
+```typescript
+const handleEditModal = (
+  action: MODAL_ACTIONS,
+  recordsToUpdate?: React.Key[],
+  resultedRecords?: Campaign[]
+) => {
+  setModalAction(action);
+
+  if (recordsToUpdate) {
+    setUserToUpdate(recordsToUpdate);  // Array of user IDs for bulk
+  }
+
+  // AFTER CLOSING ACTION the modal (Sync ui data)
+  if (action === SYNC && resultedRecords) {
+    syncAfterUpdate(resultedRecords as Campaign[]);  // Update UI with new campaigns
+    setModalAction(CLOSE);
+    setUserToUpdate(undefined);
+  }
+};
+
+// Sync UI after bulk campaign creation
+const syncAfterUpdate = (newRecords: Campaign[]) => {
+  setUsersData(prevState => prevState?.map(function (item) {
+    newRecords?.forEach(function (newRecord) {
+      // Match user by clientId
+      if (Number(item.id) === Number(newRecord?.clientId)) {
+        if (!item.campaigns) {
+          item.campaigns = [];
+        }
+        // Check if campaign already exists
+        if (item.campaigns?.some((campaign) => Number(campaign.id) === Number(newRecord.id))) {
+          // Update existing campaign
+          item.campaigns = item.campaigns.map((campaign) => {
+            if (Number(campaign.id) === Number(newRecord.id)) {
+              return newRecord;
+            }
+            return campaign;
+          });
+        } else {
+          // Add new campaign
+          item.campaigns.push(newRecord);
+        }
+      }
+    });
+    return item;
+  }));
+};
+```
+
+**Campaign Form - Bulk Mode:**
+```typescript
+const isBulkMode = Array.isArray(recordToUpdate);
+
+const initialValues: CampaignFieldType = {
+  // ...
+  recipients: Array.isArray(recordToUpdate)
+    ? recordToUpdate?.join(',')  // "1,2,3,5,7,..." (comma-separated)
+    : (recordToUpdate as Campaign)?.clientId?.toString() || '',
+  // ...
+};
+
+const handleSubmit = async (values: CampaignFieldType) => {
+  try {
+    // API call (POST for bulk)
+    const res = await handleCreateCampaignApi(values, authUser?.accessToken ?? "");
+
+    if ([200, 201].includes(res?.status)) {
+      // Bulk create response: { campaigns: Campaign[] }
+      if ('campaigns' in res.data) {
+        handleEditModal(MODAL_ACTIONS.SYNC, undefined, res.data.campaigns);
+        message.success(`${res.data.campaigns.length} utilizatori au fost adaugati in campanie`);
+      }
+    }
+  } catch (error) {
+    console.error('Campaign form error:', error);
+    message.error('Eroare la salvarea campaniei');
+  }
+};
+```
+
+**Drawer Rendering:**
+```typescript
+<Drawer
+  title={`${modalAction === UPDATE ? 'Update' : 'Create'} a campaign`}
+  width={editModalWidth}  // 640px or 100% (mobile)
+  placement="right"
+  open={modalAction !== CLOSE}
+  onClose={() => handleEditModal(CLOSE)}
+>
+  {!!((userToUpdate) || modalAction === CREATE || modalAction === ADD_MULTIPLE) && (
+    <CampaignForm
+      recordToUpdate={userToUpdate}  // Array of user IDs [1,2,3,5]
+      handleEditModal={handleEditModal}
+      subTypesData={subTypesData.filter(item => item.status === CAMPAIGN_STATUS)}  // Only status=2
+    />
+  )}
+</Drawer>
+```
+
+**Target Implementation (Vue.js 3):**
+
+**TitleBar.vue - Bulk Button:**
+```vue
+<script setup lang="ts">
+import { Badge, Button, Popconfirm } from 'ant-design-vue'
+import { MODAL_ACTIONS } from '@/constants'
+
+interface Props {
+  selectedRows: number[]
+  handleEditModal: (modalAction: MODAL_ACTIONS, recordsToUpdate?: number[]) => void
+  handleDeleteRecords: (clientIds: number[], recordIds?: number[]) => void
+}
+
+const props = defineProps<Props>()
+</script>
+
+<template>
+  <div class="filters-container">
+    <!-- ... filters ... -->
+
+    <!-- Bulk Actions (visible when rows selected) -->
+    <template v-if="selectedRows.length > 0">
+      <!-- Badge showing selection count -->
+      <a-badge
+        :count="selectedRows.length"
+        :style="{ backgroundColor: '#52c41a' }"
+      />
+
+      <!-- Bulk Campaign Assignment Button -->
+      <a-button
+        type="primary"
+        class="title-item"
+        @click="handleEditModal(MODAL_ACTIONS.ADD_MULTIPLE, selectedRows)"
+      >
+        Adauga in campanie
+      </a-button>
+
+      <!-- Bulk Delete Button -->
+      <a-popconfirm
+        title="Esti sigur? Datele sterse nu se mai pot recupera!"
+        okText="Da"
+        cancelText="Nu"
+        @confirm="handleDeleteRecords(selectedRows, selectedRows)"
+      >
+        <a-button type="default" class="title-item remove-btn">
+          Sterge campanii
+        </a-button>
+      </a-popconfirm>
+    </template>
+  </div>
+</template>
+```
+
+**Campaigns.vue - Modal Handler:**
+```vue
+<script setup lang="ts">
+import { ref } from 'vue'
+import { Drawer } from 'ant-design-vue'
+import CampaignForm from '@/components/CampaignForm.vue'
+import { MODAL_ACTIONS } from '@/constants'
+import type { Campaign } from '@/types'
+
+const modalAction = ref<MODAL_ACTIONS>(MODAL_ACTIONS.CLOSE)
+const userToUpdate = ref<Campaign | number[]>()
+const editModalWidth = ref('640px')
+
+const handleEditModal = (
+  action: MODAL_ACTIONS,
+  recordsToUpdate?: number[],
+  resultedRecords?: Campaign[]
+) => {
+  modalAction.value = action
+
+  if (recordsToUpdate) {
+    userToUpdate.value = recordsToUpdate  // Array of user IDs for bulk
+  }
+
+  // AFTER CLOSING ACTION - Sync UI data
+  if (action === MODAL_ACTIONS.SYNC && resultedRecords) {
+    syncAfterUpdate(resultedRecords)
+    modalAction.value = MODAL_ACTIONS.CLOSE
+    userToUpdate.value = undefined
+  }
+}
+
+// Sync UI after bulk campaign creation
+const syncAfterUpdate = (newRecords: Campaign[]) => {
+  usersData.value = usersData.value?.map((item) => {
+    newRecords?.forEach((newRecord) => {
+      // Match user by clientId
+      if (Number(item.id) === Number(newRecord?.clientId)) {
+        if (!item.campaigns) {
+          item.campaigns = []
+        }
+        // Check if campaign already exists
+        const existingIndex = item.campaigns?.findIndex(
+          (campaign) => Number(campaign.id) === Number(newRecord.id)
+        )
+
+        if (existingIndex !== -1) {
+          // Update existing campaign
+          item.campaigns[existingIndex] = newRecord
+        } else {
+          // Add new campaign
+          item.campaigns.push(newRecord)
+        }
+      }
+    })
+    return item
+  })
+}
+</script>
+
+<template>
+  <div>
+    <!-- Stats cards and table... -->
+
+    <!-- Campaign Form Drawer -->
+    <a-drawer
+      :title="`${modalAction === MODAL_ACTIONS.UPDATE ? 'Update' : 'Create'} a campaign`"
+      :width="editModalWidth"
+      placement="right"
+      :open="modalAction !== MODAL_ACTIONS.CLOSE"
+      @close="handleEditModal(MODAL_ACTIONS.CLOSE)"
+    >
+      <CampaignForm
+        v-if="userToUpdate || modalAction === MODAL_ACTIONS.CREATE || modalAction === MODAL_ACTIONS.ADD_MULTIPLE"
+        :recordToUpdate="userToUpdate"
+        :handleEditModal="handleEditModal"
+        :subTypesData="subTypesData.filter(item => item.status === CAMPAIGN_STATUS)"
+      />
+    </a-drawer>
+  </div>
+</template>
+```
+
+**CampaignForm.vue - Bulk Mode:**
+```vue
+<script setup lang="ts">
+import { ref, reactive, computed } from 'vue'
+import { message } from 'ant-design-vue'
+import { MODAL_ACTIONS } from '@/constants'
+import { handleCreateCampaignApi } from '@/utils/apiService'
+import { useAuthStore } from '@/stores/auth'
+
+interface Props {
+  recordToUpdate?: Campaign | number[]
+  subTypesData: SubscriptionTypeT[]
+  handleEditModal: (
+    modalAction: MODAL_ACTIONS,
+    recordsToUpdate?: number[],
+    resultedRecords?: Campaign[]
+  ) => void
+}
+
+const props = defineProps<Props>()
+const authStore = useAuthStore()
+
+const isBulkMode = computed(() => Array.isArray(props.recordToUpdate))
+
+// Form model
+const formState = reactive<CampaignFieldType>({
+  id: 0,
+  recipients: Array.isArray(props.recordToUpdate)
+    ? props.recordToUpdate.join(',')  // "1,2,3,5,7"
+    : '',
+  title: '',
+  endDate: '',
+  subTypeId: '',
+  timerEnabled: false,
+  counterEnabled: false,
+  maxAcquisitions: undefined
+})
+
+// Submit handler
+const handleSubmit = async () => {
+  try {
+    await formRef.value.validate()
+
+    // API call (POST for bulk)
+    const res = await handleCreateCampaignApi(formState, authStore.accessToken || '')
+
+    if ([200, 201].includes(res?.status)) {
+      // Bulk create response: { campaigns: Campaign[] }
+      if ('campaigns' in res.data) {
+        props.handleEditModal(MODAL_ACTIONS.SYNC, undefined, res.data.campaigns)
+        message.success(`${res.data.campaigns.length} utilizatori au fost adaugati in campanie`)
+      }
+    } else {
+      message.error('Eroare la salvarea campaniei')
+    }
+  } catch (error) {
+    console.error('Campaign form error:', error)
+    message.error('Eroare la salvarea campaniei')
+  }
+}
+</script>
+
+<template>
+  <a-form
+    ref="formRef"
+    :model="formState"
+    :rules="rules"
+    layout="vertical"
+    @finish="handleSubmit"
+  >
+    <!-- Hidden recipients field with comma-separated IDs -->
+    <a-form-item name="recipients" :hidden="true">
+      <a-input v-model:value="formState.recipients" type="hidden" />
+    </a-form-item>
+
+    <!-- Campaign fields... -->
+  </a-form>
+</template>
+```
+
+**API Request/Response:**
+
+**Request (Bulk):**
+```typescript
+// POST /v1/campaigns
+// Body:
+{
+  recipients: "1,2,3,5,7",  // Comma-separated user IDs
+  title: "Black Friday Promo",
+  endDate: "2025-12-31",
+  subTypeId: "2",
+  timerEnabled: true,
+  counterEnabled: false,
+  maxAcquisitions: 100
+}
+```
+
+**Response (Bulk):**
+```typescript
+// Status: 201
+// Body:
+{
+  status: 201,
+  data: {
+    campaigns: [
+      {
+        id: 101,
+        title: "Black Friday Promo",
+        subTypeId: 2,
+        endDate: "2025-12-31T00:00:00.000Z",
+        clientId: 1,  // First user
+        timerEnabled: true,
+        counterEnabled: false,
+        maxAcquisitions: 100,
+        recipients: "1,2,3,5,7",
+        createdAt: "2025-11-03T10:00:00.000Z"
+      },
+      {
+        id: 102,
+        title: "Black Friday Promo",
+        subTypeId: 2,
+        endDate: "2025-12-31T00:00:00.000Z",
+        clientId: 2,  // Second user
+        timerEnabled: true,
+        counterEnabled: false,
+        maxAcquisitions: 100,
+        recipients: "1,2,3,5,7",
+        createdAt: "2025-11-03T10:00:01.000Z"
+      },
+      // ... 3 more campaigns for users 3, 5, 7
+    ]
+  }
+}
+```
+
+**Workflow Breakdown:**
+
+**Step 1 - User Selection (cross-page):**
+```typescript
+// Page 1: Select users [1, 2, 3]
+selectedRowKeys = [1, 2, 3]
+allSelectedRows = [1, 2, 3]
+
+// Navigate to Page 2: Select users [5, 7]
+selectedRowKeys = [5, 7]
+allSelectedRows = [1, 2, 3, 5, 7]  // Combined!
+
+// Badge count: 5
+```
+
+**Step 2 - Open Form:**
+```typescript
+// Click "Adauga in campanie"
+handleEditModal(MODAL_ACTIONS.ADD_MULTIPLE, [1, 2, 3, 5, 7])
+
+// Form initialized with:
+recipients = "1,2,3,5,7"  // Comma-separated
+```
+
+**Step 3 - Submit:**
+```typescript
+// Admin fills form and submits
+POST /v1/campaigns
+Body: { recipients: "1,2,3,5,7", title: "...", endDate: "...", ... }
+```
+
+**Step 4 - API Processing:**
+```typescript
+// Backend splits recipients: "1,2,3,5,7" → [1, 2, 3, 5, 7]
+// Creates 5 campaigns (1 per user) with identical data except clientId
+// Returns: { campaigns: [Campaign, Campaign, Campaign, Campaign, Campaign] }
+```
+
+**Step 5 - Sync UI:**
+```typescript
+// syncAfterUpdate receives 5 campaigns
+// For each campaign, find user by clientId and add to user.campaigns array
+// UI updates instantly (no re-fetch)
+```
+
+**Step 6 - Reset Selection:**
+```typescript
+// After success, reset selection
+selectedRowKeys = []
+allSelectedRows = []
+// Badge disappears
+```
+
+**Notes:**
+- **Cross-Page Selection**: Uses allSelectedRows state (Task 5) pentru track selection across pagination
+- **Badge Count**: Verde badge afișează total selected users (ex: 15)
+- **Single API Call**: POST /v1/campaigns cu recipients="1,2,3,5,7" (nu 5 API calls separate)
+- **Bulk Response**: API returnează array de campaigns (1 campaign per user ID)
+- **Identical Campaigns**: Toate campaniile au aceleași date (title, endDate, subTypeId, etc.) except clientId
+- **No Re-fetch**: UI sync prin clientId matching (fast, no loading state)
+- **Auto-close**: Drawer se închide automat după success
+- **Success Message**: "15 utilizatori au fost adaugati in campanie"
+
+**Edge Cases:**
+1. **User Already Has Campaign**: Nu există check - user poate avea multiple campaigns cu același subTypeId
+2. **Empty Selection**: Button "Adauga in campanie" este hidden când selectedRows.length === 0
+3. **API Failure**: Message error + drawer rămâne deschis (user poate retry)
+4. **Partial Success**: Dacă API creează doar 10/15 campaigns → UI sync cu 10 returnate + error message
+
+**Recommendations:**
+1. **Max Selection Limit**: Adaugă limit (ex: max 50 users) pentru performance
+2. **Progress Indicator**: Adaugă progress bar pentru bulk operations (ex: "Creating campaigns: 5/15")
+3. **Duplicate Check**: Adaugă warning dacă users already have campaign cu același subTypeId
+4. **Batch Processing**: Split în batches of 20 pentru large selections (ex: 100 users)
+5. **Undo**: Adaugă "Undo" option în success message (5 seconds window)
+
+**Migration Complexity**: MEDIUM (depends on Task 5 selection logic, bulk API response handling)
+
+**Estimated Effort**: 1 zi (1 developer, assumes Task 5 is complete)
+
+================================================================================
+TASK 9: Bulk Delete Campaigns
+================================================================================
+
+**Descriere Business:**
+Admin poate șterge toate campaniile pentru utilizatorii selectați (cross-page selection).
+Funcția parcurge fiecare user selectat și extrage toate campaign IDs, apoi face un singur
+API call DELETE cu toți IDs comma-separated.
+
+**User Flow:**
+1. Admin navighează prin tabel și selectează multiple users (ex: 10 users din 2 pagini diferite)
+2. Badge verde afișează count-ul total (10) în TitleBar
+3. Admin click buton "Sterge campanii" (visible doar când selectedRows > 0)
+4. Apare Popconfirm cu mesaj: "Esti sigur? Datele sterse nu se mai pot recupera!"
+5. Admin confirmă → System extrage toate campaign IDs din users selectați
+6. API call: DELETE /v1/campaigns/:campaignIds (comma-separated: "101,102,105,107,...")
+7. După success, campaniile dispar din UI (sync without re-fetch)
+8. Success message: "Campaniile 101,102,105,107 au fost sterse cu succes"
+9. Selection se resetează (selectedRows = [])
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/learning/CampaignsCard/TitleBar.tsx:156-160 (bulk delete button)
+- File: admin/src/pages/dashboards/Campaigns.tsx:79-102 (handleDeleteRecords)
+- File: admin/src/pages/dashboards/Campaigns.tsx:142-151 (syncAfterDelete)
+- API: DELETE /v1/campaigns/:campaignIds
+
+**Current Implementation (React):**
+
+**TitleBar - Bulk Delete Button:**
+```typescript
+{selectedRows.length > 0 && (
+  <>
+    <Badge count={selectedRows.length} style={{ backgroundColor: '#52c41a' }} />
+
+    <Button type="primary" className="title-item" onClick={() => handleEditModal(MODAL_ACTIONS.ADD_MULTIPLE, selectedRows)}>
+      Adauga in campanie
+    </Button>
+
+    {/* Bulk Delete Button with Popconfirm */}
+    <Popconfirm
+      title={`Esti sigur? Datele sterse nu se mai pot recupera!`}
+      onConfirm={() => handleDeleteRecords(selectedRows as number[], selectedRows as number[])}
+      okText="Da"
+      cancelText="Nu"
+    >
+      <Button type="default" className="title-item remove-btn">
+        Sterge campanii
+      </Button>
+    </Popconfirm>
+  </>
+)}
+```
+
+**Campaigns Page - handleDeleteRecords:**
+```typescript
+const handleDeleteRecords = async (clientIds: number[], recordIds: number[] = []) => {
+  let stringifiedRecordIds = '';
+
+  // Extract campaign IDs from selected users' campaigns
+  if (recordIds.length === 0 && clientIds?.length > 1) {
+    // Bulk delete mode: extract all campaign IDs from selected users
+    usersData.map((user) => {
+      if (clientIds.includes(Number(user.id))) {
+        if (user.campaigns?.length) {
+          user.campaigns.map((campaign) => {
+            recordIds.push(campaign.id);
+          });
+        }
+      }
+    });
+    recordIds.length ? stringifiedRecordIds = recordIds.join(',') : stringifiedRecordIds = '';
+  } else {
+    // Individual delete mode: recordIds already provided
+    stringifiedRecordIds = recordIds!.join(',');
+  }
+
+  // API call to delete campaigns
+  const res: ResponseT = await handleDeleteCampaignsApi(stringifiedRecordIds) as unknown as ResponseT;
+
+  if ([200, 201].includes(res?.status)) {
+    syncAfterDelete(clientIds, recordIds);
+    message.open({ 'type': 'success', 'content': `Campaniile ${stringifiedRecordIds} au fost sterse cu succes` });
+  } else {
+    message.open({ 'type': 'error', 'content': `Campaniile ${stringifiedRecordIds} nu au putut fi sterse` });
+  }
+}
+```
+
+**syncAfterDelete:**
+```typescript
+const syncAfterDelete = (clientIds: number[], recordIds: number[]) => {
+  setUsersData(prevState => prevState?.filter((item) => {
+    clientIds.map((clientId) => {
+      if (item.id === clientId) {
+        // Remove deleted campaigns from user's campaigns array
+        item.campaigns = item.campaigns?.filter((campaign) => !recordIds.includes(Number(campaign.id)));
+      }
+    });
+    return item;
+  }));
+}
+```
+
+**Target Implementation (Vue.js 3):**
+
+**TitleBar.vue - Bulk Delete Button:**
+```vue
+<script setup lang="ts">
+import { Badge, Button, Popconfirm } from 'ant-design-vue'
+import { MODAL_ACTIONS } from '@/constants'
+
+interface Props {
+  selectedRows: number[]
+  handleEditModal: (modalAction: MODAL_ACTIONS, recordsToUpdate?: number[]) => void
+  handleDeleteRecords: (clientIds: number[], recordIds?: number[]) => void
+}
+
+const props = defineProps<Props>()
+</script>
+
+<template>
+  <div class="filters-container">
+    <!-- ... filters ... -->
+
+    <!-- Bulk Actions (visible when rows selected) -->
+    <template v-if="selectedRows.length > 0">
+      <!-- Badge showing selection count -->
+      <a-badge
+        :count="selectedRows.length"
+        :style="{ backgroundColor: '#52c41a' }"
+      />
+
+      <!-- Bulk Campaign Assignment Button -->
+      <a-button
+        type="primary"
+        class="title-item"
+        @click="handleEditModal(MODAL_ACTIONS.ADD_MULTIPLE, selectedRows)"
+      >
+        Adauga in campanie
+      </a-button>
+
+      <!-- Bulk Delete Button with Popconfirm -->
+      <a-popconfirm
+        title="Esti sigur? Datele sterse nu se mai pot recupera!"
+        okText="Da"
+        cancelText="Nu"
+        @confirm="handleDeleteRecords(selectedRows, selectedRows)"
+      >
+        <a-button type="default" class="title-item remove-btn">
+          Sterge campanii
+        </a-button>
+      </a-popconfirm>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+.remove-btn {
+  border-color: #ff4d4f;
+  color: #ff4d4f;
+}
+
+.remove-btn:hover {
+  background-color: #fff1f0;
+}
+</style>
+```
+
+**Campaigns.vue - handleDeleteRecords:**
+```vue
+<script setup lang="ts">
+import { ref } from 'vue'
+import { message } from 'ant-design-vue'
+import { handleDeleteCampaignsApi } from '@/utils/apiService'
+import type { User, ResponseT } from '@/types'
+
+const usersData = ref<User[]>([])
+
+const handleDeleteRecords = async (clientIds: number[], recordIds: number[] = []) => {
+  try {
+    let stringifiedRecordIds = ''
+    const campaignIds: number[] = [...recordIds]
+
+    // Extract campaign IDs from selected users' campaigns
+    if (campaignIds.length === 0 && clientIds?.length > 1) {
+      // Bulk delete mode: extract all campaign IDs from selected users
+      usersData.value.forEach((user) => {
+        if (clientIds.includes(Number(user.id))) {
+          if (user.campaigns?.length) {
+            user.campaigns.forEach((campaign) => {
+              campaignIds.push(campaign.id)
+            })
+          }
+        }
+      })
+      stringifiedRecordIds = campaignIds.length ? campaignIds.join(',') : ''
+    } else {
+      // Individual delete mode: recordIds already provided
+      stringifiedRecordIds = campaignIds.join(',')
+    }
+
+    // Check if there are campaigns to delete
+    if (!stringifiedRecordIds) {
+      message.warning('Nu exista campanii de sters pentru utilizatorii selectati')
+      return
+    }
+
+    // API call to delete campaigns
+    const res = await handleDeleteCampaignsApi(stringifiedRecordIds) as ResponseT
+
+    if ([200, 201].includes(res?.status)) {
+      syncAfterDelete(clientIds, campaignIds)
+      message.success(`Campaniile ${stringifiedRecordIds} au fost sterse cu succes`)
+    } else {
+      message.error(`Campaniile ${stringifiedRecordIds} nu au putut fi sterse`)
+    }
+  } catch (error) {
+    console.error('Delete campaigns error:', error)
+    message.error('Eroare la stergerea campaniilor')
+  }
+}
+
+// Sync UI after delete
+const syncAfterDelete = (clientIds: number[], recordIds: number[]) => {
+  usersData.value = usersData.value.map((item) => {
+    clientIds.forEach((clientId) => {
+      if (item.id === clientId) {
+        // Remove deleted campaigns from user's campaigns array
+        item.campaigns = item.campaigns?.filter(
+          (campaign) => !recordIds.includes(Number(campaign.id))
+        )
+      }
+    })
+    return item
+  })
+}
+</script>
+
+<template>
+  <div>
+    <!-- Stats cards and table... -->
+  </div>
+</template>
+```
+
+**API:**
+```typescript
+// Delete Campaigns (single or bulk)
+// DELETE /v1/campaigns/:campaignIds
+// Params: campaignIds (comma-separated string: "101,102,105,107")
+// Response: { status: 200, message: 'Campaigns deleted successfully' }
+
+export const handleDeleteCampaignsApi = async (campaignIds: string) => {
+  return await fetch(`/api/v1/campaigns/${campaignIds}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+    },
+  });
+};
+```
+
+**Workflow Breakdown:**
+
+**Step 1 - User Selection (cross-page):**
+```typescript
+// Admin selects 10 users across 2 pages
+allSelectedRows = [1, 2, 3, 5, 7, 11, 13, 17, 19, 23]
+
+// Badge count: 10
+```
+
+**Step 2 - Extract Campaign IDs:**
+```typescript
+// For each selected user, extract all campaign IDs
+const campaignIds: number[] = []
+
+// User #1 has campaigns [101, 102]
+// User #2 has campaigns [103]
+// User #3 has no campaigns
+// User #5 has campaigns [104, 105]
+// ... etc
+
+// Result: campaignIds = [101, 102, 103, 104, 105, 106, 107]
+// Stringified: "101,102,103,104,105,106,107"
+```
+
+**Step 3 - Popconfirm:**
+```typescript
+// Click "Sterge campanii"
+// Popconfirm appears: "Esti sigur? Datele sterse nu se mai pot recupera!"
+// User confirms
+```
+
+**Step 4 - API Call:**
+```typescript
+// DELETE /v1/campaigns/101,102,103,104,105,106,107
+DELETE /api/v1/campaigns/101,102,103,104,105,106,107
+```
+
+**Step 5 - Sync UI:**
+```typescript
+// For each selected user, remove deleted campaigns from user.campaigns array
+syncAfterDelete([1, 2, 3, 5, 7, 11, 13, 17, 19, 23], [101, 102, 103, 104, 105, 106, 107])
+
+// Example:
+// User #1: campaigns [101, 102] → filter out [101, 102] → campaigns = []
+// User #2: campaigns [103] → filter out [103] → campaigns = []
+// User #3: campaigns [] → no change → campaigns = []
+// User #5: campaigns [104, 105] → filter out [104, 105] → campaigns = []
+```
+
+**Step 6 - Reset Selection:**
+```typescript
+// After success, reset selection
+selectedRowKeys = []
+allSelectedRows = []
+// Badge disappears
+```
+
+**Logic Details:**
+
+**Campaign ID Extraction:**
+```typescript
+// Dual-mode function: handles both bulk delete and individual delete
+const handleDeleteRecords = (clientIds: number[], recordIds: number[] = []) => {
+  // Mode 1: Bulk delete (recordIds empty, clientIds.length > 1)
+  if (recordIds.length === 0 && clientIds?.length > 1) {
+    // Extract all campaign IDs from selected users
+    const campaignIds: number[] = []
+    usersData.forEach((user) => {
+      if (clientIds.includes(user.id)) {
+        user.campaigns?.forEach((campaign) => {
+          campaignIds.push(campaign.id)
+        })
+      }
+    })
+    stringifiedRecordIds = campaignIds.join(',')  // "101,102,103,..."
+  }
+  // Mode 2: Individual delete (recordIds provided)
+  else {
+    stringifiedRecordIds = recordIds.join(',')  // "101"
+  }
+}
+
+// Example:
+// Bulk: handleDeleteRecords([1,2,3], []) → Extract campaign IDs → "101,102,103"
+// Individual: handleDeleteRecords([1], [101]) → Use provided IDs → "101"
+```
+
+**Sync After Delete:**
+```typescript
+const syncAfterDelete = (clientIds: number[], recordIds: number[]) => {
+  // For each user in usersData
+  usersData.forEach((user) => {
+    // If user is in clientIds (selected users)
+    if (clientIds.includes(user.id)) {
+      // Filter out deleted campaigns
+      user.campaigns = user.campaigns?.filter(
+        (campaign) => !recordIds.includes(campaign.id)
+      )
+    }
+  })
+}
+
+// Example:
+// User #1: campaigns [101, 102, 108]
+// recordIds = [101, 102, 103]
+// Result: campaigns [108] (101 și 102 removed, 108 kept, 103 not found)
+```
+
+**Notes:**
+- **Dual Mode**: Function handles both bulk delete (multiple users) și individual delete (single campaign)
+- **Campaign ID Extraction**: Parcurge users selectați și extrage TOATE campaign IDs
+- **Single API Call**: DELETE cu comma-separated IDs (ex: "101,102,103,104,105")
+- **No Re-fetch**: UI sync prin filtering (fast, no loading state)
+- **Popconfirm**: Confirmă delete pentru a preveni accidental deletion
+- **Empty Campaigns**: Dacă users selectați nu au campaigns → warning message + no API call
+- **Success Message**: Afișează IDs deleted (ex: "Campaniile 101,102,103 au fost sterse cu succes")
+
+**Edge Cases:**
+1. **No Campaigns**: Users selectați nu au campaigns → warning "Nu exista campanii de sters"
+2. **Empty Selection**: Button "Sterge campanii" este hidden când selectedRows.length === 0
+3. **Partial Campaigns**: Doar câțiva users au campaigns → delete doar pentru cei cu campaigns
+4. **API Failure**: Error message + campaigns rămân în UI (no sync)
+5. **Individual Delete**: Function lucrează și pentru individual delete (Task 4) - same code path
+
+**Individual vs Bulk Delete Comparison:**
+
+**Individual Delete (Task 4):**
+```typescript
+// Click delete button on specific campaign
+handleDeleteRecords([userId], [campaignId])
+// Ex: handleDeleteRecords([1], [101])
+// API: DELETE /v1/campaigns/101
+```
+
+**Bulk Delete (Task 9):**
+```typescript
+// Select multiple users, click bulk delete
+handleDeleteRecords([1,2,3,5,7], [1,2,3,5,7])  // clientIds passed as recordIds too
+// Function extracts campaign IDs: [101, 102, 103, 104, 105]
+// API: DELETE /v1/campaigns/101,102,103,104,105
+```
+
+**Recommendations:**
+1. **Confirmation Count**: Show count în Popconfirm (ex: "Stergi campaniile pentru 10 utilizatori?")
+2. **List Campaigns**: Show list de campaigns ce vor fi sterse în Popconfirm (max 5, then "and X more")
+3. **Undo**: Adaugă "Undo" option în success message (5 seconds window)
+4. **Progress Indicator**: Adaugă loading state pentru bulk delete operations
+5. **Partial Success**: Handle partial success (ex: API deleted doar 5/10 campaigns)
+
+**Migration Complexity**: LOW-MEDIUM (depends on Task 5 selection logic, straightforward delete)
+
+**Estimated Effort**: 0.5-1 zi (1 developer, assumes Task 5 is complete)
+
+================================================================================
+TASK 10: Custom Pagination with Debounce
+================================================================================
+
+**Descriere Business:**
+Tabelul oferă paginare customizabilă cu:
+- **Default Options**: 40, 50, 100, 200 items per page
+- **Custom Input**: Admin poate introduce orice număr (ex: 75, 150, 500)
+- **Debounced API Call**: Custom input are debounce 600ms pentru a evita API spam
+- **Dynamic Options**: După custom input, valoarea se adaugă la dropdown options
+
+**User Flow:**
+1. Admin vede tabelul cu pagination controls în footer
+2. Default page size: 40 items
+3. Admin poate selecta din dropdown: 40, 50, 100, 200
+4. Admin poate introduce custom value în input (ex: 75)
+5. După 600ms, API call se face cu pageSize=75
+6. Dropdown options se actualizează: 40, 50, 75, 100, 200
+7. Tabelul afișează 75 items per page
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/learning/CampaignsCard/CampaignsCard.tsx:45-101 (custom pagination state)
+- File: admin/src/components/dashboard/learning/CampaignsCard/CampaignsCard.tsx:201-252 (pagination config)
+- Default: 40 items per page
+- Debounce: 600ms
+
+**Current Implementation (React):**
+
+**State Management:**
+```typescript
+const [customPageLimit, setCustomPageLimit] = useState<string>('');
+
+// Debounced pagination handler
+const debouncedHandlePagination = useCallback(
+  (value: string) => {
+    if (value) {
+      handlePagination(1, parseInt(value));  // Go to page 1 with new page size
+    }
+  },
+  [handlePagination]
+);
+
+// Custom page limit input handler
+const handleCustomPageLimitChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const value = e.target.value;
+
+  // Allow only numbers or empty string
+  if (value === '' || /^\d+$/.test(value)) {
+    setCustomPageLimit(value);
+
+    // Debounce API call (600ms)
+    const timeoutId = setTimeout(() => {
+      debouncedHandlePagination(value);
+    }, 600);
+
+    return () => clearTimeout(timeoutId);
+  }
+};
+
+// Dynamic page size options (default + custom)
+const pageSizeOptions = ['40', '50', '100', '200'];
+if (customPageLimit && !pageSizeOptions.includes(customPageLimit)) {
+  pageSizeOptions.push(customPageLimit);  // Add custom value to dropdown
+}
+```
+
+**Table Pagination Config:**
+```typescript
+<Table
+  dataSource={data?.length ? data : []}
+  rowSelection={rowSelection}
+  columns={CAMPAIGNS_COLUMNS}
+  loading={loading}
+  className="overflow-scroll"
+  rowKey="id"
+  pagination={{
+    onChange: handlePagination,           // Page change handler
+    pageSize: pageLimit,                  // Current page size (40, 50, 100, etc.)
+    total: countUsers,                    // Total items count
+    showSizeChanger: true,                // Show page size dropdown
+    showQuickJumper: false,               // Hide quick jump input
+    pageSizeOptions: pageSizeOptions,     // Dropdown options (default + custom)
+    onShowSizeChange: (_, size) => {
+      setCustomPageLimit('');             // Clear custom input
+      handlePagination(1, size);          // Go to page 1 with selected size
+    },
+    showTotal: (total) => (
+      <Space>
+        <span>Total {total} items</span>
+        <Input
+          style={{ width: 120 }}
+          placeholder="items per page"
+          value={customPageLimit}
+          onChange={handleCustomPageLimitChange}
+          maxLength={4}                   // Max 9999 items per page
+        />
+      </Space>
+    ),
+    size: 'default',
+    responsive: true,
+  }}
+/>
+```
+
+**Target Implementation (Vue.js 3):**
+
+**CampaignsCard.vue:**
+```vue
+<script setup lang="ts">
+import { ref, computed, watch } from 'vue'
+import { Table, Input, Space } from 'ant-design-vue'
+import type { User } from '@/types'
+
+const customPageLimit = ref('')
+let debounceTimeout: NodeJS.Timeout | null = null
+
+// Debounced pagination handler
+const debouncedHandlePagination = (value: string) => {
+  if (debounceTimeout) {
+    clearTimeout(debounceTimeout)
+  }
+
+  debounceTimeout = setTimeout(() => {
+    if (value) {
+      handlePagination(1, parseInt(value))  // Go to page 1 with new page size
+    }
+  }, 600)  // 600ms debounce
+}
+
+// Custom page limit input handler
+const handleCustomPageLimitChange = (e: Event) => {
+  const value = (e.target as HTMLInputElement).value
+
+  // Allow only numbers or empty string
+  if (value === '' || /^\d+$/.test(value)) {
+    customPageLimit.value = value
+    debouncedHandlePagination(value)
+  }
+}
+
+// Dynamic page size options (default + custom)
+const pageSizeOptions = computed(() => {
+  const options = ['40', '50', '100', '200']
+  if (customPageLimit.value && !options.includes(customPageLimit.value)) {
+    options.push(customPageLimit.value)  // Add custom value to dropdown
+  }
+  return options
+})
+
+// Pagination change handler
+const handlePagination = (page: number, pageSize?: number) => {
+  setPageNumber(page)
+  if (pageSize) {
+    setPageLimit(pageSize)
+  }
+}
+
+// Handle size change from dropdown
+const handleSizeChange = (_current: number, size: number) => {
+  customPageLimit.value = ''  // Clear custom input
+  handlePagination(1, size)   // Go to page 1 with selected size
+}
+</script>
+
+<template>
+  <a-table
+    :dataSource="data?.length ? data : []"
+    :rowSelection="rowSelection"
+    :columns="campaignsColumns"
+    :loading="loading"
+    rowKey="id"
+    class="overflow-scroll"
+    :pagination="{
+      onChange: handlePagination,
+      pageSize: pageLimit,
+      total: countUsers,
+      showSizeChanger: true,
+      showQuickJumper: false,
+      pageSizeOptions: pageSizeOptions,
+      onShowSizeChange: handleSizeChange,
+      size: 'default',
+      responsive: true
+    }"
+  >
+    <!-- Custom total display with input -->
+    <template #total="{ total }">
+      <a-space>
+        <span>Total {{ total }} items</span>
+        <a-input
+          v-model:value="customPageLimit"
+          :style="{ width: '120px' }"
+          placeholder="items per page"
+          :maxLength="4"
+          @input="handleCustomPageLimitChange"
+        />
+      </a-space>
+    </template>
+  </a-table>
+</template>
+
+<style scoped>
+.overflow-scroll {
+  overflow-x: auto;
+}
+</style>
+```
+
+**Pagination Flow:**
+
+**Step 1 - Default State:**
+```typescript
+// Initial load
+pageLimit = 40  // Default
+customPageLimit = ''
+pageSizeOptions = ['40', '50', '100', '200']
+
+// Table shows 40 items
+// Dropdown shows: 40, 50, 100, 200
+```
+
+**Step 2 - Select from Dropdown:**
+```typescript
+// User selects 100 from dropdown
+onShowSizeChange(1, 100)
+→ customPageLimit = ''  // Clear custom input
+→ handlePagination(1, 100)  // API call: page=1, limit=100
+→ pageLimit = 100
+→ Table re-renders with 100 items
+```
+
+**Step 3 - Custom Input:**
+```typescript
+// User types "75" in custom input
+handleCustomPageLimitChange("75")
+→ customPageLimit = "75"
+→ Start 600ms timer
+
+// After 600ms (no more typing)
+→ debouncedHandlePagination("75")
+→ handlePagination(1, 75)  // API call: page=1, limit=75
+→ pageLimit = 75
+→ pageSizeOptions = ['40', '50', '75', '100', '200']  // 75 added!
+→ Table re-renders with 75 items
+```
+
+**Step 4 - Switch Back to Default:**
+```typescript
+// User selects 40 from dropdown
+onShowSizeChange(1, 40)
+→ customPageLimit = ''  // Clear custom input
+→ handlePagination(1, 40)
+→ pageLimit = 40
+→ pageSizeOptions = ['40', '50', '100', '200']  // 75 removed!
+→ Table re-renders with 40 items
+```
+
+**Debounce Logic:**
+
+**Why Debounce?**
+```typescript
+// Without debounce:
+// User types "150" → 3 API calls:
+// 1. limit=1
+// 2. limit=15
+// 3. limit=150
+
+// With debounce (600ms):
+// User types "150" → 1 API call:
+// 1. limit=150 (after user stops typing for 600ms)
+```
+
+**Implementation:**
+```typescript
+const handleCustomPageLimitChange = (value: string) => {
+  setCustomPageLimit(value)  // Update input immediately (UI feedback)
+
+  // Clear previous timer
+  if (debounceTimeout) clearTimeout(debounceTimeout)
+
+  // Start new timer (600ms)
+  debounceTimeout = setTimeout(() => {
+    if (value) {
+      handlePagination(1, parseInt(value))  // API call after 600ms
+    }
+  }, 600)
+}
+
+// Example timeline:
+// t=0ms: User types "1" → timer starts (600ms)
+// t=100ms: User types "5" → timer resets (600ms)
+// t=200ms: User types "0" → timer resets (600ms)
+// t=800ms: Timer fires → API call with limit=150
+```
+
+**Dynamic Options Logic:**
+
+**Adding Custom Value:**
+```typescript
+const pageSizeOptions = ['40', '50', '100', '200']
+
+// User enters custom value: 75
+if (customPageLimit && !pageSizeOptions.includes(customPageLimit)) {
+  pageSizeOptions.push(customPageLimit)  // Add to dropdown
+}
+// Result: ['40', '50', '100', '200', '75']
+
+// Dropdown now shows: 40, 50, 75, 100, 200 (sorted by Ant Design)
+```
+
+**Removing Custom Value:**
+```typescript
+// User selects default option from dropdown
+onShowSizeChange(1, 50)
+→ customPageLimit = ''  // Clear custom input
+
+// Next render:
+if (customPageLimit && !pageSizeOptions.includes(customPageLimit)) {
+  // This condition is false (customPageLimit is empty)
+  // Custom value NOT added to dropdown
+}
+// Result: ['40', '50', '100', '200']  // Back to defaults
+```
+
+**Validation:**
+
+**Input Validation:**
+```typescript
+const handleCustomPageLimitChange = (value: string) => {
+  // Allow only numbers or empty string
+  if (value === '' || /^\d+$/.test(value)) {
+    setCustomPageLimit(value)  // Valid input
+    // ... debounce logic
+  } else {
+    // Invalid input (letters, special chars) → ignored
+    return
+  }
+}
+
+// Valid inputs: "", "1", "40", "150", "9999"
+// Invalid inputs: "abc", "12.5", "-10", "10a"
+```
+
+**Max Length:**
+```typescript
+// Input maxLength={4}
+// Max value: 9999 items per page
+
+// Examples:
+// User enters "150" → Valid
+// User enters "9999" → Valid
+// User enters "10000" → Input stops at "1000" (maxLength reached)
+```
+
+**API Integration:**
+
+**Pagination Handler:**
+```typescript
+const handlePagination = (pageNumber: number, pageSize?: number) => {
+  setPageNumber(pageNumber)
+  if (pageSize) {
+    setPageLimit(pageSize)
+  }
+}
+
+// Triggers API call
+useEffect(() => {
+  if (pageNumber || Object.keys(filters).length > 0 || pageLimit) {
+    const offset = (pageNumber - 1) * pageLimit
+    getAllUsersForCampaignsApi(offset, pageLimit, setLoading, filters, accessToken).then((data) => {
+      setUsersData(data.users)
+      setUserCount(data.count)
+      setSubTypesData(data.subTypes.subscriptionTypes)
+    })
+  }
+}, [pageNumber, filters, pageLimit])
+
+// Example:
+// pageNumber = 1, pageLimit = 75
+// offset = (1 - 1) * 75 = 0
+// API: GET /v1/users/campaigns?offset=0&limit=75
+```
+
+**Notes:**
+- **Default Options**: 40, 50, 100, 200 items per page (40 is default)
+- **Custom Input**: Admin poate introduce orice număr (1-9999)
+- **Debounce 600ms**: Previne API spam când user tasteaza
+- **Dynamic Options**: Custom value se adaugă automat la dropdown după debounce
+- **Clear on Select**: Custom input se clear-uiește când admin selectează din dropdown
+- **Validation**: Doar numere sunt permise (regex: `/^\d+$/`)
+- **Max Length**: 4 characters (max 9999 items per page)
+- **Go to Page 1**: Când page size se schimbă, always go to page 1
+
+**Edge Cases:**
+1. **Empty Input**: Dacă input este gol → no API call (validation blocks)
+2. **Same Value**: Dacă custom input = current pageLimit → API call se face anyway (can be optimized)
+3. **Invalid Input**: Letters, special chars → ignored (input doesn't update)
+4. **Large Numbers**: 9999+ → blocked by maxLength={4}
+5. **Zero**: "0" → technically valid, but backend may reject
+
+**Recommendations:**
+1. **Min/Max Validation**: Adaugă min=1, max=1000 pentru reasonable limits
+2. **Debounce Indicator**: Show loading spinner în input când debounce is active
+3. **Same Value Check**: Skip API call dacă new value === current pageLimit
+4. **Preset Buttons**: Adaugă quick preset buttons (25, 50, 100, All)
+5. **Remember Preference**: Save pageLimit în localStorage pentru user preference
+
+**Migration Complexity**: LOW (standard pagination with debounce)
+
+**Estimated Effort**: 0.5 zi (1 developer)
+
+================================================================================
+END OF CAMPAIGNS MANAGEMENT MODULE DOCUMENTATION
+================================================================================
+
+**Total Lines**: ~3,900 lines
+**Total Tasks**: 10 tasks
+**Total Estimated Effort**: 9-12 zile (1 developer)
+
+**Tasks Summary:**
+1. Page Layout & Stats Cards (4 Cards - All Mock Data) - 2-3 ore
+2. User Table with Campaigns Column - 1-1.5 zile
+3. Active Subscription Badge (Real-time Check) - 1-2 ore
+4. Campaign Display & Delete Individual - 1 zi
+5. Row Selection (Multi-select with Preserve Across Pages) - 1-1.5 zile
+6. Filters & Search (5 Filters + Debounced Search) - 1 zi
+7. Campaign Form (Create/Edit with 6 Fields) - 1.5-2 zile
+8. Bulk Campaign Assignment (Multi-select Users) - 1 zi
+9. Bulk Delete Campaigns - 0.5-1 zi
+10. Custom Pagination with Debounce - 0.5 zi
+
+**Migration Priority**: MEDIUM-HIGH (campanii marketing, bulk operations)
+
+**Dependencies:**
+- Subscription Types Module (status=2 pentru campanii)
+- Users API (getAllUsersForCampaignsApi)
+- MailerLite Service (email marketing integration)
+
+**Key Features:**
+- Cross-page multi-select (preserve selection across pagination)
+- 5 independent filters with debounced search
+- Bulk operations (assign campaigns to multiple users, bulk delete)
+- Real-time active subscription badge
+- Custom pagination with dynamic options
+- Client-side UI sync (no re-fetch after CRUD operations)

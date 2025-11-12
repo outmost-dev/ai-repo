@@ -1,0 +1,1853 @@
+================================================================================
+JIRA STORY: AUTHENTICATION MODULE - ADMIN DASHBOARD MIGRATION
+================================================================================
+Project: ADMIN (Somaway Admin Dashboard Migration to Vue.js 3)
+Story Type: Module Migration
+Priority: High
+Story Points: 8
+
+================================================================================
+STORY DESCRIPTION
+================================================================================
+
+Modulul Authentication gestionează toate operațiunile de autentificare și
+autorizare pentru Admin Dashboard, inclusiv login, înregistrare, recuperare
+parolă și verificare email.
+
+**Locație cod sursă:**
+- Pages: admin/src/pages/authentication/
+- Context: admin/src/context/auth.tsx
+- API Service: admin/src/utils/apiService.tsx (handleLogin method)
+
+**Pagini implementate:** 6
+- SignIn (FULL IMPLEMENTATION - cu API integration)
+- SignUp (UI ONLY - mock implementation)
+- PasswordReset (UI ONLY - mock implementation)
+- VerifyEmail (UI ONLY - informational page)
+- Welcome (UI ONLY - informational page)
+- AccountDeactivate (UI ONLY - informational page)
+
+**Dependencies:**
+- React Context API pentru state management
+- localStorage pentru persistență token-uri
+- Ant Design Form + validation
+- react-responsive pentru layout responsive
+- Backend API: POST /v1/auth/admin-signin (doar pentru SignIn)
+
+**Notes:**
+- Doar SignIn page are integrare completă cu backend API
+- SignUp, PasswordReset sunt implementări mock (nu au API calls reale)
+- VerifyEmail, Welcome, AccountDeactivate sunt pagini informaționale
+- Auth state gestionat prin React Context cu persistență în localStorage
+- JWT tokens (access + refresh) stocate în authUser object
+- Auto-redirect dacă user deja autentificat
+
+**Authentication Flow:**
+1. User introduce email/password în SignIn page
+2. Apel API POST /v1/auth/admin-signin
+3. Success: salvează authUser în context + localStorage
+4. Redirect la /users dashboard
+5. Logout: șterge authUser din context + localStorage
+
+================================================================================
+TASK 1: SignIn Page - Full Implementation
+================================================================================
+**Title:** SignIn Page Layout & API Integration
+
+**Description:**
+Pagina de login completă pentru Admin Dashboard cu integrare backend API,
+validare formulare, și persistență auth state în context + localStorage.
+
+**Business Logic:**
+1. User deschide pagina /auth/signin
+2. Dacă user deja autentificat → auto-redirect la /users dashboard
+3. User introduce email + password (ambele required)
+4. Optional: checkbox "Remember me" (nu afectează logic)
+5. Click "Continue" → validare formulare client-side
+6. Dacă valid → apel API POST /v1/auth/admin-signin cu { email, password }
+7. Backend validare credentials:
+   - Success (201): returnează authUser object cu tokens
+   - Error (401/400): afișează error message
+8. Success flow:
+   - Salvează authUser în React Context
+   - Salvează authUser în localStorage (persistență)
+   - Afișează success message "Login cu succes" (2 secunde)
+   - Redirect la /users dashboard
+9. Error flow:
+   - Afișează error message din backend response
+   - Form rămâne vizibil pentru retry
+
+**Current Implementation (React):**
+
+Location: admin/src/pages/authentication/SignIn.tsx (162 lines)
+
+Key Features:
+- Split layout (50/50): branded left side + form right side
+- Responsive: stacked vertical pe mobile (<769px)
+- Email + password fields cu Ant Design validation
+- "Remember me" checkbox (nu are funcționalitate backend)
+- Loading state pe submit button
+- Auto-redirect dacă user deja logged in (useEffect check)
+- Integration cu auth context (login method)
+- Success message toast notification
+
+Form Fields:
+```typescript
+type FieldType = {
+  email?: string;      // Required, email format
+  password?: string;   // Required, password type (hidden)
+  remember?: boolean;  // Optional checkbox
+};
+```
+
+API Integration (admin/src/utils/apiService.tsx:597):
+```typescript
+export const handleLogin = async (body: unknown) => {
+  const headers = new Headers();
+  headers.append('Content-Type', 'application/json');
+  headers.append('Accept', 'application/json');
+  headers.append('Authorization', 'Bearer ' + token);
+
+  const response = await fetch(SIGNIN_API, {
+    method: 'POST',
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await response.json();
+
+  if ([200, 201].includes(response?.status)) {
+    return { status: response.status, data } as ResponseT;
+  }
+
+  if (response?.status === 401 && response.statusText === 'Unauthorized') {
+    // Refresh the token
+    localStorage.removeItem('authUser');
+    window.location.replace('/auth/signin');
+  }
+
+  message.open({
+    type: 'error',
+    content: data?.message || response.statusText,
+  });
+  return { status: response.status, error: data } as unknown as ResponseT;
+};
+```
+
+API Endpoint:
+- URL: POST /v1/auth/admin-signin
+- Request Body: { email: string, password: string }
+- Success Response (201): { id, email, accessToken, refreshToken, username, role, fullName }
+- Error Response (401/400): { message: string }
+
+Auth Context Integration (admin/src/context/auth.tsx):
+```typescript
+const login = (userData: AuthUser) => {
+  setAuthUser(userData);
+  localStorage.setItem('authUser', JSON.stringify(userData));
+};
+```
+
+Layout Structure:
+- Row with 2 columns (xs=24, lg=12)
+- Left column: Logo + welcome title + description (branded background color)
+- Right column: Title "Login" + subtitle + form
+- Form layout: vertical with 24-span labels/wrappers
+- Responsive: vertical stack pe mobile
+
+Validation Rules:
+- Email: required with message "Please input your email"
+- Password: required with message "Please input your password!"
+- Form-level validation cu onFinish/onFinishFailed handlers
+
+**Target Implementation (Vue.js 3):**
+
+Framework: Vue 3 Composition API cu TypeScript
+UI Components: Ant Design Vue 4.x
+
+Recommended Structure:
+```vue
+<script setup lang="ts">
+import { ref, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
+import { message } from 'ant-design-vue';
+import { handleLogin } from '@/utils/apiService';
+
+interface SignInForm {
+  email: string;
+  password: string;
+  remember?: boolean;
+}
+
+const router = useRouter();
+const authStore = useAuthStore();
+const loading = ref(false);
+const formState = ref<SignInForm>({
+  email: '',
+  password: '',
+  remember: true,
+});
+
+const onFinish = async (values: SignInForm) => {
+  loading.value = true;
+
+  try {
+    const res = await handleLogin(values);
+
+    if (res?.status === 201) {
+      message.success('Login cu succes', 2);
+      authStore.login(res.data);
+      router.push('/users');
+    }
+  } catch (error) {
+    console.error('Login failed:', error);
+  } finally {
+    loading.value = false;
+  }
+};
+
+onMounted(() => {
+  if (authStore.authUser) {
+    router.push('/users');
+  }
+});
+</script>
+
+<template>
+  <a-row :style="{ minHeight: isMobile ? 'auto' : '100vh', overflow: 'hidden' }">
+    <!-- Left Column: Branding -->
+    <a-col :xs="24" :lg="12">
+      <a-flex
+        vertical
+        align="center"
+        justify="center"
+        class="text-center"
+        :style="{ background: colorPrimary, height: '100%', padding: '1rem' }"
+      >
+        <Logo color="white" />
+        <a-typography-title :level="2" class="text-white">
+          Welcome back to Somaway Admin
+        </a-typography-title>
+        <a-typography-text class="text-white" :style="{ fontSize: 18 }">
+          Panou administrare pentru cursuri, utilizatori și multe altele
+        </a-typography-text>
+      </a-flex>
+    </a-col>
+
+    <!-- Right Column: Form -->
+    <a-col :xs="24" :lg="12">
+      <a-flex
+        vertical
+        :align="isMobile ? 'center' : 'flex-start'"
+        justify="center"
+        gap="middle"
+        :style="{ height: '100%', padding: '2rem' }"
+      >
+        <a-typography-title class="m-0">Login</a-typography-title>
+
+        <a-form
+          name="sign-in-form"
+          layout="vertical"
+          :model="formState"
+          :labelCol="{ span: 24 }"
+          :wrapperCol="{ span: 24 }"
+          @finish="onFinish"
+          autocomplete="off"
+          :requiredMark="false"
+        >
+          <a-row :gutter="[8, 0]">
+            <a-col :xs="24">
+              <a-form-item
+                label="Email"
+                name="email"
+                :rules="[{ required: true, message: 'Please input your email' }]"
+              >
+                <a-input v-model:value="formState.email" />
+              </a-form-item>
+            </a-col>
+
+            <a-col :xs="24">
+              <a-form-item
+                label="Password"
+                name="password"
+                :rules="[{ required: true, message: 'Please input your password!' }]"
+              >
+                <a-input-password v-model:value="formState.password" />
+              </a-form-item>
+            </a-col>
+
+            <a-col :xs="24">
+              <a-form-item name="remember" valuePropName="checked">
+                <a-checkbox v-model:checked="formState.remember">Remember me</a-checkbox>
+              </a-form-item>
+            </a-col>
+          </a-row>
+
+          <a-form-item>
+            <a-flex align="center" justify="space-between">
+              <a-button
+                type="primary"
+                html-type="submit"
+                size="middle"
+                :loading="loading"
+              >
+                Continue
+              </a-button>
+            </a-flex>
+          </a-form-item>
+        </a-form>
+
+        <a-divider class="m-0"></a-divider>
+      </a-flex>
+    </a-col>
+  </a-row>
+</template>
+```
+
+Pinia Store (stores/auth.ts):
+```typescript
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
+
+export interface AuthUser {
+  id: number;
+  email: string;
+  accessToken: string;
+  refreshToken: string;
+  username: string;
+  role: number;
+  fullName: string;
+}
+
+export const useAuthStore = defineStore('auth', () => {
+  const authUser = ref<AuthUser | null>(null);
+  const countUsers = ref(0);
+
+  // Initialize from localStorage
+  const storedUser = localStorage.getItem('authUser');
+  if (storedUser) {
+    authUser.value = JSON.parse(storedUser);
+  }
+
+  const storedCount = localStorage.getItem('countUsers');
+  if (storedCount) {
+    countUsers.value = JSON.parse(storedCount);
+  }
+
+  const login = (userData: AuthUser) => {
+    authUser.value = userData;
+    localStorage.setItem('authUser', JSON.stringify(userData));
+  };
+
+  const logout = () => {
+    authUser.value = null;
+    localStorage.setItem('authUser', '');
+  };
+
+  const setUserCount = (count: number) => {
+    countUsers.value = count;
+    localStorage.setItem('countUsers', JSON.stringify(count));
+  };
+
+  return {
+    authUser,
+    countUsers,
+    login,
+    logout,
+    setUserCount,
+  };
+});
+```
+
+**Migration Notes:**
+- React Context → Pinia store pentru state management
+- useAuth() hook → useAuthStore() composable
+- useState → ref/reactive
+- useEffect → onMounted
+- useNavigate → useRouter
+- Ant Design components → Ant Design Vue (a- prefix)
+- Form handling similar, doar syntax Vue
+- localStorage logic identică
+- API service poate rămâne Axios-based (compatible cu Vue)
+
+**Acceptance Criteria:**
+- [ ] Split layout 50/50 desktop, stacked mobile
+- [ ] Email + password validation rules
+- [ ] Remember me checkbox (UI only)
+- [ ] API integration POST /v1/auth/admin-signin
+- [ ] Success: save to Pinia store + localStorage
+- [ ] Success message toast 2 secunde
+- [ ] Redirect la /users dashboard
+- [ ] Error handling cu message display
+- [ ] Auto-redirect dacă user deja logged in
+- [ ] Loading state pe submit button
+- [ ] Responsive layout cu breakpoint 769px
+
+**Estimation:** 1 day (full API integration + state management setup)
+
+================================================================================
+TASK 2: SignUp Page - Mock Implementation UI
+================================================================================
+**Title:** SignUp Page UI (Mock - No Backend)
+
+**Description:**
+Pagina de înregistrare cu UI complet și social auth buttons, dar FĂRĂ
+integrare backend reală. Implementare mock pentru design consistency.
+
+**Business Logic (Mock Flow):**
+1. User deschide pagina /auth/signup
+2. Afișează social auth buttons (Google, Facebook, Twitter) - NON-FUNCTIONAL
+3. User completează form: firstName, lastName, email, password, confirmPassword
+4. Checkbox "I agree to terms and conditions" (required)
+5. Click "Submit" → validare client-side
+6. Success (mock): afișează success message "Account signup successful"
+7. După 5 secunde → redirect la /users dashboard
+8. Link "Sign in here" → redirect la /auth/signin
+
+**Current Implementation (React):**
+
+Location: admin/src/pages/authentication/SignUp.tsx (204 lines)
+
+Key Features:
+- Split layout similar cu SignIn
+- Social auth buttons (Google, Facebook, Twitter) - NOT IMPLEMENTED
+- 5 form fields: firstName, lastName, email, password, confirmPassword
+- Terms & conditions checkbox cu link
+- Mock onFinish handler (console.log + timeout redirect)
+- NO REAL API CALL
+
+Form Fields:
+```typescript
+type FieldType = {
+  firstName?: string;   // Required
+  lastName?: string;    // Required
+  email?: string;       // Required
+  password?: string;    // Required
+  cPassword?: string;   // Required (confirm password)
+  terms?: boolean;      // Optional checkbox
+};
+```
+
+Mock Submit Handler:
+```typescript
+const onFinish = (values: any) => {
+  console.log('Success:', values);
+  setLoading(true);
+
+  message.open({
+    type: 'success',
+    content: 'Account signup successful',
+  });
+
+  setTimeout(() => {
+    navigate(PATH_DASHBOARD.users);
+  }, 5000);
+};
+```
+
+Social Auth Buttons (Non-functional):
+```tsx
+<Button icon={<GoogleOutlined />}>Sign up with Google</Button>
+<Button icon={<FacebookFilled />}>Sign up with Facebook</Button>
+<Button icon={<TwitterOutlined />}>Sign up with Twitter</Button>
+```
+
+Layout Structure:
+- Left column: Logo + "Welcome to Antd Admin" title
+- Right column: "Create an account" + social buttons + form
+- Divider cu text "or" între social buttons și form
+- Form fields în 2 coloane pe desktop (firstName/lastName side-by-side)
+- Link la SignIn page: "Already have an account? Sign in here"
+
+**Target Implementation (Vue.js 3):**
+
+Similar structure ca SignIn, dar cu:
+- 5 form fields (firstName, lastName, email, password, confirmPassword)
+- Social auth buttons (icon-only, disabled sau non-functional)
+- Password confirmation validation
+- Terms checkbox cu link
+- Mock submit handler (no API call)
+
+Recommended Structure:
+```vue
+<script setup lang="ts">
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { message } from 'ant-design-vue';
+import {
+  GoogleOutlined,
+  FacebookFilled,
+  TwitterOutlined
+} from '@ant-design/icons-vue';
+
+interface SignUpForm {
+  firstName: string;
+  lastName: string;
+  email: string;
+  password: string;
+  cPassword: string;
+  terms?: boolean;
+}
+
+const router = useRouter();
+const loading = ref(false);
+const formState = ref<SignUpForm>({
+  firstName: '',
+  lastName: '',
+  email: '',
+  password: '',
+  cPassword: '',
+  terms: false,
+});
+
+const onFinish = (values: SignUpForm) => {
+  console.log('Success:', values);
+  loading.value = true;
+
+  message.success('Account signup successful');
+
+  setTimeout(() => {
+    router.push('/users');
+  }, 5000);
+};
+</script>
+
+<template>
+  <a-row :style="{ minHeight: isMobile ? 'auto' : '100vh', overflow: 'hidden' }">
+    <!-- Left Column: Branding -->
+    <a-col :xs="24" :lg="12">
+      <!-- Similar to SignIn branding -->
+    </a-col>
+
+    <!-- Right Column: Form -->
+    <a-col :xs="24" :lg="12">
+      <a-flex vertical gap="middle" :style="{ padding: '2rem' }">
+        <a-typography-title class="m-0">Create an account</a-typography-title>
+
+        <a-flex gap="4">
+          <a-typography-text>Already have an account?</a-typography-text>
+          <router-link to="/auth/signin">Sign in here</router-link>
+        </a-flex>
+
+        <!-- Social Auth Buttons (Non-functional) -->
+        <a-flex :vertical="isMobile" gap="small" :style="{ width: '100%' }">
+          <a-button :icon="h(GoogleOutlined)">Sign up with Google</a-button>
+          <a-button :icon="h(FacebookFilled)">Sign up with Facebook</a-button>
+          <a-button :icon="h(TwitterOutlined)">Sign up with Twitter</a-button>
+        </a-flex>
+
+        <a-divider class="m-0">or</a-divider>
+
+        <a-form
+          name="sign-up-form"
+          layout="vertical"
+          :model="formState"
+          @finish="onFinish"
+          autocomplete="off"
+          :requiredMark="false"
+        >
+          <a-row :gutter="[8, 0]">
+            <a-col :xs="24" :lg="12">
+              <a-form-item
+                label="First name"
+                name="firstName"
+                :rules="[{ required: true, message: 'Please input your first name!' }]"
+              >
+                <a-input v-model:value="formState.firstName" />
+              </a-form-item>
+            </a-col>
+
+            <a-col :xs="24" :lg="12">
+              <a-form-item
+                label="Last name"
+                name="lastName"
+                :rules="[{ required: true, message: 'Please input your last name!' }]"
+              >
+                <a-input v-model:value="formState.lastName" />
+              </a-form-item>
+            </a-col>
+
+            <a-col :xs="24">
+              <a-form-item
+                label="Email"
+                name="email"
+                :rules="[{ required: true, message: 'Please input your email' }]"
+              >
+                <a-input v-model:value="formState.email" />
+              </a-form-item>
+            </a-col>
+
+            <a-col :xs="24">
+              <a-form-item
+                label="Password"
+                name="password"
+                :rules="[{ required: true, message: 'Please input your password!' }]"
+              >
+                <a-input-password v-model:value="formState.password" />
+              </a-form-item>
+            </a-col>
+
+            <a-col :xs="24">
+              <a-form-item
+                label="Confirm password"
+                name="cPassword"
+                :rules="[{ required: true, message: 'Please ensure passwords match!' }]"
+              >
+                <a-input-password v-model:value="formState.cPassword" />
+              </a-form-item>
+            </a-col>
+
+            <a-col :xs="24">
+              <a-form-item name="terms" valuePropName="checked">
+                <a-flex>
+                  <a-checkbox v-model:checked="formState.terms">I agree to</a-checkbox>
+                  <a-typography-link>terms and conditions</a-typography-link>
+                </a-flex>
+              </a-form-item>
+            </a-col>
+          </a-row>
+
+          <a-form-item>
+            <a-button
+              type="primary"
+              html-type="submit"
+              size="middle"
+              :loading="loading"
+            >
+              Submit
+            </a-button>
+          </a-form-item>
+        </a-form>
+      </a-flex>
+    </a-col>
+  </a-row>
+</template>
+```
+
+**Migration Notes:**
+- Mock implementation remains mock (no API integration needed)
+- Social auth buttons rămân non-functional (design only)
+- Password confirmation validation poate fi adăugată cu Ant Design Vue rules
+- Terms checkbox link poate fi hardcoded sau route la terms page
+- 5 secunde timeout similar cu React
+
+**Acceptance Criteria:**
+- [ ] Split layout similar SignIn
+- [ ] 3 social auth buttons (non-functional)
+- [ ] 5 form fields cu validation
+- [ ] Password confirmation validation
+- [ ] Terms checkbox cu link
+- [ ] Mock submit cu success message
+- [ ] 5 secunde delay apoi redirect /users
+- [ ] Link la SignIn page
+- [ ] Responsive layout
+
+**Estimation:** 0.5 days (UI only, no backend)
+
+================================================================================
+TASK 3: Password Reset Page - Mock Implementation UI
+================================================================================
+**Title:** Password Reset Page UI (Mock - No Backend)
+
+**Description:**
+Pagina de recuperare parolă cu un singlu câmp email, implementare mock
+pentru design consistency.
+
+**Business Logic (Mock Flow):**
+1. User deschide pagina /auth/password-reset
+2. User introduce email address
+3. Click "Submit" → validare client-side
+4. Success (mock): afișează message "Password reset link sent successfully"
+5. După 5 secunde → redirect la /users dashboard
+6. "Cancel" button → no action (poate redirect înapoi)
+
+**Current Implementation (React):**
+
+Location: admin/src/pages/authentication/PasswordReset.tsx (120 lines)
+
+Key Features:
+- Split layout similar SignIn
+- Single email field
+- Submit + Cancel buttons
+- Mock onFinish handler (no real API call)
+
+Form Fields:
+```typescript
+type FieldType = {
+  email?: string;  // Required
+};
+```
+
+Mock Submit Handler:
+```typescript
+const onFinish = (values: any) => {
+  console.log('Success:', values);
+  setLoading(true);
+
+  message.open({
+    type: 'success',
+    content: 'Password reset link sent successfully',
+  });
+
+  setTimeout(() => {
+    navigate(PATH_DASHBOARD.users);
+  }, 5000);
+};
+```
+
+Layout Structure:
+- Left column: Logo + "Welcome back to Antd Admin" title
+- Right column: "Forgot password" title + subtitle + email field
+- Submit + Cancel buttons side-by-side
+
+**Target Implementation (Vue.js 3):**
+
+Recommended Structure:
+```vue
+<script setup lang="ts">
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { message } from 'ant-design-vue';
+
+interface PasswordResetForm {
+  email: string;
+}
+
+const router = useRouter();
+const loading = ref(false);
+const formState = ref<PasswordResetForm>({
+  email: '',
+});
+
+const onFinish = (values: PasswordResetForm) => {
+  console.log('Success:', values);
+  loading.value = true;
+
+  message.success('Password reset link sent successfully');
+
+  setTimeout(() => {
+    router.push('/users');
+  }, 5000);
+};
+</script>
+
+<template>
+  <a-row :style="{ minHeight: isMobile ? 'auto' : '100vh', overflow: 'hidden' }">
+    <!-- Left Column: Branding -->
+    <a-col :xs="24" :lg="12">
+      <!-- Similar to SignIn branding -->
+    </a-col>
+
+    <!-- Right Column: Form -->
+    <a-col :xs="24" :lg="12">
+      <a-flex
+        vertical
+        :align="isMobile ? 'center' : 'flex-start'"
+        justify="center"
+        gap="middle"
+        :style="{ height: '100%', width: '100%', padding: '2rem' }"
+      >
+        <a-typography-title class="m-0">Forgot password</a-typography-title>
+        <a-typography-text>Enter your email to reset your password.</a-typography-text>
+
+        <a-form
+          name="password-reset-form"
+          layout="vertical"
+          :model="formState"
+          :labelCol="{ span: 24 }"
+          :wrapperCol="{ span: 24 }"
+          @finish="onFinish"
+          autocomplete="off"
+          :requiredMark="false"
+          :style="{ width: '100%' }"
+        >
+          <a-form-item
+            label="Email"
+            name="email"
+            :rules="[{ required: true, message: 'Please input your email' }]"
+          >
+            <a-input v-model:value="formState.email" />
+          </a-form-item>
+
+          <a-form-item>
+            <a-flex align="center" gap="small">
+              <a-button
+                type="primary"
+                html-type="submit"
+                size="middle"
+                :loading="loading"
+              >
+                Submit
+              </a-button>
+              <a-button type="text" size="middle" :loading="loading">
+                Cancel
+              </a-button>
+            </a-flex>
+          </a-form-item>
+        </a-form>
+      </a-flex>
+    </a-col>
+  </a-row>
+</template>
+```
+
+**Migration Notes:**
+- Simplest form - doar 1 câmp email
+- Mock implementation (no API)
+- Submit + Cancel buttons (Cancel nu are funcționalitate)
+- 5 secunde delay apoi redirect
+
+**Acceptance Criteria:**
+- [ ] Split layout similar SignIn
+- [ ] Single email field cu validation
+- [ ] Submit + Cancel buttons
+- [ ] Mock success message
+- [ ] 5 secunde delay apoi redirect /users
+- [ ] Responsive layout
+
+**Estimation:** 0.25 days (very simple UI)
+
+================================================================================
+TASK 4: Verify Email Page - Informational UI
+================================================================================
+**Title:** Verify Email Informational Page
+
+**Description:**
+Pagină informațională simplă care afișează mesaj de verificare email cu
+link către email-ul utilizatorului și opțiune de resend (non-functional).
+
+**Business Logic:**
+1. User deschide pagina /auth/verify-email (probabil după signup)
+2. Afișează mesaj: "We have sent an email to [email] please follow a link to verify your email"
+3. Email hardcoded: kelvin.kiprop96@gmail.com (va trebui înlocuit cu email real)
+4. "Skip" button → redirect la /users dashboard
+5. "Resend" link → NO IMPLEMENTATION (doar link text)
+
+**Current Implementation (React):**
+
+Location: admin/src/pages/authentication/VerifyEmail.tsx (34 lines)
+
+Key Features:
+- Centered layout (nu split ca SignIn/SignUp)
+- Logo centered
+- Title "Verify Your Email"
+- Email link (hardcoded)
+- "Skip" button → redirect /users
+- "Resend" link (no action)
+
+Layout Structure:
+```tsx
+<Flex
+  vertical
+  gap="large"
+  align="center"
+  justify="center"
+  style={{ height: '80vh' }}
+>
+  <Logo color="blue" />
+  <Typography.Title>Verify Your Email</Typography.Title>
+  <Typography.Text>
+    We have sent an email to{' '}
+    <Link to="mailto:kelvin.kiprop96@gmail.com">
+      kelvin.kiprop96@gmail.com
+    </Link>{' '}
+    plase follow a link to verify your email.
+  </Typography.Text>
+  <Link to={PATH_DASHBOARD.users}>
+    <Button>Skip</Button>
+  </Link>
+  <Flex gap={2}>
+    <Typography.Text>Did't receive an email?</Typography.Text>
+    <Typography.Link>Resend</Typography.Link>
+  </Flex>
+</Flex>
+```
+
+**Target Implementation (Vue.js 3):**
+
+Recommended Structure:
+```vue
+<script setup lang="ts">
+// No complex logic needed - just routing
+</script>
+
+<template>
+  <a-flex
+    vertical
+    gap="large"
+    align="center"
+    justify="center"
+    :style="{ height: '80vh' }"
+  >
+    <Logo color="blue" />
+
+    <a-typography-title class="m-0">Verify Your Email</a-typography-title>
+
+    <a-typography-text>
+      We have sent an email to
+      <a href="mailto:kelvin.kiprop96@gmail.com">
+        kelvin.kiprop96@gmail.com
+      </a>
+      please follow a link to verify your email.
+    </a-typography-text>
+
+    <router-link to="/users">
+      <a-button>Skip</a-button>
+    </router-link>
+
+    <a-flex :gap="2">
+      <a-typography-text>Didn't receive an email?</a-typography-text>
+      <a-typography-link>Resend</a-typography-link>
+    </a-flex>
+  </a-flex>
+</template>
+```
+
+**Migration Notes:**
+- Simplest page - doar static content
+- Email hardcoded (va trebui înlocuit cu dynamic email din auth context)
+- "Resend" link nu are funcționalitate
+- "Skip" button redirect direct
+- Typo în text: "plase" → "please", "Did't" → "Didn't"
+
+**Acceptance Criteria:**
+- [ ] Centered layout (80vh height)
+- [ ] Logo + title centered
+- [ ] Email link (dynamic sau hardcoded)
+- [ ] Skip button → redirect /users
+- [ ] Resend link (UI only)
+- [ ] Fix typos în text
+
+**Estimation:** 0.25 days (static page)
+
+================================================================================
+TASK 5: Welcome Page - Informational UI
+================================================================================
+**Title:** Welcome Page Static UI
+
+**Description:**
+Pagină de bun venit simplă cu logo și mesaj generic, folosită probabil
+după signup success sau ca landing page.
+
+**Business Logic:**
+1. User deschide pagina /auth/welcome
+2. Afișează logo + "Welcome to Antd" title + description
+3. "Go to Homepage" button → redirect la /users dashboard
+
+**Current Implementation (React):**
+
+Location: admin/src/pages/authentication/Welcome.tsx (29 lines)
+
+Key Features:
+- Centered layout (80vh)
+- Logo + title + description
+- Single button "Go to Homepage"
+
+Layout Structure:
+```tsx
+<Flex
+  vertical
+  gap="large"
+  align="center"
+  justify="center"
+  style={{ height: '80vh' }}
+>
+  <Logo color="blue" />
+  <Typography.Title>Welcome to Antd</Typography.Title>
+  <Typography.Text style={{ fontSize: 18 }}>
+    A dynamic and versatile multipurpose dashboard utilizing Ant Design,
+    React, TypeScript, and Vite.
+  </Typography.Text>
+  <Link to={PATH_DASHBOARD.users}>
+    <Button type="primary" size="middle">
+      Go to Homepage
+    </Button>
+  </Link>
+</Flex>
+```
+
+**Target Implementation (Vue.js 3):**
+
+Recommended Structure:
+```vue
+<template>
+  <a-flex
+    vertical
+    gap="large"
+    align="center"
+    justify="center"
+    :style="{ height: '80vh' }"
+  >
+    <Logo color="blue" />
+
+    <a-typography-title class="m-0">Welcome to Somaway Admin</a-typography-title>
+
+    <a-typography-text :style="{ fontSize: 18 }">
+      Panou administrare pentru cursuri, utilizatori și multe altele
+    </a-typography-text>
+
+    <router-link to="/users">
+      <a-button type="primary" size="middle">
+        Go to Homepage
+      </a-button>
+    </router-link>
+  </a-flex>
+</template>
+```
+
+**Migration Notes:**
+- Static content page
+- "Antd" → "Somaway Admin" în title
+- Generic description poate fi updatată
+- Single button redirect
+
+**Acceptance Criteria:**
+- [ ] Centered layout (80vh)
+- [ ] Logo + title + description centered
+- [ ] "Go to Homepage" button → redirect /users
+- [ ] Update text pentru Somaway branding
+
+**Estimation:** 0.25 days (static page)
+
+================================================================================
+TASK 6: Account Deactivate Page - Informational UI
+================================================================================
+**Title:** Account Deactivate Informational Page
+
+**Description:**
+Pagină informațională pentru cont dezactivat cu link către Help Center.
+
+**Business Logic:**
+1. User deschide pagina /auth/account-deactivate (probabil după admin deactivate)
+2. Afișează mesaj "Deactivated Account"
+3. Link către Help Center (hardcoded "#")
+4. "Go to Homepage" button → redirect la /users dashboard
+
+**Current Implementation (React):**
+
+Location: admin/src/pages/authentication/AccountDeactivate.tsx (28 lines)
+
+Key Features:
+- Centered layout (80vh)
+- Logo + title "Deactivated Account"
+- Help Center link (no real route)
+- "Go to Homepage" button
+
+Layout Structure:
+```tsx
+<Flex
+  vertical
+  gap="large"
+  align="center"
+  justify="center"
+  style={{ height: '80vh' }}
+>
+  <Logo color="blue" />
+  <Typography.Title>Deactivated Account</Typography.Title>
+  <Typography.Text style={{ fontSize: 18 }}>
+    Looking for answers? Check the <Link to="#">Help Center</Link>.
+  </Typography.Text>
+  <Link to={PATH_DASHBOARD.users}>
+    <Button type="primary" size="middle">
+      Go to Homepage
+    </Button>
+  </Link>
+</Flex>
+```
+
+**Target Implementation (Vue.js 3):**
+
+Recommended Structure:
+```vue
+<template>
+  <a-flex
+    vertical
+    gap="large"
+    align="center"
+    justify="center"
+    :style="{ height: '80vh' }"
+  >
+    <Logo color="blue" />
+
+    <a-typography-title class="m-0">Deactivated Account</a-typography-title>
+
+    <a-typography-text :style="{ fontSize: 18 }">
+      Looking for answers? Check the
+      <router-link to="#">Help Center</router-link>.
+    </a-typography-text>
+
+    <router-link to="/users">
+      <a-button type="primary" size="middle">
+        Go to Homepage
+      </a-button>
+    </router-link>
+  </a-flex>
+</template>
+```
+
+**Migration Notes:**
+- Static informational page
+- Help Center link hardcoded "#" (poate fi înlocuit cu real route)
+- Single button redirect
+
+**Acceptance Criteria:**
+- [ ] Centered layout (80vh)
+- [ ] Logo + title centered
+- [ ] Help Center link (poate rămâne "#")
+- [ ] "Go to Homepage" button → redirect /users
+
+**Estimation:** 0.25 days (static page)
+
+================================================================================
+TASK 7: Auth Context → Pinia Store Migration
+================================================================================
+**Title:** Auth State Management - React Context to Pinia Store
+
+**Description:**
+Migrare state management de la React Context API la Pinia (Vue state
+management), inclusiv localStorage persistență și metode de login/logout.
+
+**Business Logic:**
+1. Store authUser object cu id, email, tokens, username, role, fullName
+2. Persistență în localStorage pentru authUser
+3. Store countUsers pentru total users count
+4. Metode: login(), logout(), setUserCount()
+5. Auto-hydrate state din localStorage la app init
+
+**Current Implementation (React Context):**
+
+Location: admin/src/context/auth.tsx (72 lines)
+
+AuthUser Interface:
+```typescript
+export interface AuthUser {
+  id: number;
+  email: string;
+  accessToken: string;
+  refreshToken: string;
+  username: string;
+  role: number;
+  fullName: string;
+}
+```
+
+Context Implementation:
+```typescript
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+const AuthProvider: React.FC<PropsWithChildren> = ({ children }) => {
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => {
+    const storedUser = localStorage.getItem('authUser');
+    return storedUser ? JSON.parse(storedUser) : null;
+  });
+
+  const [countUsers, setUserCountUsers] = useState<number>(() => {
+    const storedUser = localStorage.getItem('countUsers');
+    return storedUser ? JSON.parse(storedUser) : 0;
+  });
+
+  const login = (userData: AuthUser) => {
+    setAuthUser(userData);
+    localStorage.setItem('authUser', JSON.stringify(userData));
+  };
+
+  const setUserCount = (count: number) => {
+    setUserCountUsers(count);
+    localStorage.setItem('countUsers', JSON.stringify(count));
+  };
+
+  const logout = () => {
+    setAuthUser(null);
+    localStorage.setItem('authUser', '');
+  };
+
+  return (
+    <AuthContext.Provider value={{ authUser, login, logout, setUserCount, countUsers }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = (): AuthContextType => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+  return context;
+};
+```
+
+**Target Implementation (Pinia Store):**
+
+Store Location: stores/auth.ts
+
+Recommended Implementation:
+```typescript
+import { defineStore } from 'pinia';
+import { ref, computed } from 'vue';
+
+export interface AuthUser {
+  id: number;
+  email: string;
+  accessToken: string;
+  refreshToken: string;
+  username: string;
+  role: number;
+  fullName: string;
+}
+
+export const useAuthStore = defineStore('auth', () => {
+  // State
+  const authUser = ref<AuthUser | null>(null);
+  const countUsers = ref(0);
+
+  // Initialize from localStorage
+  const initializeAuth = () => {
+    const storedUser = localStorage.getItem('authUser');
+    if (storedUser) {
+      try {
+        authUser.value = JSON.parse(storedUser);
+      } catch (error) {
+        console.error('Failed to parse authUser from localStorage:', error);
+        authUser.value = null;
+      }
+    }
+
+    const storedCount = localStorage.getItem('countUsers');
+    if (storedCount) {
+      try {
+        countUsers.value = JSON.parse(storedCount);
+      } catch (error) {
+        console.error('Failed to parse countUsers from localStorage:', error);
+        countUsers.value = 0;
+      }
+    }
+  };
+
+  // Computed
+  const isAuthenticated = computed(() => authUser.value !== null);
+  const userRole = computed(() => authUser.value?.role ?? 0);
+  const userName = computed(() => authUser.value?.fullName ?? '');
+
+  // Actions
+  const login = (userData: AuthUser) => {
+    authUser.value = userData;
+    localStorage.setItem('authUser', JSON.stringify(userData));
+  };
+
+  const logout = () => {
+    authUser.value = null;
+    localStorage.removeItem('authUser');
+    localStorage.removeItem('countUsers');
+  };
+
+  const setUserCount = (count: number) => {
+    countUsers.value = count;
+    localStorage.setItem('countUsers', JSON.stringify(count));
+  };
+
+  const updateAccessToken = (token: string) => {
+    if (authUser.value) {
+      authUser.value.accessToken = token;
+      localStorage.setItem('authUser', JSON.stringify(authUser.value));
+    }
+  };
+
+  // Initialize on store creation
+  initializeAuth();
+
+  return {
+    // State
+    authUser,
+    countUsers,
+
+    // Computed
+    isAuthenticated,
+    userRole,
+    userName,
+
+    // Actions
+    login,
+    logout,
+    setUserCount,
+    updateAccessToken,
+  };
+});
+```
+
+Main App Setup (main.ts):
+```typescript
+import { createApp } from 'vue';
+import { createPinia } from 'pinia';
+import App from './App.vue';
+import router from './router';
+
+const app = createApp(App);
+const pinia = createPinia();
+
+app.use(pinia);
+app.use(router);
+
+app.mount('#app');
+```
+
+Usage în Components:
+```vue
+<script setup lang="ts">
+import { useAuthStore } from '@/stores/auth';
+
+const authStore = useAuthStore();
+
+// Access state
+console.log(authStore.authUser);
+console.log(authStore.isAuthenticated);
+
+// Call actions
+authStore.login(userData);
+authStore.logout();
+authStore.setUserCount(100);
+</script>
+```
+
+**Migration Notes:**
+- React Context → Pinia store (setup syntax)
+- useState → ref
+- Context Provider → Pinia plugin
+- useAuth() hook → useAuthStore() composable
+- localStorage logic identică
+- Adăugat error handling pentru JSON.parse
+- Adăugat computed properties (isAuthenticated, userRole, userName)
+- Adăugat updateAccessToken() pentru token refresh flow
+
+**Migration Steps:**
+1. Install pinia: `npm install pinia`
+2. Create stores/auth.ts with Pinia store
+3. Setup Pinia în main.ts
+4. Replace all useAuth() cu useAuthStore() în components
+5. Update import statements
+6. Test localStorage persistence
+7. Test login/logout flow
+
+**Acceptance Criteria:**
+- [ ] Pinia store cu authUser + countUsers state
+- [ ] localStorage persistence (load + save)
+- [ ] login() method saves to store + localStorage
+- [ ] logout() method clears store + localStorage
+- [ ] setUserCount() method
+- [ ] Computed properties: isAuthenticated, userRole, userName
+- [ ] Error handling pentru JSON.parse
+- [ ] Auto-initialize din localStorage on app load
+- [ ] TypeScript support cu AuthUser interface
+- [ ] Replace all useAuth() calls în entire app
+
+**Estimation:** 0.5 days (store setup + refactor all components)
+
+================================================================================
+TASK 8: Router Configuration for Auth Routes
+================================================================================
+**Title:** Vue Router Setup for Authentication Routes
+
+**Description:**
+Configurare rute pentru toate paginile de autentificare cu guards pentru
+redirect automat dacă user deja autentificat.
+
+**Business Logic:**
+1. Define toate rutele auth: /auth/signin, /auth/signup, /auth/password-reset, etc.
+2. Navigation guard: dacă user deja autentificat → redirect la /users
+3. Protected routes (dashboard pages): verifică authentication
+4. Redirect unauthenticated users la /auth/signin
+
+**Current Implementation (React Router):**
+
+Location: admin/src/routes (probabil)
+
+Routes structure:
+```typescript
+{
+  path: '/auth',
+  children: [
+    { path: 'signin', element: <SignInPage /> },
+    { path: 'signup', element: <SignUpPage /> },
+    { path: 'password-reset', element: <PasswordResetPage /> },
+    { path: 'verify-email', element: <VerifyEmailPage /> },
+    { path: 'welcome', element: <WelcomePage /> },
+    { path: 'account-deactivate', element: <AccountDeactivatePage /> },
+  ]
+}
+```
+
+**Target Implementation (Vue Router):**
+
+Location: router/index.ts
+
+Recommended Implementation:
+```typescript
+import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
+
+// Auth Pages
+import SignInPage from '@/pages/authentication/SignIn.vue';
+import SignUpPage from '@/pages/authentication/SignUp.vue';
+import PasswordResetPage from '@/pages/authentication/PasswordReset.vue';
+import VerifyEmailPage from '@/pages/authentication/VerifyEmail.vue';
+import WelcomePage from '@/pages/authentication/Welcome.vue';
+import AccountDeactivatePage from '@/pages/authentication/AccountDeactivate.vue';
+
+// Dashboard Pages
+import UsersPage from '@/pages/dashboards/Users.vue';
+import CoursesPage from '@/pages/dashboards/Courses.vue';
+// ... other dashboard pages
+
+const routes: RouteRecordRaw[] = [
+  // Auth Routes (redirect if already authenticated)
+  {
+    path: '/auth',
+    redirect: '/auth/signin',
+    children: [
+      {
+        path: 'signin',
+        name: 'SignIn',
+        component: SignInPage,
+        meta: { requiresGuest: true },
+      },
+      {
+        path: 'signup',
+        name: 'SignUp',
+        component: SignUpPage,
+        meta: { requiresGuest: true },
+      },
+      {
+        path: 'password-reset',
+        name: 'PasswordReset',
+        component: PasswordResetPage,
+        meta: { requiresGuest: true },
+      },
+      {
+        path: 'verify-email',
+        name: 'VerifyEmail',
+        component: VerifyEmailPage,
+      },
+      {
+        path: 'welcome',
+        name: 'Welcome',
+        component: WelcomePage,
+      },
+      {
+        path: 'account-deactivate',
+        name: 'AccountDeactivate',
+        component: AccountDeactivatePage,
+      },
+    ],
+  },
+
+  // Dashboard Routes (require authentication)
+  {
+    path: '/',
+    redirect: '/users',
+    meta: { requiresAuth: true },
+    children: [
+      {
+        path: 'users',
+        name: 'Users',
+        component: UsersPage,
+        meta: { requiresAuth: true },
+      },
+      {
+        path: 'courses',
+        name: 'Courses',
+        component: CoursesPage,
+        meta: { requiresAuth: true },
+      },
+      // ... other dashboard routes
+    ],
+  },
+
+  // Catch-all redirect
+  {
+    path: '/:pathMatch(.*)*',
+    redirect: '/auth/signin',
+  },
+];
+
+const router = createRouter({
+  history: createWebHistory(import.meta.env.BASE_URL),
+  routes,
+});
+
+// Navigation Guards
+router.beforeEach((to, from, next) => {
+  const authStore = useAuthStore();
+  const isAuthenticated = authStore.isAuthenticated;
+
+  // Check if route requires authentication
+  if (to.meta.requiresAuth && !isAuthenticated) {
+    // Redirect to sign in
+    next('/auth/signin');
+    return;
+  }
+
+  // Check if route requires guest (e.g., sign in, sign up)
+  if (to.meta.requiresGuest && isAuthenticated) {
+    // Redirect to dashboard
+    next('/users');
+    return;
+  }
+
+  // Allow navigation
+  next();
+});
+
+export default router;
+```
+
+**Migration Notes:**
+- React Router → Vue Router 4
+- useNavigate → useRouter/router.push
+- meta.requiresAuth pentru protected routes
+- meta.requiresGuest pentru auth pages (redirect dacă logged in)
+- beforeEach guard pentru authentication check
+- Catch-all route pentru 404 handling
+
+**Acceptance Criteria:**
+- [ ] All 6 auth routes configured
+- [ ] requiresGuest meta pentru signin/signup/password-reset
+- [ ] requiresAuth meta pentru dashboard routes
+- [ ] beforeEach guard checks authentication
+- [ ] Unauthenticated users redirect la /auth/signin
+- [ ] Authenticated users redirect de la auth pages la /users
+- [ ] Catch-all route pentru 404
+- [ ] TypeScript route definitions
+
+**Estimation:** 0.5 days (router setup + navigation guards)
+
+================================================================================
+TASK 9: API Service - handleLogin Function
+================================================================================
+**Title:** API Service handleLogin Method for Vue.js
+
+**Description:**
+Migrare funcție handleLogin de la fetch-based la Axios pentru consistency
+cu restul aplicației Vue.js.
+
+**Business Logic:**
+1. Accept { email, password } body
+2. POST request la /v1/auth/admin-signin
+3. Include Authorization header (dacă token există)
+4. Success (200/201): returnează { status, data } cu authUser object
+5. Error (401): redirect la /auth/signin + clear localStorage
+6. Error (other): afișează error message toast
+7. Catch network errors
+
+**Current Implementation (React - Fetch API):**
+
+Location: admin/src/utils/apiService.tsx:597
+
+```typescript
+export const handleLogin = async (body: unknown) => {
+  try {
+    const headers = new Headers();
+    headers.append('Content-Type', 'application/json');
+    headers.append('Accept', 'application/json');
+    headers.append('Authorization', 'Bearer ' + token);
+
+    const response = await fetch(SIGNIN_API, {
+      method: 'POST',
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await response.json();
+
+    if ([200, 201].includes(response?.status)) {
+      return { status: response.status, data } as ResponseT;
+    }
+
+    if (response?.status === 401 && response.statusText === 'Unauthorized') {
+      localStorage.removeItem('authUser');
+      window.location.replace('/auth/signin');
+    }
+
+    message.open({
+      type: 'error',
+      content: data?.message || response.statusText,
+    });
+    return { status: response.status, error: data } as unknown as ResponseT;
+  } catch (error) {
+    return error;
+  }
+};
+```
+
+API Endpoint (admin/src/constants/routes.ts:235):
+```typescript
+export const SIGNIN_API = `${ROOT_API}/v1/auth/admin-signin`;
+```
+
+**Target Implementation (Vue.js - Axios):**
+
+Location: utils/apiService.ts
+
+Recommended Implementation:
+```typescript
+import axios, { AxiosError } from 'axios';
+import { message } from 'ant-design-vue';
+import router from '@/router';
+
+const ROOT_API =
+  import.meta.env.VITE_ENV === 'production'
+    ? 'https://api.somaway.ro/api'
+    : import.meta.env.VITE_ENV === 'development'
+    ? 'https://dev-api.somaway.ro/api'
+    : 'http://localhost:3005/api';
+
+export const SIGNIN_API = `${ROOT_API}/v1/auth/admin-signin`;
+
+export interface ResponseT {
+  status: number;
+  data?: any;
+  error?: any;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export const handleLogin = async (body: LoginRequest): Promise<ResponseT> => {
+  try {
+    const response = await axios.post(SIGNIN_API, body, {
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+    });
+
+    if ([200, 201].includes(response.status)) {
+      return {
+        status: response.status,
+        data: response.data,
+      };
+    }
+
+    return {
+      status: response.status,
+      error: response.data,
+    };
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const axiosError = error as AxiosError;
+
+      // Handle 401 Unauthorized
+      if (axiosError.response?.status === 401) {
+        localStorage.removeItem('authUser');
+        localStorage.removeItem('countUsers');
+        router.push('/auth/signin');
+
+        message.error('Sesiune expirată. Vă rugăm să vă autentificați din nou.');
+
+        return {
+          status: 401,
+          error: axiosError.response.data,
+        };
+      }
+
+      // Handle other HTTP errors
+      const errorMessage =
+        (axiosError.response?.data as any)?.message ||
+        axiosError.message ||
+        'A apărut o eroare la autentificare';
+
+      message.error(errorMessage);
+
+      return {
+        status: axiosError.response?.status || 500,
+        error: axiosError.response?.data,
+      };
+    }
+
+    // Handle non-Axios errors
+    console.error('Login error:', error);
+    message.error('A apărut o eroare de rețea');
+
+    return {
+      status: 500,
+      error: error,
+    };
+  }
+};
+```
+
+Axios Instance Configuration (optional - pentru interceptors):
+```typescript
+// utils/axios.ts
+import axios from 'axios';
+import { useAuthStore } from '@/stores/auth';
+import router from '@/router';
+import { message } from 'ant-design-vue';
+
+const ROOT_API =
+  import.meta.env.VITE_ENV === 'production'
+    ? 'https://api.somaway.ro/api'
+    : import.meta.env.VITE_ENV === 'development'
+    ? 'https://dev-api.somaway.ro/api'
+    : 'http://localhost:3005/api';
+
+const axiosInstance = axios.create({
+  baseURL: ROOT_API,
+  timeout: 10000,
+  headers: {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  },
+});
+
+// Request interceptor (add auth token)
+axiosInstance.interceptors.request.use(
+  (config) => {
+    const authStore = useAuthStore();
+    if (authStore.authUser?.accessToken) {
+      config.headers.Authorization = `Bearer ${authStore.authUser.accessToken}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+// Response interceptor (handle 401 globally)
+axiosInstance.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      const authStore = useAuthStore();
+      authStore.logout();
+      router.push('/auth/signin');
+      message.error('Sesiune expirată. Vă rugăm să vă autentificați din nou.');
+    }
+    return Promise.reject(error);
+  }
+);
+
+export default axiosInstance;
+```
+
+Updated handleLogin with Axios Instance:
+```typescript
+import axiosInstance from './axios';
+
+export const handleLogin = async (body: LoginRequest): Promise<ResponseT> => {
+  try {
+    const response = await axiosInstance.post('/v1/auth/admin-signin', body);
+
+    return {
+      status: response.status,
+      data: response.data,
+    };
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const axiosError = error as AxiosError;
+      const errorMessage =
+        (axiosError.response?.data as any)?.message ||
+        axiosError.message ||
+        'A apărut o eroare la autentificare';
+
+      message.error(errorMessage);
+
+      return {
+        status: axiosError.response?.status || 500,
+        error: axiosError.response?.data,
+      };
+    }
+
+    console.error('Login error:', error);
+    message.error('A apărut o eroare de rețea');
+
+    return {
+      status: 500,
+      error: error,
+    };
+  }
+};
+```
+
+**Migration Notes:**
+- fetch API → Axios pentru consistency
+- Headers automată prin Axios interceptors
+- Error handling mai robust cu AxiosError type
+- 401 handling cu redirect + localStorage clear
+- Message notifications pentru errors
+- Optional: Axios instance cu interceptors pentru global auth token injection
+- TypeScript support cu LoginRequest + ResponseT interfaces
+
+**Environment Variables (.env):**
+```
+VITE_ENV=development  # or production or local
+```
+
+**Acceptance Criteria:**
+- [ ] Axios-based implementation
+- [ ] POST /v1/auth/admin-signin
+- [ ] Accept { email, password } typed request
+- [ ] Return { status, data } cu authUser
+- [ ] 401 error → redirect + clear localStorage
+- [ ] Error messages cu Ant Design message component
+- [ ] TypeScript types pentru request/response
+- [ ] Optional: Axios instance cu interceptors
+- [ ] Environment-based API URL configuration
+
+**Estimation:** 0.5 days (API service + Axios setup)
+
+================================================================================
+SUMMARY - AUTHENTICATION MODULE
+================================================================================
+
+**Total Tasks:** 9
+
+**Task Breakdown:**
+1. SignIn Page - Full Implementation (1 day)
+2. SignUp Page - Mock UI (0.5 days)
+3. Password Reset Page - Mock UI (0.25 days)
+4. Verify Email Page - Informational (0.25 days)
+5. Welcome Page - Informational (0.25 days)
+6. Account Deactivate Page - Informational (0.25 days)
+7. Auth Context → Pinia Store (0.5 days)
+8. Router Configuration (0.5 days)
+9. API Service handleLogin (0.5 days)
+
+**Total Estimation:** 4 days
+
+**Implementation Status:**
+- ✅ FULL: SignIn (cu backend API integration)
+- ⚠️ MOCK: SignUp, PasswordReset (UI only, no backend)
+- ℹ️ INFO: VerifyEmail, Welcome, AccountDeactivate (static pages)
+
+**Key Dependencies:**
+- Pinia pentru state management
+- Vue Router pentru navigation
+- Ant Design Vue pentru UI components
+- Axios pentru HTTP requests
+- TypeScript pentru type safety
+
+**Migration Priority:**
+1. HIGH: SignIn + Auth Store + Router (core authentication)
+2. MEDIUM: Mock pages (SignUp, PasswordReset) pentru design consistency
+3. LOW: Informational pages (VerifyEmail, Welcome, AccountDeactivate)
+
+**Recommendations:**
+1. Implementează SignIn + Auth Store + Router împreună (dependencies)
+2. Adaugă Token Refresh flow pentru long-running sessions
+3. Consideră social auth implementation pentru SignUp (Google, Facebook)
+4. Adaugă real backend endpoints pentru SignUp și PasswordReset
+5. Implementează Email Verification flow complet
+6. Adaugă Remember Me funcționalitate (extended token expiration)
+7. Consideră 2FA (Two-Factor Authentication) pentru admin security
+
+**Security Considerations:**
+- JWT tokens în localStorage (vulnerable la XSS - consideră HttpOnly cookies)
+- CSRF protection pentru form submissions
+- Rate limiting pe login endpoint (backend)
+- Password strength validation
+- Account lockout după multiple failed attempts
+- Secure password reset token expiration
+
+================================================================================
+END OF AUTHENTICATION MODULE DOCUMENTATION
+================================================================================

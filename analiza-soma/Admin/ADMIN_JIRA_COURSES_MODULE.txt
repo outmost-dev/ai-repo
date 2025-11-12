@@ -1,0 +1,1492 @@
+================================================================================
+JIRA STORY: COURSES MANAGEMENT MODULE (ADMIN DASHBOARD)
+================================================================================
+
+Story Title: Admin - Courses Management Module
+
+Story Type: Frontend Feature (Page + Components)
+
+Epic: Somaway Admin Dashboard Migration to Vue.js 3
+
+Story Description:
+------------------
+Modulul de management cursuri permite administratorilor să vizualizeze, creeze,
+editeze și șteargă cursuri din platforma Somaway. Include tabel cu toate cursurile,
+formular CRUD, upload imagine, upload video (Vimeo), preview video, și management
+display order pentru ordonarea cursurilor pe frontend.
+
+Locație cod sursă:
+- Page: admin/src/pages/dashboards/Courses.tsx
+- Card Component: admin/src/components/dashboard/learning/CoursesCard/CoursesCard.tsx
+- Form Component: admin/src/components/dashboard/learning/CoursesForm/CoursesForm.tsx
+
+Features implementate:
+- ✅ Tabel cu toate cursurile (filtrare, sortare, paginare)
+- ✅ Create course (modal cu formular)
+- ✅ Edit course (modal cu formular pre-populat)
+- ✅ Delete course (cu confirmare)
+- ✅ Upload imagine curs (thumbnail)
+- ✅ Upload video curs (Vimeo integration)
+- ✅ Preview video (modal cu video player)
+- ✅ Display order management (ordinea de afișare pe site)
+- ✅ Status toggle (Activ/Inactiv)
+- ✅ isPractice flag (curs de practică sau teorie)
+- ✅ Link către lessons (vezi lecțiile cursului)
+
+API Endpoints folosite:
+- GET /v1/course/all?level=admin - Fetch all courses
+- POST /v1/course - Create course
+- PATCH /v1/course/:id - Update course
+- DELETE /v1/course/:id - Delete course
+- POST /v1/course/upload-image - Upload course thumbnail
+- POST /v1/course/upload-video - Upload course video to Vimeo
+- GET /v1/category/all - Get categories for dropdown
+
+Dependencies:
+- Backend API (GET, POST, PATCH, DELETE /v1/course)
+- Vimeo Service (video upload)
+- DigitalOcean Spaces (image upload)
+- Category Service (dropdown pentru categorii)
+
+Tech Stack (Current React):
+- React 18.2.0 + TypeScript 5.0.2
+- Ant Design 5.20.1 (Table, Form, Modal, Upload, Button, etc.)
+- React Router 6.15.0
+- React Player 2.16.0 (video preview)
+- dayjs (date formatting)
+- Custom hooks: useAuth, useStylesContext
+
+Target Tech Stack (Vue 3):
+- Vue 3.4+ Composition API + TypeScript
+- Ant Design Vue 4.x
+- Vue Router 4.x
+- @videojs-player/vue or vue3-video-player (video preview)
+- dayjs (same)
+- Composables: useAuth, useApi
+
+================================================================================
+TASKS (9 COMPONENTS + FEATURES)
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 1: Courses Page Layout & State Management
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Pagina principală de management cursuri care orchestrează toate componentele:
+tabel cu cursuri, modal de create/edit, video preview modal, și state management
+pentru operațiunile CRUD. Implementează loading states, error handling, și
+sincronizare UI după operațiuni (create, update, delete).
+
+Flow:
+1. La mount:
+   - Fetch all courses din API (GET /v1/course/all?level=admin)
+   - Setează loading=true până la primirea datelor
+   - Populate coursesData[] cu cursurile primite
+2. User poate:
+   - Deschide modal Create (click pe buton "+" în header tabel)
+   - Deschide modal Edit (click pe titlu curs în tabel)
+   - Deschide video preview (click pe buton video în tabel)
+   - Șterge curs (click pe buton delete → confirm → API call → sync UI)
+3. După operații:
+   - Create: adaugă noul curs în state (prepend la array)
+   - Update: updatează cursul în state (find by id și replace)
+   - Delete: elimină cursul din state (filter by id)
+
+Cod sursă:
+- Page: admin/src/pages/dashboards/Courses.tsx:1-200
+
+Component Structure:
+<div>
+  <Helmet><title>Cursuri | Dashboard</title></Helmet>
+  <PageHeader title="cursuri | dashboard" breadcrumbs={...} />
+
+  <Row gutter={[32, 32]}>
+    <Col span={24}>
+      <CoursesCard
+        data={coursesData}
+        loading={loading}
+        handleEditModal={handleEditModal}
+        handleDeleteCourse={handleDeleteCourse}
+        setVideoModalUrl={setVideoModalUrl}
+      />
+    </Col>
+  </Row>
+
+  <Drawer open={modalAction !== CLOSE} onClose={...} width={editModalWidth}>
+    <CoursesForm
+      recordToUpdate={courseToUpdate}
+      handleEditModal={handleEditModal}
+    />
+  </Drawer>
+
+  <Modal open={!!videoModalUrl} onCancel={...}>
+    <ReactPlayer url={videoModalUrl} controls />
+  </Modal>
+</div>
+
+State Management (React):
+const [loading, setLoading] = useState(true);
+const [coursesData, setCoursesData] = useState<LearningCourse[]>([]);
+const [modalAction, setModalAction] = useState<MODAL_ACTIONS>(CLOSE);
+const [courseToUpdate, setCourseToUpdate] = useState<LearningCourse>();
+const [videoModalUrl, setVideoModalUrl] = useState('');
+const [editModalWidth, setEditModalWidth] = useState<string>();
+
+State Management (Target Vue):
+const loading = ref(true);
+const coursesData = ref<LearningCourse[]>([]);
+const modalAction = ref<MODAL_ACTIONS>('CLOSE');
+const courseToUpdate = ref<LearningCourse>();
+const videoModalUrl = ref('');
+const editModalWidth = ref<string>();
+
+API Integration:
+useEffect(() => {
+  getAllCoursesApi(setLoading, authUser?.accessToken ?? "").then((data: unknown) => {
+    const coursesData = (data as CourseResponse).courses;
+    setCoursesData(coursesData);
+  });
+}, []);
+
+// Vue equivalent:
+onMounted(async () => {
+  const { data } = await useApi().request(ALL_COURSES_API);
+  coursesData.value = data.courses;
+});
+
+Sync Methods:
+const syncAfterUpdate = (newRecord: LearningCourse) => {
+  setCoursesData(prevState => {
+    const updatedCourses = prevState?.map(item =>
+      Number(item.id) === Number(newRecord?.id) ? newRecord : item
+    );
+    return updatedCourses?.sort((a, b) => (a.displayOrder ?? 9999999) - (b.displayOrder ?? 9999999));
+  });
+}
+
+const syncAfterCreate = (newRecord: LearningCourse) => {
+  setCoursesData(prevState => [newRecord, ...prevState]);
+}
+
+const syncAfterDelete = (recordId: number) => {
+  setCoursesData(prevState => prevState?.filter((item) => item.id !== recordId));
+}
+
+Responsive Design:
+const isLarge = useMediaQuery({ minWidth: 960 });
+
+useEffect(() => {
+  if (isLarge) {
+    setEditModalWidth('640');
+  } else {
+    setEditModalWidth('100%');
+  }
+}, [isLarge]);
+
+// Vue equivalent:
+import { useMediaQuery } from '@vueuse/core';
+const isLarge = useMediaQuery('(min-width: 960px)');
+const editModalWidth = computed(() => isLarge.value ? '640px' : '100%');
+
+Notes:
+- ⚠️ Loading state nu este resetat după API call fail (potențial bug)
+- ⚠️ Nu există error handling pentru API calls (try-catch missing)
+- ⚠️ coursesData nu este sortată inițial după displayOrder (doar după update)
+- ✅ Video modal se închide automat când videoModalUrl = ''
+- ✅ Drawer width responsive (640px desktop, 100% mobile)
+
+Recommendations for Vue Migration:
+1. Use Pinia store for courses state (shared între pages)
+2. Add error handling cu try-catch și message.error()
+3. Add loading skeleton pentru table (mai bună UX)
+4. Sort coursesData by displayOrder după fetch inițial
+5. Use <a-drawer> instead of Drawer (Ant Design Vue syntax)
+6. Use @videojs-player/vue pentru video player
+
+Migration Complexity: MEDIUM
+Estimated Effort: 1-2 zile
+
+--------------------------------------------------------------------------------
+TASK 2: Courses Table Component (CoursesCard)
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Componenta de tabel care afișează toate cursurile cu coloane: Image, Video, ID,
+Display Order, Titlu, Lesson Count, Autor, Category, Status, isPractice, Data
+Crearii, Delete. Include acțiuni pentru edit (click pe titlu), view lessons
+(click pe lesson count), view video (click pe video icon), delete (cu confirmare).
+
+Flow:
+1. Primește data (courses array) și loading state ca props
+2. Renderează tabel Ant Design cu coloane configurate
+3. Pentru fiecare coloană:
+   - Image: thumbnail cu preview (Ant Design Image component)
+   - Video: buton cu icon pentru preview (doar dacă videoUrl exists)
+   - ID: format #123
+   - Display Order: număr (ordinea de afișare pe site)
+   - Titlu: link care deschide modal Edit (cu tooltip "editeaza cursul")
+   - Lesson Count: buton care navigheaza la /dashboards/lessons/:courseId
+   - Autor: UserAvatar component (inițiale + culoare)
+   - Category: categoryId (doar ID, nu nume categorie!)
+   - Status: Badge Activ/Inactiv (success/default)
+   - isPractice: emoji 👌 (da) / ⭕️ (nu)
+   - Data Crearii: format DD.MM.YY (dayjs)
+   - Delete: Popconfirm → handleDeleteCourse()
+4. Header tabel: buton "+" pentru Create course
+
+Cod sursă:
+- Component: admin/src/components/dashboard/learning/CoursesCard/CoursesCard.tsx:1-156
+
+Component Props:
+type Props = {
+  data?: LearningCourse[];
+  loading?: boolean;
+  handleEditModal: (modalAction: MODAL_ACTIONS, course?: LearningCourse | undefined) => void;
+  handleDeleteCourse: (courseId: number) => void;
+  setVideoModalUrl: (videoUrl: string) => void;
+} & CardProps;
+
+Table Columns Configuration:
+const COURSES_COLUMNS: ColumnsType<LearningCourse> = [
+  {
+    title: 'Image',
+    dataIndex: 'imageUrl',
+    key: 'imageUrl',
+    render: (imgSrc: string) => (<Image src={imgSrc} alt="course" height={40} width={40} preview={true} />),
+  },
+  {
+    title: 'Video',
+    dataIndex: 'videoUrl',
+    key: 'videoUrl',
+    render: (videoUrl: string) => <>
+      {videoUrl ? <Button type="link" icon={<VideoCameraOutlined />} onClick={() => setVideoModalUrl(videoUrl)} target='_blank'>Link</Button> : null}
+    </>
+  },
+  {
+    title: '#Id',
+    dataIndex: 'id',
+    key: 'id',
+    render: (id: string) => <span className="text-capitalize">#{id}</span>,
+  },
+  {
+    title: 'Display Order',
+    dataIndex: 'displayOrder',
+    key: 'displayOrder',
+    render: (displayOrder: string) => <span className="text-capitalize">{displayOrder}</span>,
+  },
+  {
+    title: 'Titlu',
+    dataIndex: 'title',
+    key: 'title',
+    render: (title: string, record: LearningCourse) => <a onClick={() => { handleEditModal(UPDATE, record) }}>
+      <Tooltip title="editeaza cursul" color="#999" mouseEnterDelay={0.3}>
+        <span className="text-capitalize">{title}</span>
+      </Tooltip>
+    </a>,
+  },
+  {
+    title: 'lessonCount',
+    dataIndex: 'lessonCount',
+    key: 'lessonCount',
+    render: (count: number, { id: courseId }) =>
+    (<>
+      <Tooltip title="vezi lectiile" color="#999" mouseEnterDelay={0.3}>
+        <Button type="link" href={`/dashboards/lessons/${courseId}`}>
+          <BarsOutlined />
+          {count}
+        </Button>
+      </Tooltip>
+    </>),
+  },
+  {
+    title: 'Autor',
+    dataIndex: 'authorName',
+    key: 'authorName',
+    render: (_: string, { authorName }) => (
+      <UserAvatar
+        fullName={authorName}
+        color={'pink'}
+        textWidth={120}
+      />
+    ),
+  },
+  {
+    title: 'categoryId',
+    dataIndex: 'categoryId',
+    key: 'categoryId',
+  },
+  {
+    title: 'Status',
+    dataIndex: 'isActive',
+    key: 'isActive',
+    render: (_isActive: boolean) => {
+      const label = _isActive ? "Activ" : "Inactiv";
+      let status: BadgeProps['status'];
+
+      if (_isActive === false) {
+        status = 'default';
+      } else if (_isActive === true) {
+        status = 'success';
+      }
+
+      return <Badge status={status} text={label} className="text-capitalize" />;
+    },
+  },
+  {
+    title: 'Practica',
+    dataIndex: 'isPractice',
+    key: 'isPractice',
+    render: (_isPractice: boolean) => {
+      const label = _isPractice ? "👌" : "⭕️";
+      return label;
+    },
+  },
+  {
+    title: 'Data Crearii',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    render: (createdAt: string) => <span className="text-capitalize">{dayjs(createdAt).format('DD.MM.YY')}</span>,
+  },
+  {
+    title: 'Delete',
+    dataIndex: 'delete',
+    key: 'delete',
+    render: (_: string, record: LearningCourse) => (
+      <Popconfirm title="Are you sure to delete this course?" onConfirm={() => handleDeleteCourse(record.id as number)} okText="Yes" cancelText="No" >
+        <Button type="link" danger>
+          <DeleteOutlined />
+        </Button>
+      </Popconfirm>
+    )
+  }
+];
+
+Card Component:
+<Card
+  title="Lista Cursuri"
+  extra={<Button icon={<PlusOutlined />} onClick={() => { handleEditModal(CREATE) }} />}
+  {...others}
+>
+  <Table
+    dataSource={data?.length ? data : []}
+    columns={COURSES_COLUMNS}
+    loading={loading}
+    className="overflow-scroll"
+    rowKey="id"
+  />
+</Card>
+
+Notes:
+- ⚠️ categoryId afișat ca număr (nu numele categoriei) - UX suboptimal
+- ⚠️ Nu există filtrare pe coloane (search/filter missing)
+- ⚠️ Nu există sortare pe coloane (sortable columns missing)
+- ⚠️ Nu există paginare (toate cursurile încărcate odată)
+- ⚠️ Lesson count button folosește href (hard navigation) în loc de router.push
+- ⚠️ Delete confirmation text în engleză (inconsistent cu restul UI în română)
+- ✅ Image preview funcționează (Ant Design Image component)
+- ✅ Tooltips pe hover pentru UX mai bună
+- ✅ Popconfirm pentru delete (previne delete accidental)
+
+Recommendations for Vue Migration:
+1. Adaugă paginare pe tabel (pageSize: 20)
+2. Adaugă filtrare pe coloane (search input pentru titlu)
+3. Adaugă sortare pe coloane (displayOrder, createdAt)
+4. Schimbă categoryId cu category.title (join cu categories)
+5. Folosește router.push în loc de href pentru lesson count
+6. Translateză toate textele în română (consistency)
+7. Use <a-table> cu :columns și :data-source (Vue syntax)
+8. Use scoped slots pentru custom renders
+
+Vue Migration Example:
+<template>
+  <a-card title="Lista Cursuri" :extra="extraSlot">
+    <a-table
+      :data-source="data"
+      :columns="columns"
+      :loading="loading"
+      :row-key="record => record.id"
+      :pagination="{ pageSize: 20 }"
+    >
+      <template #imageUrl="{ text }">
+        <a-image :src="text" :width="40" :height="40" :preview="true" />
+      </template>
+      <template #videoUrl="{ text }">
+        <a-button v-if="text" type="link" @click="setVideoModalUrl(text)">
+          <VideoCameraOutlined />
+          Link
+        </a-button>
+      </template>
+      <!-- ... more custom slots -->
+    </a-table>
+  </a-card>
+</template>
+
+<script setup lang="ts">
+const columns = [
+  { title: 'Image', dataIndex: 'imageUrl', key: 'imageUrl', slots: { customRender: 'imageUrl' } },
+  { title: 'Video', dataIndex: 'videoUrl', key: 'videoUrl', slots: { customRender: 'videoUrl' } },
+  // ... rest of columns
+];
+</script>
+
+Migration Complexity: MEDIUM
+Estimated Effort: 1 zi
+
+--------------------------------------------------------------------------------
+TASK 3: Course Create/Edit Form (CoursesForm)
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Formular pentru creare și editare cursuri. Suportă două moduri: CREATE (formular
+gol) și UPDATE (formular pre-populat cu datele cursului). Include validare,
+fetch categorii pentru dropdown, submit către API, și sincronizare UI după success.
+
+Flow:
+1. La mount:
+   - Fetch categories din API (GET /v1/category/all)
+   - Populate categoryOptions[] pentru dropdown
+   - Setează loading=false după fetch
+2. Dacă mode = UPDATE (recordToUpdate există):
+   - Pre-populează formularul cu datele cursului
+   - initialValues = { id, title, authorId, description, categoryId, ... }
+3. User completează formularul:
+   - Titlu (required, min 4 caractere)
+   - Author ID (optional)
+   - Nume Autor (required)
+   - Descriere (required)
+   - Link Imagine (required) - URL către imagine
+   - Link Video (optional) - URL către video Vimeo
+   - Categorie (dropdown din categories)
+   - Ordinea de afișare (număr - explicație tooltip)
+   - Status (Radio: Activ/Inactiv)
+   - Practica (Radio: Da/Nu)
+4. La submit:
+   - Convert isActive și isPractice la boolean
+   - Determine HTTP method: PATCH (update) or POST (create)
+   - Call API: handlePushCourseApi(method, formBody)
+   - Dacă success (200/201):
+     - Message success
+     - Call handleEditModal(SYNC/CREATE, responseData)
+     - Close modal
+   - Dacă error:
+     - Log error
+     - Message error
+
+Cod sursă:
+- Component: admin/src/components/dashboard/learning/CoursesForm/CoursesForm.tsx:1-253
+
+Component Props:
+type Props = {
+  recordToUpdate: (LearningCourse | undefined),
+  handleEditModal: (action: MODAL_ACTIONS, newCourse?: LearningCourse) => void
+}
+
+Form Fields:
+export type CourseFieldType = LearningCourse;
+
+type LearningCourse = {
+  id?: number;
+  title: string;
+  authorId?: number;
+  authorName: string;
+  description: string;
+  imageUrl: string;
+  videoUrl?: string;
+  categoryId: number;
+  displayOrder?: number;
+  isActive: boolean;
+  isPractice: boolean;
+  createdAt?: string;
+  lessonCount?: number;
+};
+
+Form Layout:
+<Form
+  name="user-profile-details-form"
+  layout="vertical"
+  initialValues={recordToUpdate ? { ...recordToUpdate } : {}}
+  onFinish={onFinish}
+  onFinishFailed={onFinishFailed}
+  autoComplete="on"
+  requiredMark={false}
+>
+  <Row gutter={[16, 0]}>
+    <Form.Item name="id"><Input type="hidden" /></Form.Item>
+
+    <Col sm={24} lg={24}>
+      <Form.Item label="Titlu" name="title" rules={[{ required: true, min: 4 }]}>
+        <Input />
+      </Form.Item>
+    </Col>
+
+    <Col sm={24} lg={12}>
+      <Form.Item label="authorId" name="authorId">
+        <Input />
+      </Form.Item>
+    </Col>
+
+    <Col sm={24} lg={12}>
+      <Form.Item label="Nume autor" name="authorName" rules={[{ required: true }]}>
+        <Input />
+      </Form.Item>
+    </Col>
+
+    <Col sm={24} lg={24}>
+      <Form.Item label="Descriere" name="description" rules={[{ required: true }]}>
+        <Input type="textarea" />
+      </Form.Item>
+    </Col>
+
+    <Col sm={24} lg={24}>
+      <Form.Item label="Link imagine" name="imageUrl" rules={[{ required: true }]}>
+        <Input />
+      </Form.Item>
+    </Col>
+
+    <Col sm={24} lg={24}>
+      <Form.Item label="Link Video" name="videoUrl" rules={[{ required: false }]}>
+        <Input />
+      </Form.Item>
+    </Col>
+
+    <Col sm={24} lg={12}>
+      <Form.Item label="Categorie" name="categoryId">
+        <Select options={categoryOptions} />
+      </Form.Item>
+    </Col>
+
+    <Col sm={24} lg={12}>
+      <Form.Item label="Ordinea de afisare" name="displayOrder">
+        <Input />
+      </Form.Item>
+    </Col>
+  </Row>
+
+  <Row gutter={[16, 0]}>
+    <Col span={12}>
+      <Form.Item label="Status" name="isActive" rules={[{ required: true }]}>
+        <Radio.Group>
+          <Radio value={true}>Activ</Radio>
+          <Radio value={false}>Inactiv</Radio>
+        </Radio.Group>
+      </Form.Item>
+
+      <Form.Item label="Practica?" name="isPractice" rules={[{ required: true }]}>
+        <Radio.Group>
+          <Radio value={true}>Da</Radio>
+          <Radio value={false}>Nu</Radio>
+        </Radio.Group>
+      </Form.Item>
+    </Col>
+
+    <Col sm={24} lg={12} style={{ color: "gray", marginTop: '10px' }}>
+      <i>Valoarea <strong>1</strong> este prima pozitie, <strong>2</strong> a doua pozitie.. si tot asa. Cele fara numar de ordine vor urma dupa, si vor fi ordonate dupa data crearii</i>
+    </Col>
+  </Row>
+
+  <Form.Item>
+    <Button type="primary" htmlType="submit" icon={<SaveOutlined />}>
+      Salveaza {loading ? '...' : ''}
+    </Button>
+  </Form.Item>
+</Form>
+
+Form Submit Logic:
+const onFinish = async (formBody: CourseFieldType) => {
+  formBody.isActive = formBody.isActive.toString() === 'true';
+  formBody.isPractice = formBody.isPractice.toString() === 'true';
+  const fetchMethod = formBody?.id ? 'PATCH' : 'POST';
+  const res: ResponseT = await handlePushCourseApi(fetchMethod, formBody) as unknown as ResponseT;
+
+  if ([200, 201].includes(res?.status)) {
+    const modalAction = formBody?.id ? SYNC : CREATE;
+    handleEditModal(modalAction, res.data as LearningCourse);
+
+    message.open({
+      type: 'success',
+      content: `Course ${(res.data as LearningCourse).id} ${formBody?.id ? 'updated' : 'created'} successfully`
+    });
+  } else {
+    console.log('Failed:', res);
+  }
+};
+
+Category Fetch:
+useEffect(() => {
+  getAllCategoriesApi(setLoading, authUser?.accessToken ?? "").then((res: ResponseT) => {
+    if ([200, 201].includes(res?.status)) {
+      const categoriesData = (res.data as CategoryResponse)?.categories;
+      setCategoryOptions([
+        ...[{ value: '', label: 'Selecteaza categorie' }],
+        ...(categoriesData.map((category) => ({ value: category.id?.toString() ?? '', label: category.title })))
+      ]);
+      setLoading(false);
+    }
+  });
+}, []);
+
+Notes:
+- ⚠️ Image URL manual input (no upload component) - UX suboptimal
+- ⚠️ Video URL manual input (no Vimeo upload integration) - trebuie upload manual
+- ⚠️ authorId field exposed (should be hidden or removed)
+- ⚠️ categoryId convertit la string pentru Select, apoi back la number
+- ⚠️ Nu există preview pentru imagine înainte de save
+- ⚠️ Input type="textarea" (should be <Input.TextArea /> in Ant Design)
+- ⚠️ displayOrder validation missing (should be number, positive)
+- ✅ Form validation pe submit
+- ✅ Tooltip explicativ pentru displayOrder
+- ✅ Loading state pe buton submit
+- ✅ Success/error messages
+
+Recommendations for Vue Migration:
+1. Adaugă Upload component pentru imagine (cu preview)
+2. Adaugă Upload component pentru video (cu Vimeo integration)
+3. Ascunde authorId field (sau auto-populate cu current user)
+4. Folosește <a-textarea> în loc de Input type="textarea"
+5. Adaugă validare pentru displayOrder (number, min: 1)
+6. Adaugă image preview în formular
+7. Use <a-form> cu :model și :rules (Vue syntax)
+8. Use v-model pentru two-way binding
+
+Vue Migration Example:
+<template>
+  <a-form
+    :model="formData"
+    :rules="rules"
+    layout="vertical"
+    @finish="onFinish"
+  >
+    <a-row :gutter="[16, 0]">
+      <a-col :sm="24" :lg="24">
+        <a-form-item label="Titlu" name="title">
+          <a-input v-model:value="formData.title" />
+        </a-form-item>
+      </a-col>
+
+      <a-col :sm="24" :lg="24">
+        <a-form-item label="Imagine Curs" name="imageUrl">
+          <a-upload
+            :before-upload="handleImageUpload"
+            :show-upload-list="false"
+          >
+            <a-button>
+              <UploadOutlined />
+              Upload Imagine
+            </a-button>
+          </a-upload>
+          <a-image v-if="formData.imageUrl" :src="formData.imageUrl" :width="200" />
+        </a-form-item>
+      </a-col>
+
+      <!-- ... rest of fields -->
+
+      <a-col :sm="24" :lg="12">
+        <a-form-item label="Status" name="isActive">
+          <a-radio-group v-model:value="formData.isActive">
+            <a-radio :value="true">Activ</a-radio>
+            <a-radio :value="false">Inactiv</a-radio>
+          </a-radio-group>
+        </a-form-item>
+      </a-col>
+    </a-row>
+
+    <a-form-item>
+      <a-button type="primary" html-type="submit" :loading="loading">
+        <SaveOutlined />
+        Salveaza
+      </a-button>
+    </a-form-item>
+  </a-form>
+</template>
+
+<script setup lang="ts">
+const formData = ref<LearningCourse>({
+  title: '',
+  authorName: '',
+  description: '',
+  imageUrl: '',
+  videoUrl: '',
+  categoryId: 0,
+  isActive: true,
+  isPractice: false
+});
+
+const rules = {
+  title: [{ required: true, message: 'Titlul este obligatoriu', min: 4 }],
+  authorName: [{ required: true, message: 'Numele autorului este obligatoriu' }],
+  description: [{ required: true, message: 'Descrierea este obligatorie' }],
+  imageUrl: [{ required: true, message: 'Imaginea este obligatorie' }],
+  isActive: [{ required: true, message: 'Status-ul este obligatoriu' }],
+  isPractice: [{ required: true, message: 'Tipul cursului este obligatoriu' }]
+};
+
+const handleImageUpload = async (file: File) => {
+  const formData = new FormData();
+  formData.append('image', file);
+  const response = await api.post('/v1/course/upload-image', formData);
+  formData.value.imageUrl = response.data.imageUrl;
+  return false; // prevent default upload
+};
+</script>
+
+Migration Complexity: MEDIUM-HIGH
+Estimated Effort: 2 zile (cu upload integration)
+
+--------------------------------------------------------------------------------
+TASK 4: Image Upload Integration
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Funcționalitate de upload imagine pentru course thumbnail. Imagine uploadată pe
+DigitalOcean Spaces (S3-compatible storage) via backend API. Returnează URL-ul
+imaginii uploaded care se salvează în course.imageUrl.
+
+Flow:
+1. User selectează imagine din file picker
+2. Validare: format (JPEG/PNG), size (max 5MB?)
+3. Upload imagine la API: POST /v1/course/upload-image
+   - multipart/form-data cu file buffer
+   - Backend salvează pe DigitalOcean Spaces
+   - Returnează { imageUrl: "https://..." }
+4. Populate form field imageUrl cu URL-ul primit
+5. Preview imagine în formular
+
+Current Implementation:
+- ❌ Nu există - user trebuie să introducă manual URL-ul imaginii
+- URL-ul poate fi orice (Google Drive, Imgur, etc.)
+
+Target Implementation:
+- ✅ Upload component cu file picker
+- ✅ Image validation (format, size)
+- ✅ Upload progress indicator
+- ✅ Image preview după upload
+- ✅ Error handling pentru upload failure
+
+API Endpoint:
+POST /v1/course/upload-image
+Content-Type: multipart/form-data
+Body: { image: File }
+
+Response:
+{
+  "imageUrl": "https://somaway-spaces.fra1.digitaloceanspaces.com/courses/1234567890.jpg"
+}
+
+Vue Implementation:
+<a-upload
+  name="image"
+  :action="UPLOAD_IMAGE_API"
+  :headers="{ Authorization: `Bearer ${authToken}` }"
+  :before-upload="beforeUpload"
+  :on-success="handleUploadSuccess"
+  :on-error="handleUploadError"
+  :show-upload-list="false"
+>
+  <a-button :loading="uploading">
+    <UploadOutlined />
+    Upload Imagine
+  </a-button>
+</a-upload>
+
+<a-image v-if="imageUrl" :src="imageUrl" :width="200" :preview="true" />
+
+const beforeUpload = (file: File) => {
+  const isImage = file.type === 'image/jpeg' || file.type === 'image/png';
+  if (!isImage) {
+    message.error('Doar imagini JPEG/PNG sunt permise!');
+    return false;
+  }
+  const isLt5M = file.size / 1024 / 1024 < 5;
+  if (!isLt5M) {
+    message.error('Imaginea trebuie să fie mai mică de 5MB!');
+    return false;
+  }
+  return true;
+};
+
+const handleUploadSuccess = (response: any) => {
+  formData.value.imageUrl = response.imageUrl;
+  message.success('Imagine uploadată cu succes!');
+};
+
+Notes:
+- Backend API expects multipart/form-data
+- DigitalOcean Spaces URL format: https://{bucket}.{region}.digitaloceanspaces.com/{path}
+- Image optimization pe backend (resize, compress) - TBD
+
+Recommendations:
+1. Add image compression pe client înainte de upload (reduce bandwidth)
+2. Add image cropping tool (pentru thumbnail square)
+3. Add drag-and-drop upload
+4. Add multiple image upload (galerie cursuri - future feature?)
+5. Add delete image button (cu confirmare)
+
+Migration Complexity: MEDIUM
+Estimated Effort: 4-6 ore
+
+--------------------------------------------------------------------------------
+TASK 5: Video Upload & Preview Integration
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Funcționalitate de upload video pentru cursuri și preview video în modal.
+Video uploadat pe Vimeo (hosting video profesional) via backend API.
+Preview folosește video player (React Player → Vue video player).
+
+Flow Upload:
+1. User selectează video din file picker (MP4, MOV, etc.)
+2. Validare: format (video/mp4, video/quicktime), size (max 300MB)
+3. Upload video la API: POST /v1/course/upload-video
+   - multipart/form-data cu file buffer
+   - Backend uploadează pe Vimeo cu privacy settings
+   - Returnează { videoUrl: "https://player.vimeo.com/video/123456789" }
+4. Populate form field videoUrl cu URL-ul primit
+5. Video preview button în formular
+
+Flow Preview:
+1. User click pe video icon în tabel cursuri
+2. Open modal cu video player
+3. Video player loadează videoUrl
+4. Controale: play, pause, volume, fullscreen
+5. Close modal → stop video
+
+Current Implementation (Upload):
+- ❌ Nu există - user trebuie să introducă manual URL-ul video-ului
+- URL-ul poate fi orice (YouTube, Vimeo, direct link)
+
+Current Implementation (Preview):
+- ✅ Modal cu React Player
+- ✅ Controale video: play, pause, volume, fullscreen
+- ✅ Auto-play când modal se deschide
+- ✅ Auto-close când videoModalUrl = ''
+
+React Player Code:
+const handleVideo = () => {
+  return (
+    <ReactPlayer
+      playing={!!videoModalUrl}
+      className="video-lesson-player"
+      controls
+      url={videoModalUrl}
+    />
+  );
+};
+
+<Modal open={!!videoModalUrl} onCancel={() => setVideoModalUrl('')} width={800}>
+  {handleVideo()}
+</Modal>
+
+API Endpoint (Upload):
+POST /v1/course/upload-video
+Content-Type: multipart/form-data
+Body: { video: File, folderUri: "Testing" }
+
+Response:
+{
+  "videoUrl": "https://player.vimeo.com/video/123456789"
+}
+
+Vimeo Privacy Settings (Backend):
+- download: false (users cannot download)
+- embed: 'private' (only whitelisted domains)
+- view: 'unlisted' (not searchable)
+
+Target Implementation (Vue):
+<a-upload
+  name="video"
+  :action="UPLOAD_VIDEO_API"
+  :headers="{ Authorization: `Bearer ${authToken}` }"
+  :before-upload="beforeVideoUpload"
+  :on-success="handleVideoUploadSuccess"
+  :on-error="handleVideoUploadError"
+  :show-upload-list="true"
+  :on-progress="handleProgress"
+>
+  <a-button :loading="uploading">
+    <UploadOutlined />
+    Upload Video
+  </a-button>
+</a-upload>
+
+<video-player
+  v-if="videoUrl"
+  :src="videoUrl"
+  :controls="true"
+  :width="640"
+  :height="360"
+/>
+
+<!-- Video Preview Modal -->
+<a-modal
+  v-model:open="videoModalVisible"
+  :width="800"
+  :footer="null"
+  @cancel="videoModalUrl = ''"
+>
+  <video-player
+    :src="videoModalUrl"
+    :controls="true"
+    :autoplay="true"
+    :width="750"
+    :height="422"
+  />
+</a-modal>
+
+const beforeVideoUpload = (file: File) => {
+  const isVideo = file.type.startsWith('video/');
+  if (!isVideo) {
+    message.error('Doar fișiere video sunt permise!');
+    return false;
+  }
+  const isLt300M = file.size / 1024 / 1024 < 300;
+  if (!isLt300M) {
+    message.error('Video-ul trebuie să fie mai mic de 300MB!');
+    return false;
+  }
+  return true;
+};
+
+const handleProgress = (event: any) => {
+  const percent = Math.round((event.loaded / event.total) * 100);
+  uploadProgress.value = percent;
+};
+
+const handleVideoUploadSuccess = (response: any) => {
+  formData.value.videoUrl = response.videoUrl;
+  message.success('Video uploadat cu succes pe Vimeo!');
+};
+
+Video Player Libraries (Vue):
+1. @videojs-player/vue (Video.js wrapper for Vue 3)
+   - Pros: Popular, feature-rich, customizable
+   - Cons: Bundle size mare (~200KB)
+
+2. vue3-video-player
+   - Pros: Lightweight, simple API
+   - Cons: Fewer features
+
+3. Plyr (vue-plyr)
+   - Pros: Modern UI, lightweight
+   - Cons: Mai puțin customizable
+
+Recommendation: @videojs-player/vue (consistency cu React Player features)
+
+Notes:
+- Video upload time: ~2-5 min pentru 100MB (depinde de internet)
+- Vimeo processing time: ~5-10 min după upload (transcoding)
+- Video preview modal width: 800px (responsive pe mobile)
+- Auto-play în preview modal pentru UX mai bună
+
+Recommendations:
+1. Add upload progress bar (linear progress indicator)
+2. Add video thumbnail generation (după upload success)
+3. Add video preview în form (nu doar URL)
+4. Add cancel upload button (abort upload în progress)
+5. Add video metadata display (duration, size, format)
+6. Consider chunked upload pentru fișiere mari (resumable uploads)
+
+Migration Complexity: HIGH
+Estimated Effort: 1-2 zile (cu progress tracking și error handling)
+
+--------------------------------------------------------------------------------
+TASK 6: Delete Course with Confirmation
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Ștergere curs cu confirmare (Popconfirm) pentru a preveni ștergere accidentală.
+După confirmare, API call DELETE /v1/course/:id, apoi sincronizare UI (eliminare
+din tabel fără refresh).
+
+Flow:
+1. User click pe buton Delete (icon roșu în tabel)
+2. Popconfirm apare: "Are you sure to delete this course?"
+3. User click "Yes":
+   - API call: DELETE /v1/course/:id
+   - Dacă success (200/201):
+     - Message success: "Course {id} deleted successfully"
+     - syncAfterDelete(courseId) → elimină din coursesData
+   - Dacă error:
+     - Message error: "Course {id} cannot be deleted"
+     - Log error în console
+4. User click "No" sau Cancel:
+   - Popconfirm se închide
+   - Nicio acțiune
+
+Current Implementation:
+<Popconfirm
+  title="Are you sure to delete this course?"
+  onConfirm={() => handleDeleteCourse(record.id as number)}
+  okText="Yes"
+  cancelText="No"
+>
+  <Button type="link" danger>
+    <DeleteOutlined />
+  </Button>
+</Popconfirm>
+
+const handleDeleteCourse = useCallback(async (recordId: number) => {
+  const res: ResponseT = await handleDeleteCourseApi(recordId) as unknown as ResponseT;
+  if ([200, 201].includes(res?.status)) {
+    syncAfterDelete(recordId);
+    message.open({ 'type': 'success', 'content': `Course ${recordId} deleted successfully` });
+  } else {
+    message.open({ 'type': 'error', 'content': `Course ${recordId} cannot be deleted` });
+  }
+}, []);
+
+API Call:
+export const handleDeleteCourseApi = async (courseId: number) => {
+  const response = await fetch(`${COURSE_API}/${courseId}`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${authToken}`
+    }
+  });
+  return await response.json();
+};
+
+Vue Migration:
+<template>
+  <a-popconfirm
+    title="Ești sigur că vrei să ștergi acest curs?"
+    ok-text="Da"
+    cancel-text="Nu"
+    @confirm="handleDeleteCourse(record.id)"
+  >
+    <a-button type="link" danger>
+      <DeleteOutlined />
+    </a-button>
+  </a-popconfirm>
+</template>
+
+<script setup lang="ts">
+const handleDeleteCourse = async (courseId: number) => {
+  try {
+    const response = await api.delete(`/v1/course/${courseId}`);
+    if (response.status === 200) {
+      coursesData.value = coursesData.value.filter(c => c.id !== courseId);
+      message.success(`Cursul ${courseId} a fost șters cu succes!`);
+    }
+  } catch (error) {
+    message.error(`Cursul ${courseId} nu a putut fi șters!`);
+    console.error('Delete error:', error);
+  }
+};
+</script>
+
+Notes:
+- ⚠️ Delete confirmation text în engleză (should be română)
+- ⚠️ Nu există undo delete (permanent delete)
+- ⚠️ Nu există soft delete (isDeleted flag)
+- ⚠️ Delete API call nu verifică dacă cursul are lessons (orphan lessons?)
+- ✅ Popconfirm previne delete accidental
+- ✅ Success/error messages pentru feedback
+
+Recommendations:
+1. Translateză confirmation text în română
+2. Add check: dacă cursul are lessons, block delete sau șterge lessons cascade
+3. Consider soft delete în loc de hard delete (isDeleted: true)
+4. Add undo delete feature (cu timeout 5 secunde)
+5. Add audit log pentru delete operations (cine, când, ce a șters)
+
+Migration Complexity: LOW
+Estimated Effort: 2-3 ore (cu improvements)
+
+--------------------------------------------------------------------------------
+TASK 7: Display Order Management
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Sistem de ordonare cursuri pe frontend folosind câmpul displayOrder. Cursurile
+cu displayOrder mai mic apar primele, cursurile fără displayOrder apar la final
+(sortate după createdAt). Admin poate seta displayOrder manual în formular.
+
+Flow:
+1. Admin setează displayOrder în formular (număr: 1, 2, 3, ...)
+2. La save, displayOrder se salvează în database
+3. Frontend fetchează cursuri și sortează după displayOrder ASC
+4. Cursurile fără displayOrder (null/undefined) apar la final
+5. Cursurile cu același displayOrder se sortează după createdAt
+
+Sorting Logic (Current):
+const syncAfterUpdate = (newRecord: LearningCourse) => {
+  setCoursesData(prevState => {
+    const updatedCourses = prevState?.map(item =>
+      Number(item.id) === Number(newRecord?.id) ? newRecord : item
+    );
+    return updatedCourses?.sort((a, b) =>
+      (a.displayOrder ?? 9999999) - (b.displayOrder ?? 9999999)
+    );
+  });
+}
+
+Form Field:
+<Form.Item label="Ordinea de afisare" name="displayOrder">
+  <Input />
+</Form.Item>
+
+<i>
+  Valoarea <strong>1</strong> este prima pozitie, <strong>2</strong> a doua pozitie.. si tot asa.
+  Cele fara numar de ordine vor urma dupa, si vor fi ordonate dupa data crearii
+</i>
+
+Display Order Values:
+- 1 = Prima poziție (featured course)
+- 2 = A doua poziție
+- 3 = A treia poziție
+- ... etc
+- null/undefined = La final (sorted by createdAt DESC)
+
+Notes:
+- ⚠️ displayOrder nu este validat (poate fi negativ, decimal, string)
+- ⚠️ Nu există uniqueness constraint (multiple cursuri pot avea displayOrder = 1)
+- ⚠️ Sorting doar după update, nu la initial fetch
+- ⚠️ Nu există drag-and-drop pentru reordering (manual input only)
+- ✅ Tooltip explicativ pentru UX
+- ✅ Sorting logic corect (null values la final)
+
+Recommendations for Vue Migration:
+1. Add input validation: number, min: 1, max: 1000
+2. Add uniqueness check: warn dacă displayOrder deja folosit
+3. Add drag-and-drop reordering în tabel (update displayOrder automat)
+4. Add auto-increment suggestion: next available displayOrder
+5. Sort la initial fetch, nu doar după update
+6. Add visual indicator în tabel (badge cu displayOrder)
+
+Vue Implementation:
+<a-form-item
+  label="Ordinea de afisare"
+  name="displayOrder"
+  :rules="[
+    { type: 'number', message: 'Trebuie să fie un număr' },
+    { min: 1, message: 'Minim 1' },
+    { max: 1000, message: 'Maxim 1000' }
+  ]"
+>
+  <a-input-number
+    v-model:value="formData.displayOrder"
+    :min="1"
+    :max="1000"
+    placeholder="Lasă gol pentru poziție automată"
+  />
+</a-form-item>
+
+<!-- Display order în tabel -->
+<template #displayOrder="{ text }">
+  <a-badge :count="text" :number-style="{ backgroundColor: '#52c41a' }" />
+</template>
+
+<!-- Drag-and-drop reordering (future enhancement) -->
+<draggable
+  v-model="coursesData"
+  @end="handleReorder"
+  item-key="id"
+>
+  <template #item="{ element }">
+    <div class="course-row">{{ element.title }}</div>
+  </template>
+</draggable>
+
+const handleReorder = async () => {
+  // Update displayOrder pentru toate cursurile după drag-and-drop
+  const updates = coursesData.value.map((course, index) => ({
+    id: course.id,
+    displayOrder: index + 1
+  }));
+  await api.post('/v1/course/bulk-update-order', { updates });
+};
+
+Migration Complexity: MEDIUM
+Estimated Effort: 4-6 ore (basic), 1-2 zile (cu drag-and-drop)
+
+--------------------------------------------------------------------------------
+TASK 8: Course Status & Practice Flag Management
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Două flag-uri pentru configurarea cursului:
+1. **isActive** (Status): Activ/Inactiv - determină dacă cursul apare pe frontend
+2. **isPractice** (Practica): Da/Nu - determină tipul cursului (practică vs teorie)
+
+Aceste flag-uri controlează comportamentul cursului pe site.
+
+Flow:
+1. Admin selectează status în formular:
+   - Radio buttons: Activ / Inactiv
+   - Default: Activ (true)
+2. Admin selectează tip curs:
+   - Radio buttons: Practica (Da/Nu)
+   - Default: Nu (false)
+3. La save, flag-urile se salvează în database
+4. În tabel:
+   - isActive: Badge verde (Activ) / gri (Inactiv)
+   - isPractice: Emoji 👌 (da) / ⭕️ (nu)
+
+Form Fields:
+<Form.Item label="Status" name="isActive" rules={[{ required: true }]}>
+  <Radio.Group>
+    <Radio value={true}>Activ</Radio>
+    <Radio value={false}>Inactiv</Radio>
+  </Radio.Group>
+</Form.Item>
+
+<Form.Item label="Practica?" name="isPractice" rules={[{ required: true }]}>
+  <Radio.Group>
+    <Radio value={true}>Da</Radio>
+    <Radio value={false}>Nu</Radio>
+  </Radio.Group>
+</Form.Item>
+
+Table Columns:
+{
+  title: 'Status',
+  dataIndex: 'isActive',
+  key: 'isActive',
+  render: (_isActive: boolean) => {
+    const label = _isActive ? "Activ" : "Inactiv";
+    let status: BadgeProps['status'];
+
+    if (_isActive === false) {
+      status = 'default';
+    } else if (_isActive === true) {
+      status = 'success';
+    }
+
+    return <Badge status={status} text={label} className="text-capitalize" />;
+  },
+},
+{
+  title: 'Practica',
+  dataIndex: 'isPractice',
+  key: 'isPractice',
+  render: (_isPractice: boolean) => {
+    const label = _isPractice ? "👌" : "⭕️";
+    return label;
+  },
+}
+
+Submit Logic (Type Conversion):
+const onFinish = async (formBody: CourseFieldType) => {
+  formBody.isActive = formBody.isActive.toString() === 'true';
+  formBody.isPractice = formBody.isPractice.toString() === 'true';
+  // ... rest of submit
+};
+
+Frontend Behavior:
+- isActive = false → curs nu apare în listings pe web app
+- isActive = true → curs vizibil pentru users
+- isPractice = true → curs marcat ca "practică" (filtru pe web app?)
+- isPractice = false → curs teorie (default)
+
+Notes:
+- ⚠️ Type conversion weird: .toString() === 'true' (because Radio value is boolean but needs string comparison?)
+- ⚠️ isPractice emoji în tabel (🤌 vs ⭕️) - inconsistent styling
+- ⚠️ Nu există bulk toggle (activate/deactivate multiple cursuri)
+- ⚠️ Nu există scheduled activation (publish curs la dată specificată)
+- ✅ Clear visual indicators (Badge + emoji)
+- ✅ Required validation pe ambele fields
+
+Recommendations for Vue Migration:
+1. Fix type conversion: use boolean directly (no .toString())
+2. Replace emoji cu Badge sau Tag pentru consistency
+3. Add bulk toggle feature (select multiple → activate/deactivate)
+4. Add scheduled publish (publishAt date field)
+5. Add status history (cine a schimbat status, când)
+6. Add filter în tabel (show only active, show only inactive)
+
+Vue Implementation:
+<template>
+  <!-- Form -->
+  <a-form-item label="Status" name="isActive" :rules="[{ required: true }]">
+    <a-radio-group v-model:value="formData.isActive">
+      <a-radio :value="true">Activ</a-radio>
+      <a-radio :value="false">Inactiv</a-radio>
+    </a-radio-group>
+  </a-form-item>
+
+  <a-form-item label="Tip Curs" name="isPractice" :rules="[{ required: true }]">
+    <a-radio-group v-model:value="formData.isPractice">
+      <a-radio :value="true">Practică</a-radio>
+      <a-radio :value="false">Teorie</a-radio>
+    </a-radio-group>
+  </a-form-item>
+
+  <!-- Table Column -->
+  <template #isActive="{ text }">
+    <a-badge :status="text ? 'success' : 'default'" :text="text ? 'Activ' : 'Inactiv'" />
+  </template>
+
+  <template #isPractice="{ text }">
+    <a-tag :color="text ? 'blue' : 'default'">
+      {{ text ? 'Practică' : 'Teorie' }}
+    </a-tag>
+  </template>
+</template>
+
+<script setup lang="ts">
+const formData = reactive({
+  isActive: true,
+  isPractice: false
+});
+
+const onFinish = async () => {
+  // No type conversion needed - boolean values work directly
+  await api.post('/v1/course', formData);
+};
+</script>
+
+Migration Complexity: LOW
+Estimated Effort: 2-3 ore
+
+--------------------------------------------------------------------------------
+TASK 9: Lesson Count & Navigation to Lessons
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Coloană în tabel care afișează numărul de lecții pentru fiecare curs (lessonCount)
+cu link către pagina de management lecții pentru acel curs. Click pe lessonCount
+→ navigate to /dashboards/lessons/:courseId.
+
+Flow:
+1. Backend returnează lessonCount în course object (computed field)
+2. Tabel afișează lessonCount în coloană separată
+3. User click pe lessonCount → navigate to lessons page
+4. Lessons page afișează toate lecțiile pentru courseId respectiv
+
+Table Column:
+{
+  title: 'lessonCount',
+  dataIndex: 'lessonCount',
+  key: 'lessonCount',
+  render: (count: number, { id: courseId }) =>
+  (<>
+    <Tooltip title="vezi lectiile" color="#999" mouseEnterDelay={0.3}>
+      <Button type="link" href={`/dashboards/lessons/${courseId}`}>
+        <BarsOutlined />
+        {count}
+      </Button>
+    </Tooltip>
+  </>),
+}
+
+Current Implementation:
+- Uses <Button href={...}> → hard navigation (page reload)
+- Should use React Router navigate() for SPA navigation
+
+Backend API:
+GET /v1/course/all?level=admin
+
+Response:
+{
+  "courses": [
+    {
+      "id": 1,
+      "title": "Curs Yoga",
+      "lessonCount": 12, // computed from lessons table
+      ...
+    }
+  ]
+}
+
+Notes:
+- ⚠️ Uses href instead of router navigation (not SPA behavior)
+- ⚠️ Tooltip în engleză ("vezi lectiile" should be consistent)
+- ⚠️ lessonCount poate fi 0 (curs fără lecții) - should show warning?
+- ✅ Icon + number pentru clarity
+- ✅ Tooltip pentru UX
+
+Recommendations for Vue Migration:
+1. Use router.push() instead of href
+2. Add warning badge dacă lessonCount = 0
+3. Add quick add lesson button (inline în tabel)
+4. Add lesson count în course form (read-only)
+5. Highlight row dacă lessonCount = 0 (curs incomplet)
+
+Vue Implementation:
+<template>
+  <template #lessonCount="{ text: count, record }">
+    <a-tooltip title="Vezi lecțiile" color="#999">
+      <a-button
+        type="link"
+        @click="navigateToLessons(record.id)"
+      >
+        <BarsOutlined />
+        {{ count }}
+        <a-badge
+          v-if="count === 0"
+          status="warning"
+          text="Fără lecții"
+        />
+      </a-button>
+    </a-tooltip>
+  </template>
+</template>
+
+<script setup lang="ts">
+import { useRouter } from 'vue-router';
+
+const router = useRouter();
+
+const navigateToLessons = (courseId: number) => {
+  router.push(`/dashboards/lessons/${courseId}`);
+};
+</script>
+
+Migration Complexity: LOW
+Estimated Effort: 1-2 ore
+
+================================================================================
+SUMMARY
+================================================================================
+
+**Total Tasks**: 9 components/features
+**Total Estimated Effort**: 7-10 zile (1 developer)
+
+**Migration Priority**:
+1. HIGH: Courses Page Layout & State Management (TASK 1)
+2. HIGH: Courses Table Component (TASK 2)
+3. HIGH: Course Create/Edit Form (TASK 3)
+4. MEDIUM: Image Upload Integration (TASK 4)
+5. MEDIUM: Video Upload & Preview Integration (TASK 5)
+6. LOW: Delete Course with Confirmation (TASK 6)
+7. MEDIUM: Display Order Management (TASK 7)
+8. LOW: Course Status & Practice Flag Management (TASK 8)
+9. LOW: Lesson Count & Navigation to Lessons (TASK 9)
+
+**Critical Dependencies**:
+- Backend API endpoints (all working)
+- Vimeo Service (for video upload)
+- DigitalOcean Spaces (for image upload)
+- Category Service (for dropdown)
+
+**Migration Challenges**:
+- Image upload component (nu există în React, trebuie implementat)
+- Video upload component (nu există în React, trebuie implementat)
+- Video player migration (React Player → @videojs-player/vue)
+- Drag-and-drop reordering (feature nou, opțional)
+
+**Success Criteria**:
+- ✅ Toate operațiunile CRUD funcționează
+- ✅ Image upload funcționează
+- ✅ Video upload funcționează
+- ✅ Video preview funcționează
+- ✅ Display order sorting funcționează
+- ✅ UI/UX consistent cu React app
+- ✅ Responsive design (mobile, tablet, desktop)
+
+================================================================================
+END OF COURSES MANAGEMENT MODULE DOCUMENTATION
+================================================================================
+
+Ready for JIRA import! 🎓

@@ -1,0 +1,888 @@
+================================================================================
+WEB CLIENT MIGRATION PLAN - SOMAWAY
+================================================================================
+Project: Somaway Web Client Migration
+From: Next.js 15 (Pages Router) + React 18
+To: Nuxt 3 + Vue.js 3 (Composition API)
+Migration Type: Full Stack Frontend Rewrite
+Priority: High
+Estimated Duration: 12-16 weeks
+
+================================================================================
+EXECUTIVE SUMMARY
+================================================================================
+
+Acest document prezintă strategia completă de migrare a aplicației web client
+Somaway de la Next.js 15 + React 18 către Nuxt 3 + Vue.js 3.
+
+**Scopul migrării:**
+- Unificare tehnologică: Vue.js 3 atât pentru admin cât și pentru web client
+- Îmbunătățire performance: Nuxt 3 cu Nitro server-side rendering
+- Developer experience mai bun: Composition API, auto-imports, TypeScript
+
+**Current Stack:**
+- Framework: Next.js 15.2.4 (Pages Router)
+- UI Library: React 18
+- State Management: Redux Toolkit + Redux Persist
+- Data Fetching: TanStack React Query
+- UI Components: Ant Design 5.24.2
+- Forms: Ant Design Form
+- Styling: Less + CSS Modules
+- Payments: Stripe + Librapay
+- Video: Vimeo (@u-wave/react-vimeo)
+- Live: Zoom SDK (@zoom/meetingsdk)
+- Analytics: React GA
+- TypeScript: 5.7.3
+
+**Target Stack:**
+- Framework: Nuxt 3.x
+- UI Library: Vue 3.4+ (Composition API)
+- State Management: Pinia + pinia-plugin-persistedstate
+- Data Fetching: Nuxt useAsyncData + useFetch (built-in)
+- UI Components: Ant Design Vue 4.x
+- Forms: Ant Design Vue Form + Vuelidate (optional)
+- Styling: Less + CSS Modules (same)
+- Payments: Stripe + Librapay (same integrations)
+- Video: vue3-video-play sau @videojs-player/vue
+- Live: Zoom SDK (vanilla JS integration)
+- Analytics: @nuxtjs/google-analytics sau gtag
+- TypeScript: 5.x
+
+================================================================================
+PROJECT STRUCTURE OVERVIEW
+================================================================================
+
+**Current Structure (Next.js):**
+```
+web/
+├── src/
+│   ├── pages/           # Next.js Pages Router (28 pages)
+│   │   ├── index.tsx    # Root redirect la /home
+│   │   ├── home/        # Homepage (landing page)
+│   │   ├── auth/        # Authentication (5 pages)
+│   │   ├── curs/        # Courses (3 pages, dynamic routes)
+│   │   ├── abonament/   # Subscriptions (2 pages)
+│   │   ├── dashboard.tsx # User dashboard
+│   │   ├── profil-editare/ # Profile edit (2 pages)
+│   │   ├── sesiune-live.tsx # Zoom live sessions
+│   │   ├── legal/       # Legal pages (3 pages)
+│   │   └── _app.tsx, _document.tsx
+│   ├── components/
+│   │   ├── global/      # Shared components (Header, Footer, etc.)
+│   │   ├── pages/       # Page-specific components
+│   │   └── Payment/     # Stripe payment components
+│   ├── layouts/
+│   │   └── AppLayout.tsx # Main layout wrapper
+│   ├── redux/           # Redux store + actions
+│   ├── services/        # API services
+│   ├── hooks/           # Custom React hooks
+│   ├── middleware/      # RouteHandler auth middleware
+│   └── assets/          # Images, SVGs, etc.
+└── package.json
+```
+
+**Target Structure (Nuxt 3):**
+```
+web-nuxt/
+├── pages/               # Nuxt auto-routing (28 pages)
+│   ├── index.vue        # Root redirect
+│   ├── home.vue         # Homepage
+│   ├── auth/            # Authentication (5 pages)
+│   ├── curs/            # Courses (dynamic routes)
+│   ├── abonament/       # Subscriptions
+│   ├── dashboard.vue    # User dashboard
+│   ├── profil-editare/  # Profile edit
+│   ├── sesiune-live.vue # Live sessions
+│   └── legal/           # Legal pages
+├── components/          # Auto-imported components
+│   ├── global/
+│   ├── pages/
+│   └── payment/
+├── layouts/             # Nuxt layouts
+│   └── default.vue      # Main layout
+├── stores/              # Pinia stores
+│   ├── auth.ts
+│   ├── subscription.ts
+│   ├── analytics.ts
+│   └── shortlist.ts
+├── composables/         # Vue composables (hooks)
+├── middleware/          # Nuxt middleware (auth guards)
+├── server/              # Nuxt server routes (API proxy optional)
+├── public/              # Static assets
+├── assets/              # Compiled assets
+└── nuxt.config.ts
+```
+
+================================================================================
+MODULES INVENTORY
+================================================================================
+
+| # | Module | Pages | Components | Complexity | Priority | Est. Days |
+|---|--------|-------|------------|------------|----------|-----------|
+| 1 | Home/Landing | 3 | ~15 | Medium | High | 5 |
+| 2 | Authentication | 5 | ~5 | Medium | Critical | 4 |
+| 3 | Courses | 3 | ~10 | High | Critical | 6 |
+| 4 | Subscriptions | 3 | ~12 | High | Critical | 7 |
+| 5 | Dashboard | 1 | ~8 | High | Critical | 5 |
+| 6 | Profile | 2 | ~5 | Medium | Medium | 3 |
+| 7 | Live Sessions | 1 | ~2 | Medium | Medium | 3 |
+| 8 | Legal Pages | 3 | ~3 | Low | Low | 2 |
+| 9 | Shared Components | - | ~20+ | High | Critical | 6 |
+| **TOTAL** | **9** | **21** | **~80** | - | - | **41 days** |
+
+**Module Descriptions:**
+
+1. **Home/Landing Pages** (5 days)
+   - Homepage cu Hero, Benefits, Speakers, Reviews, FAQ
+   - Special landing pages (Somatic Healing Summit, Tabu, etc.)
+   - Scroll animations, hash navigation
+   - Multiple content sections cu rich text
+
+2. **Authentication Module** (4 days - CRITICAL)
+   - Sign In (email/phone + password)
+   - Sign Up (registration form)
+   - Password Recovery
+   - Email Verification
+   - Account Verification
+   - Redux → Pinia migration pentru auth state
+
+3. **Courses Module** (6 days - CRITICAL)
+   - Courses listing cu filters (category, search)
+   - Course detail page (course info, lessons list)
+   - Lesson player cu Vimeo integration
+   - Materials download
+   - Voting system (upvote/downvote)
+   - Analytics tracking (time spent)
+
+4. **Subscriptions Module** (7 days - CRITICAL)
+   - Subscription plans display (multiple types)
+   - Subscription checkout flow
+   - Stripe payment integration
+   - Librapay payment integration
+   - Billing address form
+   - Payment success/failure handling
+   - Campaign-based subscriptions
+
+5. **Dashboard Module** (5 days - CRITICAL)
+   - User board (subscriptions overview)
+   - Live sessions calendar (Zoom integration)
+   - Materials quick access
+   - Subscription renewal checks
+   - Analytics sync
+   - Offer popups
+
+6. **Profile Module** (3 days)
+   - Profile edit form
+   - Invoices table
+   - Subscription management
+   - Account settings
+
+7. **Live Sessions Module** (3 days)
+   - Zoom live meetings/webinars
+   - Session join flow
+   - Access control (subscription-based)
+
+8. **Legal Pages** (2 days)
+   - Terms & Conditions
+   - Privacy Policy
+   - Cookie Policy
+   - Static content rendering
+
+9. **Shared Components** (6 days - CRITICAL)
+   - AppLayout (Header, Footer, RouteHandler)
+   - Header (MainMenu, UserMenu, Search)
+   - Footer
+   - PageHelmet (SEO meta tags)
+   - Payment components (Stripe, Librapay)
+   - Global components (Search, Filters, Buttons, etc.)
+
+================================================================================
+MIGRATION PHASES
+================================================================================
+
+**Phase 1: Project Setup & Infrastructure** (Week 1-2)
+- [ ] Initialize Nuxt 3 project cu TypeScript
+- [ ] Configure Ant Design Vue + Less support
+- [ ] Setup Pinia stores (auth, subscriptions, analytics, shortlist)
+- [ ] Configure environment variables
+- [ ] Setup API service layer (axios/ofetch)
+- [ ] Configure ESLint + Prettier
+- [ ] Setup Git repository structure
+- [ ] Configure Nuxt middleware (auth guards)
+- [ ] Setup SSR/CSR hybrid rendering
+- [ ] Configure meta tags + SEO (Nuxt SEO modules)
+
+**Phase 2: Shared Components & Layouts** (Week 3)
+- [ ] Migrate AppLayout (Header, Footer, middleware)
+- [ ] Migrate Header components (MainMenu, UserMenu, Search)
+- [ ] Migrate Footer component
+- [ ] Migrate global components (Button, PageHelmet, LoadingPage, etc.)
+- [ ] Setup responsive utilities (@vueuse/core)
+- [ ] Configure global styles (Less variables, mixins)
+- [ ] Test layout on all screen sizes
+
+**Phase 3: Authentication Module** (Week 4)
+- [ ] Migrate auth Pinia store (SIGN_IN, SIGN_OUT, etc.)
+- [ ] Migrate Sign In page
+- [ ] Migrate Sign Up page
+- [ ] Migrate Password Recovery flow
+- [ ] Migrate Email Verification
+- [ ] Migrate Account Verification
+- [ ] Setup auth middleware (route guards)
+- [ ] Test token persistence (localStorage + cookies)
+- [ ] Test auto-login flow
+- [ ] Test logout + state cleanup
+
+**Phase 4: Courses Module** (Week 5-6)
+- [ ] Setup courses data fetching (useAsyncData)
+- [ ] Migrate courses listing page cu filters
+- [ ] Migrate course detail page
+- [ ] Migrate lesson player cu Vimeo integration
+- [ ] Implement analytics tracking (time spent)
+- [ ] Migrate voting system (upvote/downvote)
+- [ ] Migrate materials download
+- [ ] Test video playback across browsers
+- [ ] Test filters + pagination
+- [ ] Test analytics sync
+
+**Phase 5: Subscriptions & Payment** (Week 7-8)
+- [ ] Setup subscriptions Pinia store
+- [ ] Migrate subscriptions listing page
+- [ ] Migrate subscription checkout flow
+- [ ] Integrate Stripe payment (Elements + PaymentIntent)
+- [ ] Integrate Librapay payment
+- [ ] Migrate billing address form
+- [ ] Handle payment success/failure redirects
+- [ ] Test Stripe webhook integration (backend)
+- [ ] Test campaign-based subscriptions
+- [ ] Test dual payment gateway flow
+
+**Phase 6: Dashboard & Profile** (Week 9)
+- [ ] Migrate user dashboard page
+- [ ] Migrate UserBoard component (subscriptions overview)
+- [ ] Migrate live calendar integration (Zoom)
+- [ ] Migrate materials quick access
+- [ ] Migrate offer popups
+- [ ] Migrate profile edit page
+- [ ] Migrate invoices table
+- [ ] Test subscription renewal flow
+- [ ] Test analytics dashboard sync
+
+**Phase 7: Live Sessions & Legal** (Week 10)
+- [ ] Migrate Zoom live sessions page
+- [ ] Integrate Zoom SDK (vanilla JS)
+- [ ] Test session join flow
+- [ ] Test access control (subscription-based)
+- [ ] Migrate legal pages (Terms, Privacy, Cookies)
+- [ ] Test static content rendering
+
+**Phase 8: Home/Landing Pages** (Week 11)
+- [ ] Migrate homepage sections (Hero, Benefits, etc.)
+- [ ] Migrate Speakers carousel
+- [ ] Migrate Reviews carousel
+- [ ] Migrate FAQ section
+- [ ] Migrate special landing pages (Summit, Tabu)
+- [ ] Test scroll animations
+- [ ] Test hash navigation (#vreau-abonament)
+- [ ] Test responsive layout
+
+**Phase 9: Testing & Optimization** (Week 12)
+- [ ] Cross-browser testing (Chrome, Firefox, Safari, Edge)
+- [ ] Mobile responsive testing (iOS, Android)
+- [ ] SEO optimization (meta tags, structured data)
+- [ ] Performance optimization (Lighthouse score > 90)
+- [ ] Accessibility testing (WCAG 2.1 AA)
+- [ ] Analytics testing (GA events)
+- [ ] Payment testing (Stripe test mode, Librapay sandbox)
+- [ ] Error handling + edge cases
+
+**Phase 10: Deployment & Monitoring** (Week 13-14)
+- [ ] Setup production environment
+- [ ] Configure CI/CD pipeline
+- [ ] Deploy to staging environment
+- [ ] User acceptance testing (UAT)
+- [ ] Fix bugs from UAT
+- [ ] Deploy to production
+- [ ] Monitor errors (Sentry integration)
+- [ ] Monitor performance (Core Web Vitals)
+- [ ] Gradual rollout (A/B testing optional)
+
+================================================================================
+KEY MIGRATION CHALLENGES
+================================================================================
+
+**1. State Management Migration** (High Priority)
+- **Challenge**: Redux Toolkit → Pinia migration
+- **Solution**:
+  - Map Redux actions to Pinia actions
+  - Map Redux selectors to Pinia getters
+  - Use pinia-plugin-persistedstate pentru Redux Persist replacement
+  - Gradual migration: keep Redux structure in Pinia initially
+
+**2. Server-Side Rendering** (High Priority)
+- **Challenge**: Next.js SSR/SSG → Nuxt 3 SSR/CSR hybrid
+- **Solution**:
+  - Use `useAsyncData` cu `lazy: true` pentru client-side data
+  - Use `useFetch` pentru server-side data
+  - Configure `ssr: false` pentru pages cu Stripe/Zoom SDK
+  - Implement proper loading states
+
+**3. Routing Migration** (Medium Priority)
+- **Challenge**: Next.js Pages Router → Nuxt file-based routing
+- **Solution**:
+  - Map `/pages/curs/[courseSlug]/index.tsx` → `/pages/curs/[courseSlug].vue`
+  - Map `/pages/curs/[courseSlug]/[lessonId]/index.tsx` → `/pages/curs/[courseSlug]/[lessonId].vue`
+  - Use `definePageMeta` pentru route guards
+  - Test dynamic routes extensively
+
+**4. Payment Integration** (Critical Priority)
+- **Challenge**: Stripe Elements + Librapay integration în Vue
+- **Solution**:
+  - Use `@stripe/stripe-js` + custom Vue components
+  - Test Stripe PaymentIntent flow
+  - Test Librapay redirect flow
+  - Implement proper error handling
+  - Test webhook integration cu backend
+
+**5. Video Player Migration** (Medium Priority)
+- **Challenge**: @u-wave/react-vimeo → Vue 3 Vimeo player
+- **Solution**:
+  - Evaluate: vue3-video-play, @videojs-player/vue, sau vanilla Vimeo Player SDK
+  - Test autoplay, fullscreen, quality selection
+  - Implement analytics tracking (time spent)
+  - Test across browsers + mobile
+
+**6. Zoom SDK Integration** (Medium Priority)
+- **Challenge**: React Zoom SDK wrapper → Vanilla JS integration
+- **Solution**:
+  - Use Zoom Web SDK (vanilla JS) direct în Vue
+  - Wrap în composable: `useZoomMeeting()`
+  - Test meeting join flow
+  - Test webinar flow
+  - Handle authentication (JWT signature)
+
+**7. Form Handling** (Low Priority)
+- **Challenge**: Ant Design Form (React) → Ant Design Vue Form
+- **Solution**:
+  - Similar API între React și Vue versions
+  - Use `v-model` instead of controlled components
+  - Validation rules similar structure
+  - Test form submission + error handling
+
+**8. Analytics Migration** (Low Priority)
+- **Challenge**: React GA → Nuxt Google Analytics
+- **Solution**:
+  - Use `@nuxtjs/google-analytics` sau `nuxt-gtag`
+  - Migrate custom events
+  - Test page view tracking
+  - Test custom event tracking (video play, subscription, etc.)
+
+================================================================================
+TECHNOLOGY STACK COMPARISON
+================================================================================
+
+| Feature | Current (Next.js + React) | Target (Nuxt 3 + Vue) |
+|---------|---------------------------|------------------------|
+| **Framework** | Next.js 15.2.4 (Pages Router) | Nuxt 3.x (file-based routing) |
+| **UI Library** | React 18 | Vue 3.4+ Composition API |
+| **Language** | TypeScript 5.7.3 | TypeScript 5.x |
+| **State Management** | Redux Toolkit + Redux Persist | Pinia + pinia-plugin-persistedstate |
+| **Data Fetching** | TanStack React Query | useAsyncData + useFetch (built-in) |
+| **UI Components** | Ant Design 5.24.2 | Ant Design Vue 4.x |
+| **Forms** | Ant Design Form | Ant Design Vue Form |
+| **Routing** | Pages Router (file-based) | Nuxt file-based routing (auto) |
+| **Styling** | Less + CSS Modules | Less + CSS Modules (same) |
+| **Build Tool** | Next.js (Webpack/Turbopack) | Vite (faster) |
+| **SSR** | getServerSideProps | useAsyncData server: true |
+| **SSG** | getStaticProps | useAsyncData |
+| **Payments** | Stripe + Librapay | Stripe + Librapay (same) |
+| **Video** | @u-wave/react-vimeo | vue3-video-play / @videojs-player/vue |
+| **Live** | @zoom/meetingsdk (React) | @zoom/meetingsdk (vanilla JS) |
+| **Icons** | @ant-design/icons (React) | @ant-design/icons-vue |
+| **Responsive** | react-responsive | @vueuse/core useBreakpoints |
+| **Animation** | react-fast-marquee | vue3-marquee |
+| **SEO** | next-seo | @nuxtjs/seo |
+| **PWA** | next-pwa | @vite-pwa/nuxt |
+| **Analytics** | react-ga | @nuxtjs/google-analytics |
+| **Error Tracking** | (not configured) | @nuxtjs/sentry (optional) |
+
+================================================================================
+DEPENDENCIES MIGRATION MAP
+================================================================================
+
+**Core Dependencies:**
+```
+// React → Vue
+react ^18                    → vue ^3.4
+react-dom ^18                → (built-in to Vue)
+next ^15.2.4                 → nuxt ^3.x
+
+// State Management
+@reduxjs/toolkit ^2.2.6      → pinia ^2.x
+redux ^5.0.1                 → (removed)
+redux-persist ^6.0.0         → pinia-plugin-persistedstate
+redux-thunk ^3.1.0           → (built-in to Pinia)
+
+// Data Fetching
+@tanstack/react-query ^5.80  → (built-in useAsyncData/useFetch)
+
+// UI Components
+antd ^5.24.2                 → ant-design-vue ^4.x
+@ant-design/icons            → @ant-design/icons-vue
+
+// Utilities
+react-responsive ^10.0.1     → @vueuse/core
+@tanem/react-nprogress       → @vueuse/core useProgress
+react-fast-marquee ^1.6.5    → vue3-marquee
+
+// Video
+@u-wave/react-vimeo ^0.9.11  → vue3-video-play sau @videojs-player/vue
+react-player ^2.16.0         → (removed, use vue3-video-play)
+
+// Analytics
+react-ga ^3.3.1              → @nuxtjs/google-analytics
+
+// Styling
+less-loader ^12.2.0          → (keep, Vite support)
+next-with-less ^3.0.1        → (removed, native Vite support)
+
+// Payments (Keep Same)
+@stripe/react-stripe-js ^2.8 → custom Vue implementation
+@stripe/stripe-js ^4.4       → @stripe/stripe-js ^4.x (same)
+
+// Zoom (Keep Same)
+@zoom/meetingsdk ^3.9.2      → @zoom/meetingsdk ^3.x (vanilla JS)
+
+// Other
+axios ^1.8.1                 → axios ^1.x or ofetch (Nuxt built-in)
+dayjs ^1.11.13               → dayjs ^1.x (same)
+crypto-js ^4.2.0             → crypto-js ^4.x (same)
+cookies ^0.9.1               → useCookie (Nuxt composable)
+```
+
+**Dev Dependencies:**
+```
+@types/react ^18.3           → @types/vue (not needed)
+@types/react-dom ^18         → (removed)
+eslint-config-next           → @nuxt/eslint-config
+next-transpile-modules       → (not needed in Vite)
+```
+
+================================================================================
+DATA FLOW ARCHITECTURE
+================================================================================
+
+**Current Data Flow (Next.js + Redux):**
+```
+Component → Redux Action → API Service → Backend
+          ↓
+       Redux Reducer → Redux Store → Component (useSelector)
+```
+
+**Target Data Flow (Nuxt + Pinia):**
+```
+Component → Pinia Action → Composable/API → Backend
+          ↓
+       Pinia State → Component (reactive)
+
+// Or with useAsyncData:
+Component → useAsyncData → $fetch → Backend → Component (reactive data)
+```
+
+**Example Migration:**
+
+**Before (React + Redux):**
+```typescript
+// Component
+const authUser = useSelector((state) => state.user);
+const dispatch = useDispatch();
+
+const handleLogin = () => {
+  signIn({ email, password })
+    .then((res) => {
+      dispatch({ type: SIGN_IN, user: res.data });
+      router.push('/dashboard');
+    });
+};
+```
+
+**After (Vue + Pinia):**
+```typescript
+// Component
+const authStore = useAuthStore();
+const router = useRouter();
+
+const handleLogin = async () => {
+  const res = await signIn({ email, password });
+  authStore.login(res.data);
+  router.push('/dashboard');
+};
+```
+
+================================================================================
+AUTHENTICATION FLOW
+================================================================================
+
+**Current Flow:**
+1. User submits login form
+2. `signIn()` API call → POST /v1/auth/signin
+3. Backend returns: `{ accessToken, refreshToken, user, subscriptions, analytics, shortlist }`
+4. Redux actions dispatch:
+   - `SET_APP_VERSION`
+   - `CREATE_SUBSCRIPTION`
+   - `CREATE_SHORTLIST`
+   - `INIT_USER_ANALYTICS`
+   - `SIGN_IN` (user data)
+5. Tokens saved: `localStorage.setItem('atx', accessToken)`, cookie for refreshToken
+6. Redirect to dashboard or subscription page
+
+**Target Flow:**
+1. User submits login form
+2. `signIn()` composable → POST /v1/auth/signin
+3. Backend returns same data
+4. Pinia actions:
+   - `authStore.login(user)`
+   - `subscriptionStore.setSubscriptions(subscriptions)`
+   - `analyticsStore.init(analytics)`
+   - `shortlistStore.set(shortlist)`
+5. Tokens saved: `useCookie('atx')`, `useCookie('rt', { httpOnly: true })`
+6. Redirect cu `navigateTo('/dashboard')`
+
+================================================================================
+PAYMENT FLOW
+================================================================================
+
+**Stripe Payment Flow:**
+1. User selects subscription plan
+2. Redirect to `/abonament/[subscriptionType]`
+3. Display subscription info + billing address form
+4. User fills billing address → save
+5. Redirect to `/abonament/plata` (payment page)
+6. Load Stripe Elements (CardElement)
+7. User enters card details
+8. Submit → Create PaymentIntent (backend API)
+9. Confirm payment cu Stripe.js
+10. Stripe webhook → backend creates subscription
+11. Redirect to `/dashboard` cu success message
+
+**Librapay Payment Flow:**
+1. Similar steps 1-4
+2. Redirect to `/abonament/plata`
+3. Display Librapay payment button
+4. Click → Redirect to Librapay hosted page
+5. User completes payment on Librapay
+6. Librapay redirect back → `/subscription-enrollment`
+7. Backend webhook creates subscription
+8. Display success message
+
+**Migration Notes:**
+- Stripe Elements: Use `@stripe/stripe-js` cu custom Vue components
+- Librapay: Same redirect flow, works în Vue
+- Test both flows extensively
+- Handle payment errors gracefully
+
+================================================================================
+SEO & META TAGS STRATEGY
+================================================================================
+
+**Current (Next.js):**
+- Custom `PageHelmet` component cu `next/head`
+- Manual meta tags per page
+
+**Target (Nuxt 3):**
+```typescript
+// nuxt.config.ts
+export default defineNuxtConfig({
+  app: {
+    head: {
+      title: 'Somaway - Practici Somatice pentru Vindecare',
+      meta: [
+        { name: 'description', content: '...' },
+        { property: 'og:title', content: '...' },
+        { property: 'og:image', content: '...' },
+      ],
+    },
+  },
+});
+
+// Per-page meta (pages/home.vue)
+useHead({
+  title: 'Acasă - Somaway',
+  meta: [
+    { name: 'description', content: '...' },
+  ],
+});
+```
+
+**SEO Checklist:**
+- [ ] Meta titles (<60 chars)
+- [ ] Meta descriptions (150-160 chars)
+- [ ] Open Graph tags (og:title, og:description, og:image)
+- [ ] Twitter Card tags
+- [ ] Canonical URLs
+- [ ] Structured data (JSON-LD)
+- [ ] Sitemap.xml generation (@nuxtjs/sitemap)
+- [ ] Robots.txt
+- [ ] 404 page optimization
+
+================================================================================
+PERFORMANCE OPTIMIZATION
+================================================================================
+
+**Target Metrics:**
+- Lighthouse Performance Score: > 90
+- First Contentful Paint (FCP): < 1.8s
+- Largest Contentful Paint (LCP): < 2.5s
+- Time to Interactive (TTI): < 3.8s
+- Cumulative Layout Shift (CLS): < 0.1
+- First Input Delay (FID): < 100ms
+
+**Optimization Strategies:**
+1. **Code Splitting**
+   - Lazy load routes cu `defineAsyncComponent`
+   - Split vendor bundles
+   - Dynamic imports pentru heavy components
+
+2. **Image Optimization**
+   - Use `<NuxtImg>` component
+   - WebP format cu fallback
+   - Lazy loading cu `loading="lazy"`
+   - Responsive images cu srcset
+
+3. **CSS Optimization**
+   - Extract critical CSS
+   - Purge unused CSS
+   - Minimize CSS bundle size
+
+4. **JavaScript Optimization**
+   - Tree shaking (Vite built-in)
+   - Minification (Terser)
+   - Remove console.logs în production
+
+5. **Caching Strategy**
+   - Browser caching headers
+   - Service Worker (PWA)
+   - API response caching (server-side)
+
+6. **Font Optimization**
+   - Self-host fonts
+   - Font-display: swap
+   - Preload critical fonts
+
+================================================================================
+TESTING STRATEGY
+================================================================================
+
+**Unit Testing:**
+- Framework: Vitest (Vite-native)
+- Component Testing: @vue/test-utils
+- Coverage Target: > 70%
+
+**E2E Testing:**
+- Framework: Playwright sau Cypress
+- Test Critical Flows:
+  - Sign in/Sign up
+  - Subscription purchase (Stripe test mode)
+  - Course video playback
+  - Live session join
+
+**Manual Testing Checklist:**
+- [ ] Cross-browser (Chrome, Firefox, Safari, Edge)
+- [ ] Mobile responsive (iOS Safari, Chrome Android)
+- [ ] Payment flows (Stripe test, Librapay sandbox)
+- [ ] Video playback (Vimeo on all browsers)
+- [ ] Zoom live sessions
+- [ ] Forms validation
+- [ ] Error pages (404, 500)
+- [ ] SEO meta tags
+- [ ] Analytics events
+
+================================================================================
+DEPLOYMENT STRATEGY
+================================================================================
+
+**Hosting Options:**
+1. **Vercel** (Recommended)
+   - Native Nuxt 3 support
+   - Automatic deployments from Git
+   - Edge network (fast globally)
+   - Preview deployments per PR
+
+2. **Netlify**
+   - Good Nuxt 3 support
+   - Build plugins available
+   - Split testing built-in
+
+3. **DigitalOcean App Platform**
+   - Full control
+   - Cost-effective
+   - Docker support
+
+**CI/CD Pipeline:**
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test
+      - uses: vercel/deploy-action@v1
+        with:
+          token: ${{ secrets.VERCEL_TOKEN }}
+```
+
+**Environment Variables:**
+```
+# .env.production
+NUXT_PUBLIC_API_URL=https://api.somaway.ro/api
+NUXT_PUBLIC_STRIPE_KEY=pk_live_...
+NUXT_PUBLIC_GA_ID=G-...
+NUXT_PUBLIC_VIMEO_CLIENT_ID=...
+NUXT_PUBLIC_ZOOM_SDK_KEY=...
+```
+
+================================================================================
+ROLLBACK PLAN
+================================================================================
+
+**In Case of Critical Issues:**
+1. **Immediate Rollback** (< 5 minutes)
+   - Revert to previous Vercel deployment
+   - DNS stays same
+   - Users see old Next.js app
+
+2. **Gradual Rollout** (Recommended)
+   - Deploy Nuxt app to new subdomain: `v2.somaway.ro`
+   - A/B test with 10% traffic initially
+   - Monitor errors + performance
+   - Increase to 50%, then 100%
+   - Switch main domain when stable
+
+3. **Monitoring**
+   - Setup Sentry for error tracking
+   - Monitor Core Web Vitals
+   - Track conversion rates (subscriptions)
+   - User feedback channel
+
+================================================================================
+SUCCESS CRITERIA
+================================================================================
+
+**Technical:**
+- [ ] All 28 pages migrated and functional
+- [ ] Lighthouse Performance Score > 90
+- [ ] Zero console errors in production
+- [ ] All payment flows working (Stripe + Librapay)
+- [ ] Video playback smooth across browsers
+- [ ] Zoom live sessions working
+- [ ] Mobile responsive (iOS + Android)
+- [ ] SEO meta tags correct on all pages
+
+**Business:**
+- [ ] Conversion rate >= current rate
+- [ ] Page load time improved by > 20%
+- [ ] Zero revenue loss during migration
+- [ ] User feedback positive (> 80% satisfaction)
+- [ ] Analytics tracking accurate
+
+**User Experience:**
+- [ ] All features working as before
+- [ ] No regression bugs
+- [ ] Improved performance (faster load)
+- [ ] Accessible (WCAG 2.1 AA)
+
+================================================================================
+RISK MITIGATION
+================================================================================
+
+| Risk | Impact | Probability | Mitigation |
+|------|--------|-------------|------------|
+| Payment integration fails | Critical | Low | Extensive testing în Stripe test mode |
+| SEO ranking drops | High | Medium | Maintain same URLs, meta tags, structured data |
+| Video playback issues | High | Medium | Test multiple Vue video players, fallback options |
+| Performance regression | Medium | Low | Lighthouse CI checks, performance monitoring |
+| Zoom SDK compatibility | Medium | Medium | Test vanilla JS integration early |
+| State migration bugs | Medium | Medium | Comprehensive testing of all Redux → Pinia flows |
+| Deployment issues | Low | Low | Staging environment testing, gradual rollout |
+
+================================================================================
+TEAM RESPONSIBILITIES
+================================================================================
+
+**Frontend Developers:**
+- Migrate pages + components
+- Test UI/UX across browsers
+- Optimize performance
+
+**Backend Developers:**
+- Ensure API compatibility
+- Test webhooks (Stripe, Librapay)
+- Monitor server logs during rollout
+
+**QA Engineers:**
+- Manual testing checklist
+- E2E tests automation
+- Cross-browser testing
+
+**DevOps:**
+- CI/CD pipeline setup
+- Deployment automation
+- Monitoring setup (Sentry, analytics)
+
+**Project Manager:**
+- Track progress (burn-down chart)
+- Daily stand-ups
+- Risk management
+- Stakeholder communication
+
+================================================================================
+TIMELINE SUMMARY
+================================================================================
+
+**Weeks 1-2:** Infrastructure + Shared Components
+**Weeks 3-4:** Authentication + Core Setup
+**Weeks 5-6:** Courses Module
+**Weeks 7-8:** Subscriptions + Payment
+**Weeks 9-10:** Dashboard, Profile, Live, Legal
+**Weeks 11-12:** Home/Landing Pages + Testing
+**Weeks 13-14:** Deployment + Monitoring
+
+**Total Duration:** 14 weeks (3.5 months)
+**Buffer:** Add 2 weeks for unexpected issues
+**Go-Live Target:** 16 weeks from project start
+
+================================================================================
+CONCLUSION
+================================================================================
+
+Această migrare de la Next.js + React la Nuxt 3 + Vue.js reprezintă o
+investiție strategică în unificarea tehnologică a platformei Somaway.
+
+**Benefits:**
+✅ Unified tech stack (Vue.js everywhere)
+✅ Better developer experience (Composition API, auto-imports)
+✅ Improved performance (Vite build, Nitro SSR)
+✅ Easier maintenance (one framework to master)
+✅ Future-proof architecture (Vue 3 + Nuxt 3 ecosystem)
+
+**Next Steps:**
+1. Review and approve this migration plan
+2. Setup development environment
+3. Begin Phase 1: Infrastructure
+4. Parallel documentation of all 9 modules (JIRA stories)
+
+================================================================================
+END OF WEB CLIENT MIGRATION PLAN
+================================================================================

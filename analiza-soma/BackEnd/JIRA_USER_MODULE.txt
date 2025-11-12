@@ -1,0 +1,1369 @@
+================================================================================
+JIRA STORY: USER MODULE
+================================================================================
+
+Title: User Module
+
+Description:
+Modulul User gestionează toate operațiunile legate de utilizatori: vizualizare profil, actualizare date personale, upload/download imagini profil, export CSV, căutare utilizatori, operațiuni bulk (mass activation emails, MailerLite sync), și management de adrese de facturare. Include funcționalități complexe de access control bazat pe subscriptions și cache Redis.
+
+Locație cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts
+- Service: src/v1/User/Service/user.service.ts
+- Module: src/v1/User/user.module.ts
+
+Endpoints implementate: 16
+
+Services utilizate:
+- UserService (Service/user.service.ts)
+- SubscriptionsRepository (shared/Repositories/subscriptions.repository.ts)
+- SubscriptionTypesRepository (shared/Repositories/subscriptionTypes.repository.ts)
+- InvoicesRepository (shared/Repositories/invoices.repository.ts)
+- AddressesRepository (shared/Repositories/addresses.repository.ts)
+- MailerService (Postmark SMTP - @nestjs-modules/mailer)
+- MailerLiteService (shared/Services/mailerlite.service.ts)
+- DOSpacesService (DigitalOcean Spaces - AWS SDK compatible)
+- StripeService (din Stripe Module)
+- RedisService (shared/Services/redis.service.ts)
+
+Repositories:
+- UsersRepository
+- SubscriptionsRepository
+- SubscriptionTypesRepository
+- InvoicesRepository
+- AddressesRepository
+
+Dependencies:
+- Redis (access control cache + category access)
+- DigitalOcean Spaces (profile image storage)
+- Stripe (customer management)
+- Postmark (activation emails, password setup emails)
+- MailerLite (marketing groups management)
+- CSV Writer (export functionality)
+- Argon2 (password hashing)
+- JWT (email validation tokens)
+
+Guards utilizați:
+- AuthGuard('jwt') - toate endpoint-urile necesită autentificare
+- RolesGuard - verificare ADMIN role pentru endpoint-uri privilegiate
+- AuthGuard('email-validation') - pentru verify-updated-email
+
+Authorization Roles:
+- ADMIN - acces complet la toate operațiunile
+- CLIENT - acces limitat la propriul profil
+- USER - poate disable propriul cont
+
+Notes:
+- Access control system complex: ADMIN, STANDARD, COURSE_BASED, NO_ACCESS
+- Redis cache pentru access rights (TTL configurable via ACCESS_CACHE_LIFECYCLE)
+- Profile images stocate în DigitalOcean Spaces (directory: users/)
+- CSV export include subscriptions, analytics time, campaigns
+- Mass operations pentru email activation și MailerLite sync
+- Admin poate crea users cu subscriptions și Stripe customers
+- Update email necesită verificare prin email token
+- Delete user șterge cascadă: invoices + subscriptions + user
+
+Access Types (cached în Redis):
+- ACCESS_TYPE.ADMIN - admin complet access
+- ACCESS_TYPE.STANDARD - subscription standard (toate cursurile)
+- ACCESS_TYPE.COURSE_BASED - subscription pe categorii specifice
+- ACCESS_TYPE.NO_ACCESS - fără subscription activă
+
+================================================================================
+TASKS
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 1: GET /v1/user/:userId
+--------------------------------------------------------------------------------
+
+Title: GET /v1/user/:userId
+
+Description:
+
+Business Logic:
+1. Primește userId ca parametru în URL
+2. Verifică dacă user-ul autentificat poate accesa profilul solicitat:
+   - Dacă authUser.id === userId → permite access (propriul profil)
+   - Dacă authUser.role === ADMIN → permite access (admin vede orice profil)
+   - Altfel → aruncă BadRequestException "User not found or access is restricted"
+3. Caută user-ul în baza de date după userId
+4. Dacă user-ul nu există, aruncă BadRequestException "User not found"
+5. Returnează user object cu toate detaliile profilului
+6. User object e wrappat într-o clasă User().init() care filtrează câmpurile sensitive
+
+Cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts:41-52
+- Service: src/v1/User/Service/user.service.ts:191-205
+
+Request:
+GET /v1/user/123
+Headers: Authorization: Bearer {accessToken}
+
+Response (Success 200):
+{
+  "id": 123,
+  "fullName": "John Doe",
+  "email": "john@example.com",
+  "phone": "+40123456789",
+  "role": "CLIENT",
+  "status": 2,
+  "isActive": true,
+  "marketingAgreement": true,
+  "whatsappAgreement": false,
+  "hasPicture": false,
+  "profileVersion": 1,
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-01-15T00:00:00.000Z"
+}
+
+Response (Error 400 - access denied):
+{
+  "statusCode": 400,
+  "message": "User not found or access is restricted {authUserId}, {requestedUserId}"
+}
+
+Response (Error 400 - not found):
+{
+  "statusCode": 400,
+  "message": "User not found"
+}
+
+Authorization: AuthGuard('jwt') - requires valid access token
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UsersRepository.getUserById()
+
+Notes:
+- User object filtrează password, recoveryKey, și alte câmpuri sensibile
+- Admin poate vedea orice profil
+- User-ii normali pot vedea doar propriul profil
+
+--------------------------------------------------------------------------------
+TASK 2: GET /v1/user/all
+--------------------------------------------------------------------------------
+
+Title: GET /v1/user/all
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru ADMIN role
+2. Primește query params pentru paginare: page, limit
+3. Primește optional param analytics (boolean) pentru a include date analytics
+4. Returnează lista paginată de users cu:
+   - Array users
+   - Total count
+   - Pagination metadata
+5. Dacă nu există users, aruncă BadRequestException "No user found"
+6. Fiecare user object e wrappat în User().init()
+
+Cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts:54-61
+- Service: src/v1/User/Service/user.service.ts:294-300
+
+Request:
+GET /v1/user/all?page=1&limit=50&analytics=true
+Headers: Authorization: Bearer {accessToken}
+
+Query Parameters:
+- page (number, optional): default 1
+- limit (number, optional): default 50
+- analytics (boolean, optional): include analytics data if true
+
+Response (Success 200):
+{
+  "users": [
+    {
+      "id": 123,
+      "fullName": "John Doe",
+      "email": "john@example.com",
+      "phone": "+40123456789",
+      "role": "CLIENT",
+      "status": 2,
+      "subscriptions": [...],
+      "analytics": [...] (if analytics=true)
+    },
+    ...
+  ],
+  "count": 1500,
+  "page": 1,
+  "limit": 50,
+  "totalPages": 30
+}
+
+Response (Error 400 - no users):
+{
+  "statusCode": 400,
+  "message": "No user found"
+}
+
+Response (Error 403 - not admin):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+
+Authorization:
+- AuthGuard('jwt')
+- @Roles(UserRoles.ADMIN) - DOAR ADMIN
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UsersRepository.getAllUsers()
+
+Notes:
+- Analytics param opțional include time spent și user events
+- Pagination e configurabilă
+- Endpoint folosit de admin dashboard pentru user management
+
+--------------------------------------------------------------------------------
+TASK 3: GET /v1/user/export-all
+--------------------------------------------------------------------------------
+
+Title: GET /v1/user/export-all
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru ADMIN role
+2. Exportă toți users într-un fișier CSV
+3. Include pentru fiecare user:
+   - Date personale (ID, nume, email, telefon, data creării)
+   - Subscriptions (titlu abonament, tip, status, expirare)
+   - Time spent total pe platformă (agregat din analytics)
+   - Campaigns asociate
+4. Dacă un user are multiple subscriptions, creează câte un rând per subscription
+5. Dacă user-ul nu are subscriptions, creează un rând cu "N/A"
+6. Formatul CSV: header + rows
+7. Returnează CSV file cu Content-Type: text/csv și Content-Disposition: attachment
+
+Cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts:63-75
+- Service: src/v1/User/Service/user.service.ts:216-292
+
+Request:
+GET /v1/user/export-all?page=1&limit=10000
+Headers: Authorization: Bearer {accessToken}
+
+Query Parameters:
+- page (number, optional): pentru export parțial
+- limit (number, optional): pentru export parțial
+
+Response (Success 200):
+Content-Type: text/csv
+Content-Disposition: attachment; filename=data.csv
+
+CSV Content:
+ID,Nume,Email,Telefon,Cont creat la,Titlu Abonament,Tip Abonament,Abonament Status,Abonament Expirare,Campanii,All time pe platforma
+123,John Doe,john@example.com,+40123456789,01/15/2024 10:30,Abonament Premium (id: 50),STANDARD,Activ,12/31/2024,"Campaign 1, Campaign 2",3600
+124,Jane Smith,jane@example.com,+40987654321,02/01/2024 14:20,N/A,,,,Campaign 3,1200
+
+Response (Error 403 - not admin):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+
+Authorization:
+- AuthGuard('jwt')
+- @Roles(UserRoles.ADMIN) - DOAR ADMIN
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UsersRepository.getUsersForExport()
+- SubscriptionTypesRepository.getAllTypesList()
+- csv-writer package
+
+CSV Columns:
+1. ID - user ID
+2. Nume - fullName
+3. Email - email address
+4. Telefon - phone number
+5. Cont creat la - createdAt (format: MM/DD/YYYY HH:mm)
+6. Titlu Abonament - subscription type title with ID
+7. Tip Abonament - subscription form (STANDARD, COURSE_BASED, FREE)
+8. Abonament Status - Activ / Expired
+9. Abonament Expirare - endDate (format: MM/DD/YYYY)
+10. Campanii - comma-separated campaign titles
+11. All time pe platforma - total seconds spent (aggregated from analyticsTime)
+
+Notes:
+- Time spent e calculat agregând toate analyticsTime entries
+- Subscriptions sunt flatened (un user cu 3 subs = 3 rows în CSV)
+- Status "Activ" = endDate >= now && status == PAYMENT_ACCEPTED
+- Formatul datelor e localizat (MM/DD/YYYY pentru export)
+
+--------------------------------------------------------------------------------
+TASK 4: GET /v1/user/search
+--------------------------------------------------------------------------------
+
+Title: GET /v1/user/search
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru ADMIN role
+2. Caută users după:
+   - Email (partial match)
+   - Nume (partial match)
+   - Telefon (partial match)
+3. Minimum 3 caractere pentru căutare (validare)
+4. Query param withCampaign (boolean) - dacă true, include campaigns în rezultate
+5. Returnează lista de users matching search criteria
+6. Dacă searchValue < 3 caractere, aruncă "Search value must be greater than 2 characters"
+
+Cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts:77-84
+- Service: src/v1/User/Service/user.service.ts:327-337
+
+Request:
+GET /v1/user/search?searchValue=john&withCampaign=true
+Headers: Authorization: Bearer {accessToken}
+
+Query Parameters:
+- searchValue (string, required): minimum 3 characters
+- withCampaign (boolean, optional): include campaigns data
+
+Response (Success 200):
+{
+  "users": [
+    {
+      "id": 123,
+      "fullName": "John Doe",
+      "email": "john@example.com",
+      "phone": "+40123456789",
+      "campaigns": [...] (if withCampaign=true)
+    },
+    {
+      "id": 456,
+      "fullName": "Johnny Smith",
+      "email": "johnny@example.com",
+      "phone": "+40111222333"
+    }
+  ],
+  "count": 2
+}
+
+Response (Error 400 - search too short):
+{
+  "statusCode": 400,
+  "message": "Search value must be greater than 2 characters"
+}
+
+Response (Error 403 - not admin):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+
+Authorization:
+- AuthGuard('jwt')
+- @Roles(UserRoles.ADMIN) - DOAR ADMIN
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UsersRepository.searchUser()
+
+Notes:
+- Search e case-insensitive
+- Caută în email, fullName, și phone
+- Partial match (LIKE query)
+- withCampaign param opțional pentru a evita over-fetching
+
+--------------------------------------------------------------------------------
+TASK 5: GET /v1/user/profile-image
+--------------------------------------------------------------------------------
+
+Title: GET /v1/user/profile-image
+
+Description:
+
+Business Logic:
+1. Primește email ca query parameter
+2. NOTA: Implementarea curentă IGNORĂ email-ul și returnează întotdeauna default image
+3. Citește imaginea default din: public/default-users.jpg
+4. Returnează image buffer cu Content-Type: image/jpeg
+5. Stream-uiește fișierul direct la client (efficient pentru files mari)
+
+Cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts:95-99
+- Service: src/v1/User/Service/user.service.ts:339-345
+
+Request:
+GET /v1/user/profile-image?email=user@example.com
+Headers: Authorization: Bearer {accessToken}
+
+Query Parameters:
+- email (string, required): user email (CURRENTLY IGNORED)
+
+Response (Success 200):
+Content-Type: image/jpeg
+[Image Binary Data - JPEG stream]
+
+Authorization: AuthGuard('jwt')
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- fs.createReadStream() - Node.js filesystem
+
+Notes:
+- IMPLEMENTARE INCOMPLETĂ: userId din query e ignorat
+- Întotdeauna returnează default-users.jpg
+- POSIBIL BUG: Ar trebui să verifice user.hasPicture și să încarce din DigitalOcean Spaces
+- Codul comentat sugerează că era planificată încărcarea reală
+
+Posibile îmbunătățiri .NET:
+- Verifică user.hasPicture flag
+- Dacă true, download from DigitalOcean Spaces (users/{userId}.jpg)
+- Dacă false, returnează default image
+- Consider caching cu CDN
+
+--------------------------------------------------------------------------------
+TASK 6: PUT /v1/user/profile-image
+--------------------------------------------------------------------------------
+
+Title: PUT /v1/user/profile-image
+
+Description:
+
+Business Logic:
+1. Primește multipart/form-data cu file upload
+2. DOAR CLIENT role poate upload profile image (nu ADMIN)
+3. Validează file type folosind file-type library:
+   - Allowed: image/jpeg, image/jpg, image/png
+   - Detectează MIME type din buffer (nu doar extension)
+4. Upload file la DigitalOcean Spaces în directory users/
+5. File name format: {userId}.jpg
+6. Setează ACL la public-read pentru access public
+7. Actualizează user.hasPicture = true în baza de date
+8. Returnează success message
+9. Dacă file type e invalid, aruncă "Fișier invalid. Sunt permise doar fișierele jpeg și png."
+
+Cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts:101-125
+- Service: src/v1/User/Service/user.service.ts:347-372
+
+Request:
+PUT /v1/user/profile-image
+Headers:
+  Authorization: Bearer {accessToken}
+  Content-Type: multipart/form-data
+
+Form Data:
+- file: [Binary Image Data]
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Imaginea de profil a fost actualizata."
+}
+
+Response (Error 400 - invalid file type):
+{
+  "statusCode": 400,
+  "message": "Fișier invalid. Sunt permise doar fișierele jpeg și png."
+}
+
+Response (Error - upload failed):
+{
+  "status": "error",
+  "message": "Imaginea de profil nu a fost actualizata"
+}
+
+Response (Error 403 - not CLIENT):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+
+Authorization:
+- AuthGuard('jwt')
+- @Roles(UserRoles.CLIENT) - DOAR CLIENT (nu ADMIN sau USER)
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- file-type package (fileTypeFromBuffer) - MIME type detection
+- DOSpacesService.uploadFile()
+- UsersRepository.save()
+
+File Upload Details:
+- Max size: 300MB (configurat în file.middleware)
+- Directory: users/
+- File name: {userId}.jpg
+- ACL: public-read
+- URL format: {SPACES_ENDPOINT}/users/{userId}.jpg
+
+Notes:
+- File validation se face pe MIME type real, nu pe extension
+- Previne upload de fișiere redenumite (.exe → .jpg)
+- hasPicture flag e folosit pentru a determina dacă să încarce din Spaces sau default image
+- File e procesat în file.middleware înainte de a ajunge în controller
+
+Posibile îmbunătățiri .NET:
+- Add image size validation (width/height)
+- Add compression pentru files mari
+- Consider image optimization (resize, quality)
+- Add versioning pentru cache busting
+
+--------------------------------------------------------------------------------
+TASK 7: PATCH /v1/user/update
+--------------------------------------------------------------------------------
+
+Title: PATCH /v1/user/update
+
+Description:
+
+Business Logic:
+1. User-ul poate actualiza propriul profil (folosește GetUser() decorator pentru authUser)
+2. Câmpuri actualizabile: fullName, email, phone, birthdate, gender, marketingAgreement, whatsappAgreement
+3. Logic complex pentru marketingAgreement:
+   - Dacă true → subscribe la MailerLite
+   - Dacă false → unsubscribe de la MailerLite
+4. Logic special pentru email update:
+   - Dacă email-ul e diferit de cel curent, trimite verification email
+   - Email verification URL: {domain}/auth/confirmation/email?token={emailValidationToken}
+   - Template: 'mail-update'
+5. Returnează updated user object
+6. MailerLite errors sunt log-uite dar NU blochează update-ul
+
+Cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts:134-140
+- Service: src/v1/User/Service/user.service.ts:380-443
+
+Request:
+PATCH /v1/user/update
+Headers: Authorization: Bearer {accessToken}
+Body:
+{
+  "fullName": "John Doe Updated",
+  "email": "newemail@example.com",
+  "phone": "+40999888777",
+  "birthdate": "1990-01-15",
+  "gender": "M",
+  "marketingAgreement": true,
+  "whatsappAgreement": false
+}
+
+Response (Success 200):
+{
+  "id": 123,
+  "fullName": "John Doe Updated",
+  "email": "newemail@example.com",
+  "phone": "+40999888777",
+  "birthdate": "1990-01-15",
+  "gender": "M",
+  "marketingAgreement": true,
+  "whatsappAgreement": false,
+  "updatedAt": "2024-01-20T10:30:00.000Z"
+}
+
+Authorization: AuthGuard('jwt')
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UsersRepository.updateUser()
+- MailerLiteService.subscribeToMarketing() / unSubscribeFromMarketing()
+- MailerService.sendMail() (pentru email verification)
+- JWT signing pentru email validation token
+
+Email Validation Token:
+- Type: VALIDATION_EMAIL
+- Expiration: 90 days (configurat în JWT settings)
+- Payload: { id, role, email, type, createdAt }
+
+Notes:
+- Email update necesită verificare (nu se schimbă imediat)
+- MailerLite errors nu opresc update-ul (error handling graceful)
+- marketingAgreement toggle-uiește subscription la newsletter
+- simplifiedUpdate param (false by default) controlează dacă se execută MailerLite/Email logic
+
+Posibile îmbunătățiri .NET:
+- Add validation pentru phone format (Romanian format)
+- Add validation pentru email format
+- Consider rate limiting pe email updates (prevent spam)
+- Add notification când email e schimbat cu succes
+
+--------------------------------------------------------------------------------
+TASK 8: PATCH /v1/user/:userId
+--------------------------------------------------------------------------------
+
+Title: PATCH /v1/user/:userId
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru ADMIN role
+2. Admin poate actualiza orice user din sistem
+3. Toate câmpurile din UpdateUserDto sunt actualizabile
+4. FUNCȚIONALITATE EXTRA: Dacă dto.subTypeId e prezent, creează automat subscription:
+   - Retrieve subscription type details
+   - Creează subscription cu status PAYMENT_ACCEPTED
+   - Setează startDate = now, endDate = now + duration months
+   - Actualizează user.status la HAS_SUBSCRIPTION
+   - Refresh user access cache în Redis
+   - Adaugă user la MailerLite group specific produsului
+5. Returnează updated user object cu subscription-ul nou (dacă a fost creat)
+6. Dacă subscription type nu există, log warning dar continuă cu update-ul user
+
+Cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts:142-154
+- Service: src/v1/User/Service/user.service.ts:445-527
+
+Request:
+PATCH /v1/user/123
+Headers: Authorization: Bearer {accessToken}
+Body:
+{
+  "fullName": "Updated Name",
+  "status": 2,
+  "isActive": true,
+  "subTypeId": 50  // Optional - creates subscription if provided
+}
+
+Response (Success 200):
+{
+  "id": 123,
+  "fullName": "Updated Name",
+  "status": 2,  // HAS_SUBSCRIPTION (updated if subTypeId provided)
+  "isActive": true,
+  "updatedAt": "2024-01-20T10:30:00.000Z"
+}
+
+Response (Error 403 - not admin):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+
+Authorization:
+- AuthGuard('jwt')
+- @Roles(UserRoles.ADMIN) - DOAR ADMIN
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UsersRepository.updateUser()
+- SubscriptionTypesRepository.getTypeById()
+- SubscriptionsRepository.save()
+- UsersRepository.activateUserSubStatus()
+- RedisService (refresh access cache)
+- MailerLiteService.retrieveOrCreateGroup() + subscribeToMarketing()
+
+Subscription Creation Logic (when subTypeId provided):
+1. Retrieve subscription type (price, duration, form, courseId, categoryId)
+2. Calculate startDate (now) and endDate (now + duration months, default 12)
+3. Create SubscriptionEntity:
+   - subTypeId: from dto
+   - form: from subscription type
+   - courseId/categoryId: from subscription type
+   - clientId: userId
+   - totalCost: subscription type price
+   - status: PAYMENT_ACCEPTED
+   - observations: "Added by admin - patch user"
+4. Update user status to HAS_SUBSCRIPTION
+5. Refresh Redis access cache
+6. Add to MailerLite product group (BUY_CAMPAIGN_SUFFIX + productName)
+
+Notes:
+- subTypeId e OPȚIONAL - dacă lipsește, doar update user data
+- Subscription e creată INSTANT cu status PAYMENT_ACCEPTED (nu necesită plată)
+- Access cache e refreshed automat pentru user
+- MailerLite group e creat automat dacă nu există
+- Observations field marchează că subscription a fost adăugată de admin
+
+Posibile îmbunătățiri .NET:
+- Add validation pentru conflicting subscriptions
+- Consider transaction pentru user update + subscription creation
+- Add audit log pentru admin actions
+- Notify user prin email când subscription e adăugată
+
+--------------------------------------------------------------------------------
+TASK 9: DELETE /v1/user/:userId
+--------------------------------------------------------------------------------
+
+Title: DELETE /v1/user/:userId
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru ADMIN role
+2. Șterge complet user-ul din sistem (hard delete, NU soft delete)
+3. Ștergere CASCADĂ în următoarea ordine:
+   - Toate invoices asociate user-ului (customerId match)
+   - Toate subscriptions asociate user-ului (client.id match)
+   - User entity
+4. Returnează success message
+5. PERMANENT DELETE - nu poate fi undo
+
+Cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts:156-165
+- Service: src/v1/User/Service/user.service.ts:549-556
+
+Request:
+DELETE /v1/user/123
+Headers: Authorization: Bearer {accessToken}
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Account successfully deleted"
+}
+
+Response (Error 403 - not admin):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+
+Authorization:
+- AuthGuard('jwt')
+- @Roles(UserRoles.ADMIN) - DOAR ADMIN
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- InvoicesRepository.delete()
+- SubscriptionsRepository.delete()
+- UsersRepository.deleteUser()
+
+Deletion Order (IMPORTANT):
+1. Invoices (foreign key: customerId)
+2. Subscriptions (foreign key: client.id)
+3. User
+
+Notes:
+- HARD DELETE - nu e soft delete (nu setează isActive=false)
+- Cascading delete manual (nu database CASCADE)
+- Analytics și Campaigns NU sunt șterse (POSIBIL BUG/INCONSISTENȚĂ)
+- MailerLite subscription rămâne (nu se unsubscribe)
+- Stripe Customer rămâne în Stripe (nu se șterge)
+
+Posibile îmbunătățiri .NET:
+- Consider SOFT DELETE instead (set isDeleted=true, deletedAt=now)
+- Delete Stripe Customer also
+- Unsubscribe from MailerLite
+- Delete Analytics, Campaigns, Shortlist entries
+- Add confirmation mechanism (prevent accidental deletes)
+- Add audit log pentru admin deletes
+- Consider data export înainte de delete (GDPR compliance)
+
+--------------------------------------------------------------------------------
+TASK 10: POST /v1/user/disable
+--------------------------------------------------------------------------------
+
+Title: POST /v1/user/disable
+
+Description:
+
+Business Logic:
+1. User-ul poate dezactiva propriul cont (self-service)
+2. Folosește GetUser() decorator pentru authUser (nu poate disable alt user)
+3. Setează user status sau isActive=false (implementarea exactă e în repository)
+4. Returnează success message
+5. Cont dezactivat = user nu mai poate face login
+
+Cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts:177-181
+- Service: src/v1/User/Service/user.service.ts:544-547
+
+Request:
+POST /v1/user/disable
+Headers: Authorization: Bearer {accessToken}
+Body: {} (empty body)
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Account successfully disabled"
+}
+
+Authorization:
+- AuthGuard('jwt')
+- @Roles(UserRoles.USER) - orice user autentificat
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UsersRepository.disableUser()
+
+Notes:
+- Self-service disable (user disable propriul cont)
+- NU șterge datele, doar dezactivează contul
+- User poate re-activa contul (probabil prin send-activation-mail)
+- Different de DELETE (care șterge permanent)
+
+Posibile îmbunătățiri .NET:
+- Add confirmation step (prevent accidental disable)
+- Send email notification când cont e disabled
+- Add reason field (why user disables account)
+- Consider grace period (30 days înainte de delete permanent)
+
+--------------------------------------------------------------------------------
+TASK 11: POST /v1/user/send-activation-mail
+--------------------------------------------------------------------------------
+
+Title: POST /v1/user/send-activation-mail
+
+Description:
+
+Business Logic:
+1. Trimite email de activare/reactivare pentru un user
+2. Primește email în body DTO
+3. Verifică dacă user-ul există și dacă isActive=true (paradox: doar users activi pot primi activation mail)
+4. Generează activation token JWT (type: VALIDATION_EMAIL)
+5. Trimite email cu template 'mail-update' (POSIBIL BUG - ar trebui alt template)
+6. Email conține activation URL: {domain}/auth/activation/user?token={activateToken}
+7. Returnează success message
+8. Dacă user nu e activ, aruncă "Banned accounts can not do activation mail processes"
+
+Cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts:183-186
+- Service: src/v1/User/Service/user.service.ts:584-616
+
+Request:
+POST /v1/user/send-activation-mail
+Body:
+{
+  "email": "user@example.com"
+}
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Activation mail has been sent"
+}
+
+Response (Error 400 - banned account):
+{
+  "statusCode": 400,
+  "message": "Banned accounts can not do activation mail processes"
+}
+
+Response (Error 400 - user not found):
+{
+  "statusCode": 400,
+  "message": "User not found"
+}
+
+Authorization: Public (nu necesită AuthGuard)
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UsersRepository.getUserByEmail()
+- MailerService.sendMail()
+- JWT signing (activateAccount secret)
+
+Email Details:
+- Subject: "Reactivate Your Account [{fullName}]"
+- Template: 'mail-update' (PROBABIL GREȘIT - ar trebui 'activation')
+- Context: { emailUpdateAddress: activationUrl, fullName }
+- Activation URL: {domain}/auth/activation/user?token={token}
+
+Activation Token:
+- Type: VALIDATION_EMAIL
+- Secret: SECRET_FOR_ACTIVATE_ACCOUNT (different from other tokens)
+- Expiration: configurat în auth.jwt.activateAccount
+- Payload: { id, role, email, type, createdAt }
+
+Notes:
+- LOGIC STRANIU: verifică isActive=true dar trimite "activation" mail
+- Probabil folosit pentru RE-activation după disable
+- Template 'mail-update' e reutilizat (ar trebui template dedicat)
+- Endpoint e PUBLIC - oricine poate solicita activation mail pentru orice email
+
+Posibile îmbunătățiri .NET:
+- Rename la "send-reactivation-mail" pentru claritate
+- Add rate limiting specific (prevent spam pe email)
+- Use dedicated email template pentru reactivation
+- Consider verificare că user e disabled înainte de a trimite mail
+
+--------------------------------------------------------------------------------
+TASK 12: GET /v1/user/activate-user
+--------------------------------------------------------------------------------
+
+Title: GET /v1/user/activate-user
+
+Description:
+
+Business Logic:
+1. Activează user-ul folosind token-ul din query params
+2. Verifică JWT token signature folosind access token secret
+3. Validează că token-ul conține activationToken field
+4. Verifică expiration time (remainingTime > 0)
+5. Activează user-ul în baza de date (setează probabil isActive=true)
+6. Returnează success message
+7. Dacă token e invalid/expirat, aruncă "Activation token is not valid"
+8. Dacă signature e invalid, aruncă "Token signature is not valid"
+
+Cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts:188-191
+- Service: src/v1/User/Service/user.service.ts:558-582
+
+Request:
+GET /v1/user/activate-user?token=eyJhbGc...
+
+Query Parameters:
+- token (string, required): JWT activation token
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Account has been activated"
+}
+
+Response (Error 400 - invalid signature):
+{
+  "statusCode": 400,
+  "message": "Token signature is not valid"
+}
+
+Response (Error 400 - expired/invalid):
+{
+  "statusCode": 400,
+  "message": "Activation token is not valid"
+}
+
+Authorization: Public (nu necesită AuthGuard)
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- jwt.verify() - validate token signature
+- UsersRepository.activateUser()
+
+Token Validation:
+- Secret: app.auth.jwt.accessToken.secret (POSIBIL BUG - ar trebui activateAccount secret)
+- Checks: signature, expiration, activationToken field presence
+
+Notes:
+- Endpoint e PUBLIC - oricine cu token valid poate activa
+- Token verification folosește access token secret (inconsistență cu send-activation-mail)
+- activationToken field în payload e necesar (în plus față de standard JWT claims)
+- One-time use nu e enforced (token poate fi refolosit)
+
+Posibile îmbunătățiri .NET:
+- Use consistent secret (activateAccount, nu accessToken)
+- Enforce one-time token usage (invalidate după activate)
+- Add logging pentru activation attempts
+- Redirect to success page după activation (nu JSON response)
+
+--------------------------------------------------------------------------------
+TASK 13: GET /v1/user/send-mass-activation-mail
+--------------------------------------------------------------------------------
+
+Title: GET /v1/user/send-mass-activation-mail
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru ADMIN role
+2. BULK operation - trimite email de activare la TOȚI users cu un anumit profileVersion
+3. ProfileVersion e hardcodat în cod: 4914 (PROBABIL TEMPORAR/MIGRATION SPECIFIC)
+4. Pentru fiecare user:
+   - Generează recovery URL (folosind recoveryKey existent)
+   - Trimite email cu template 'mass-reset-email'
+   - Incrementează profileVersion cu 1
+   - Salvează user
+5. Email subject: "🌸 O primăvară minunată! Vești bune de la Somaway 🌿" (HARDCODAT)
+6. Returnează numărul de emails trimise
+7. ATENȚIE: Bulk operation - poate dura mult pentru users mulți
+
+Cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts:193-197
+- Service: src/v1/User/Service/user.service.ts:634-662
+
+Request:
+GET /v1/user/send-mass-activation-mail
+Headers: Authorization: Bearer {accessToken}
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Activation mails have been sent 150"
+}
+
+Response (Error 403 - not admin):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+
+Authorization:
+- AuthGuard('jwt')
+- @Roles(UserRoles.ADMIN) - DOAR ADMIN
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UsersRepository.getUsersForMassActivation(profileVersion)
+- MailerService.sendMail() - called in loop
+- UsersRepository.save() - called in loop
+
+Email Details:
+- Subject: "🌸 O primăvară minunată! Vești bune de la Somaway 🌿"
+- Template: 'mass-reset-email'
+- Context: { accountRecoverAddress, fullName }
+- Recovery URL: {domain}/auth/recuperare-cont?email={email}&recoveryKey={recoveryKey}
+
+ProfileVersion Logic:
+- Query: WHERE profileVersion = 4914 (HARDCODAT)
+- After send: profileVersion += 1
+- Purpose: Track care users au primit deja emailul (evită re-send)
+
+Notes:
+- MIGRATION/CAMPAIGN SPECIFIC - profileVersion 4914 e hardcodat
+- Nu e reutilizabil pentru alte campaniii fără code change
+- Email subject e hardcodat (specific campanie primăvară)
+- Folosește recovery key mechanism în loc de activation token
+- Loop sincron - poate fi lent pentru mulți users
+- NU are rate limiting pe emails (risc de spam flag)
+
+Posibile îmbunătățiri .NET:
+- Make profileVersion param (nu hardcodat)
+- Make email subject/template configurable
+- Add batch processing (chunks of 50-100)
+- Add delay între emails (prevent SMTP rate limiting)
+- Add background job (Hangfire) pentru async processing
+- Add progress tracking/reporting
+- Add retry mechanism pentru failed emails
+- Consider using bulk email API (MailerLite batch send)
+
+--------------------------------------------------------------------------------
+TASK 14: GET /v1/user/add-mass-users-mailerlite-groups
+--------------------------------------------------------------------------------
+
+Title: GET /v1/user/add-mass-users-mailerlite-groups
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru ADMIN role
+2. BULK operation - adaugă toți users în MailerLite groups bazat pe subscription status
+3. Logic complex de grupare:
+   - Users cu subscription activă → group specific produsului (COMENTAT - disabled)
+   - Users cu free subscription SAU expired subscription → group "[free noiembrie 24 (fara abonament activ)]"
+   - Users fără subscription → group "[free noiembrie 24 (fara abonament activ)]"
+4. Active subscription = status >= PAYMENT_ACCEPTED && form != FREE && endDate >= now
+5. Subscription types sunt încărcate pentru a map subTypeId → productName
+6. Users sunt grupați în batches per MailerLite group
+7. Bulk add la MailerLite folosind addBulkSubscribersToGroup
+8. Returnează numărul de users procesați
+9. MARE PARTE DIN COD E COMENTATĂ (logic pentru active subs)
+
+Cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts:199-203
+- Service: src/v1/User/Service/user.service.ts:664-774
+
+Request:
+GET /v1/user/add-mass-users-mailerlite-groups
+Headers: Authorization: Bearer {accessToken}
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "250 Users have been added to MailerLite groups"
+}
+
+Response (Error 400 - no subscription types):
+{
+  "status": "error",
+  "message": "No subscription types found"
+}
+
+Response (Error 403 - not admin):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+
+Authorization:
+- AuthGuard('jwt')
+- @Roles(UserRoles.ADMIN) - DOAR ADMIN
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UsersRepository.getUsersForMassMailerliteAttaching() - loads users with subscriptions
+- SubscriptionTypesRepository.getAllTypesList()
+- MailerLiteService.retrieveOrCreateGroup()
+- MailerLiteService.addBulkSubscribersToGroup()
+
+MailerLite Groups:
+- "[free noiembrie 24 (fara abonament activ)]" - users without active subscription (HARDCODAT)
+- (COMENTAT) BUY_CAMPAIGN_SUFFIX + productName - per product groups
+
+Subscription Classification:
+1. activeSubscriptions: status >= PAYMENT_ACCEPTED && form != FREE && endDate >= now
+2. freeSubscriptions: form != FREE
+3. (COMENTAT) expiredSubs: status >= PAYMENT_ACCEPTED && form != FREE && endDate < now
+4. (COMENTAT) unFinishedSubs: status < PAYMENT_ACCEPTED && form != FREE
+
+User Data Sent to MailerLite:
+- email: user email
+- fields.name: first word from fullName
+- fields.last_name: second word from fullName (if exists)
+- fields.phone: phone number
+
+Notes:
+- SPECIFIC CAMPAIGN - group name hardcodat pentru noiembrie 2024
+- Bulk operation - procesează TOȚI users dintr-o dată
+- Active subscription logic e COMENTAT (doar free/no-sub e activ)
+- Group creation e automată (retrieveOrCreateGroup)
+- Bulk add e eficient (un API call per group, nu per user)
+- Nu e idempotent - re-run poate duplica users în groups
+
+Posibile îmbunătățiri .NET:
+- Make group names configurable (nu hardcodat)
+- Uncomment active subscription logic sau remove complet
+- Add progress tracking
+- Add logging per user processed
+- Add error handling per user (skip failed, continue cu restul)
+- Add background job (Hangfire) - async processing
+- Add idempotency check (don't re-add if already in group)
+- Consider incremental sync (doar new users sau changed subscriptions)
+
+--------------------------------------------------------------------------------
+TASK 15: POST /v1/user/create-by-admin
+--------------------------------------------------------------------------------
+
+Title: POST /v1/user/create-by-admin
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru ADMIN role
+2. Admin creează un user nou cu toate detaliile, inclusiv subscription opțional
+3. Verifică dacă user-ul există deja (email SAU phone)
+4. Creează Stripe Customer ÎNAINTE de user (dependency)
+5. Generează random password (16 bytes hex = 32 characters)
+6. Hash-uiește password-ul cu Argon2
+7. Generează recovery key pentru password setup
+8. Creează user cu:
+   - role: CLIENT (forced)
+   - status: HAS_SUBSCRIPTION (forced)
+   - isActive: true
+   - marketingAgreement: true
+   - profileVersion: 1
+9. DACĂ dto.subTypeId e prezent:
+   - Creează subscription cu status PAYMENT_ACCEPTED
+   - Adaugă user la MailerLite product group
+10. Adaugă user la MailerLite group "[admin_created]"
+11. Trimite email de "password setup" cu recovery URL
+12. Returnează created user object
+
+Cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts:205-216
+- Service: src/v1/User/Service/user.service.ts:776-970
+
+Request:
+POST /v1/user/create-by-admin
+Headers: Authorization: Bearer {accessToken}
+Body:
+{
+  "email": "newuser@example.com",
+  "phone": "+40123456789",
+  "fullName": "New User Name",
+  "subTypeId": 50,  // Optional - creates subscription if provided
+  "isActive": true  // Currently ignored - always true
+}
+
+Response (Success 200):
+{
+  "id": 789,
+  "fullName": "New User Name",
+  "email": "newuser@example.com",
+  "phone": "+40123456789",
+  "role": "CLIENT",
+  "status": 2,  // HAS_SUBSCRIPTION
+  "isActive": true,
+  "stripeCustomer": "cus_xxx",
+  "recoveryKey": "A1B2C3D4E5F6G7H8",
+  "createdAt": "2024-01-20T10:30:00.000Z"
+}
+
+Response (Error 400 - user exists):
+{
+  "statusCode": 400,
+  "message": "Un utilizator cu acest email sau telefon există deja."
+}
+
+Response (Error 400 - Stripe failed):
+{
+  "statusCode": 400,
+  "message": "Could not create Stripe customer: {error details}"
+}
+
+Response (Error 400 - subscription type not found):
+{
+  "statusCode": 400,
+  "message": "The specified subscription type does not exist."
+}
+
+Response (Error 403 - not admin):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+
+Authorization:
+- AuthGuard('jwt')
+- @Roles(UserRoles.ADMIN) - DOAR ADMIN
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UsersRepository.findOne() - check duplicate
+- StripeService.createCustomer()
+- UsersRepository.save()
+- SubscriptionTypesRepository.getTypeById()
+- SubscriptionsRepository.save()
+- MailerLiteService.retrieveOrCreateGroup()
+- MailerLiteService.subscribeToMarketing()
+- MailerService.sendMail()
+- crypto.randomBytes() - generate random password
+- argon2.hash() - hash password
+
+Stripe Customer Creation:
+- email: lowercased
+- name: fullName
+- Returns: { id: "cus_xxx", ... }
+
+Password Generation:
+- randomBytes(16).toString('hex') = 32 character hex string
+- Example: "a3f2e1d9c8b7a6f5e4d3c2b1a0987654"
+- Hashed cu Argon2 înainte de stocare
+
+Subscription Creation (dacă subTypeId e prezent):
+- startDate: now
+- endDate: now + duration months (default 12)
+- status: PAYMENT_ACCEPTED (active imediat)
+- totalCost: subscription type price
+- observations: "Added by admin - create user"
+
+MailerLite Groups:
+1. "[admin_created]" - toți users creați de admin
+2. BUY_CAMPAIGN_SUFFIX + productName - dacă are subscription
+
+Email Details:
+- Subject: "Configurează parola pentru contul tău Somaway"
+- Template: 'admin-create-confirm'
+- Context: { setPasswordUrl, fullName }
+- Password Setup URL: {domain}/auth/recuperare-cont?email={email}&recoveryKey={recoveryKey}
+
+Notes:
+- User e creat ACTIV și cu subscription status (chiar dacă nu are subscription)
+- Password e random - user TREBUIE să folosească recovery URL pentru a seta password
+- Recovery key e generat automat (16 chars uppercase alphanumeric)
+- Stripe Customer e MANDATORY - dacă failează, user nu e creat
+- MailerLite errors sunt log-uite dar NU blochează crearea user-ului
+- dto.isActive e IGNORAT - întotdeauna true (cod comentat sugerează că era planificată altă logică)
+
+Posibile îmbunătățiri .NET:
+- Respect dto.isActive flag
+- Add option pentru admin să seteze password direct (nu doar recovery)
+- Add transaction pentru user + subscription + Stripe (rollback if any fails)
+- Consider sending welcome email după ce user-ul setează password
+- Add validation pentru phone format (Romanian specific)
+- Add audit log pentru admin user creation
+
+--------------------------------------------------------------------------------
+TASK 16: POST /v1/user/update-address
+--------------------------------------------------------------------------------
+
+Title: POST /v1/user/update-address
+
+Description:
+
+Business Logic:
+1. User-ul poate crea/actualiza adresa de facturare
+2. Folosește GetUser() decorator pentru authUser
+3. Setează customerId = authUser.id (nu poate seta address pentru alt user)
+4. Dacă adresa există (match pe customerId), o actualizează
+5. Dacă adresa nu există, o creează
+6. Câmpuri address: streetAddress, city, state, postalCode, country, isDefault
+7. Returnează success message
+
+Cod sursă:
+- Controller: src/v1/User/Controller/user.controller.ts:218-228
+- Service: src/v1/User/Service/user.service.ts:982-986
+
+Request:
+POST /v1/user/update-address
+Headers: Authorization: Bearer {accessToken}
+Body:
+{
+  "streetAddress": "Str. Exemplu nr. 10",
+  "city": "București",
+  "state": "București",
+  "postalCode": "012345",
+  "country": "România",
+  "isDefault": true
+}
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Address updated successfully"
+}
+
+Authorization: AuthGuard('jwt')
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- AddressesRepository.createOrUpdateAddress()
+
+Address DTO Fields:
+- customerId: auto-set from authUser.id
+- streetAddress: string
+- city: string
+- state: string
+- postalCode: string
+- country: string
+- isDefault: boolean
+
+Notes:
+- Upsert operation (create if not exists, update if exists)
+- Un user poate avea multiple addresses (isDefault flag selectează default)
+- Address e folosită pentru invoices (SmartBill integration)
+- No validation on address format/country
+
+Posibile îmbunătățiri .NET:
+- Add validation pentru postalCode format (per country)
+- Add address validation API (verify address exists)
+- Add support pentru multiple addresses per user
+- Add address type (billing vs shipping)
+- Consider autocomplete API pentru cities/streets
+
+================================================================================
+END OF STORY
+================================================================================
+
+Summary:
+- Total Tasks: 16
+- Total Endpoints: 16 (9 GET, 4 POST, 2 PATCH, 1 PUT, 1 DELETE)
+- Admin-only Endpoints: 6 (all, export-all, search, patch user, delete, create-by-admin, mass operations)
+- Public Endpoints: 2 (send-activation-mail, activate-user)
+- Complex Features: Access control system cu Redis cache, CSV export, DigitalOcean Spaces integration, bulk operations
+- Third-party Integrations: Stripe, MailerLite, DigitalOcean Spaces, Postmark
+
+Migration Priority: HIGH (core user management, dependencies cu Auth și Subscription modules)
+Estimated Story Points: 34
+
+Special Notes:
+- Access control system cu 4 levels (ADMIN, STANDARD, COURSE_BASED, NO_ACCESS)
+- Redis caching pentru access rights și category permissions
+- Profile image PARTIALLY IMPLEMENTED (download returnează default, upload funcționează)
+- Mass operations sunt campaign-specific cu hardcoded values
+- Delete e hard delete (consideră soft delete pentru .NET)
+- CreateByAdmin e complex (Stripe + User + Subscription + MailerLite în același flow)

@@ -280,11 +280,11 @@ Parcurge acest traseu de învățare pas cu pas pentru a stăpâni utilizarea ag
 ## 📊 Progres General
 
 - [x] **Nivel 1: Începător** (5/5 exerciții completate) ✅
-- [ ] **Nivel 2: Intermediar** (2/5 exerciții completate)
+- [x] **Nivel 2: Intermediar** (5/5 exerciții completate) ✅
 - [ ] **Nivel 3: Avansat** (0/4 exerciții completate)
 - [ ] **Proiect Final** (0/1 completat)
 
-**Progres total: 7/15 exerciții (47%)**
+**Progres total: 10/15 exerciții (67%)**
 
 ---
 
@@ -374,7 +374,7 @@ După ce am creat agentul, hai să îl testăm pe cod real pentru a vedea dacă 
 ---
 
 ### Exercițiul 2.3: Workflow cu 2 agenți
-- [ ] **Status:** Neînceput
+- [x] **Status:** Completat ✅
 - **Sarcină:** Orchestrează un workflow care folosește 2 agenți: Explore pentru a găsi cod, apoi Code-reviewer pentru a-l analiza
 - **Ce vei învăța:** Cum să combini mai mulți agenți într-un flux de lucru
 - **Când ești gata:** Spune-mi "Folosește Explore să găsești funcțiile Python, apoi code-reviewer să le analizeze"
@@ -385,7 +385,7 @@ Vei învăța să coordonezi mai mulți agenți pentru o sarcină complexă. Obs
 ---
 
 ### Exercițiul 2.4: Debugging cu agentul specializat
-- [ ] **Status:** Neînceput
+- [x] **Status:** Completat ✅
 - **Sarcină:** Creează intenționat o funcție cu un bug (ex: division by zero), apoi cere-mi să folosesc debugger agent
 - **Ce vei învăța:** Cum funcționează agentul debugger și ce informații oferă
 - **Când ești gata:** Spune-mi "Creează o funcție cu un bug și folosește debugger să îl găsești"
@@ -396,7 +396,7 @@ Voi crea cod cu bug și voi folosi agentul debugger pentru a identifica problema
 ---
 
 ### Exercițiul 2.5: Plan Mode pentru refactorizare
-- [ ] **Status:** Neînceput
+- [x] **Status:** Completat ✅
 - **Sarcină:** Cere-mi să planific refactorizarea unui fișier de cod (fără să implementez)
 - **Ce vei învăța:** Cum funcționează Plan mode și cum ajută la planificare
 - **Când ești gata:** Spune-mi "Hai să planificăm refactorizarea fișierului X (alege un fișier din proiect)"

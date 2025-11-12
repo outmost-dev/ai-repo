@@ -1,0 +1,2037 @@
+================================================================================
+JIRA STORY: ORDERS MANAGEMENT MODULE
+================================================================================
+
+**Story Title**: Orders Management Module
+
+**Story Description**:
+Modulul Orders Management afișează și gestionează comenzile din platformă, oferind
+vizibilitate completă asupra tranzacțiilor (Stripe și Librapay), statusurilor de plată,
+și linkurilor cu subscripțiile create. Admin-ul poate căuta și filtra comenzi pentru
+debugging și suport clienți.
+
+**Locație cod sursă**:
+- Page: admin/src/pages/dashboards/Orders.tsx
+- Component: admin/src/components/dashboard/orders/OrdersCard.tsx
+- Types: admin/src/types/orders.ts
+
+**Componente implementate**: 1
+- OrdersCard (tabel comenzi cu search și pagination)
+
+**Features**: 9 tasks
+- Page layout cu PageHeader
+- Order table cu 7 coloane
+- Payment status tags (color-coded)
+- Gateway type display (Stripe/Librapay)
+- Client & subscription info display
+- Search cu debounce (500ms)
+- Simple pagination (20/page)
+- [DISABLED] Expandable rows for Payment/Invoice details
+- [DISABLED] SmartBill invoice download
+
+**Dependencies**:
+- Stripe/Librapay payment gateways
+- SmartBill Service (invoice download - disabled)
+- Order & Payment entities (backend)
+
+**Business Rules**:
+1. **Read-Only Table**: Comenzile NU pot fi editate/șterse din admin (immutable payment records)
+2. **Dual Gateway Support**: Afișează comenzi din Stripe ȘI Librapay
+3. **Payment Status**: 4 statusuri (processing, failed, completed, cancelled) cu color-coding
+4. **Search**: Caută după Order ID, Gateway ID, sau Client name
+5. **Fixed Pagination**: 20 items per page (no custom page size)
+
+**Migration Priority**: LOW-MEDIUM (read-only display, simple table)
+
+**Total Estimated Effort**: 3-4 zile (1 developer)
+
+================================================================================
+TASKS BREAKDOWN
+================================================================================
+
+Task 1: Page Layout & PageHeader
+Task 2: Order Table with 7 Columns
+Task 3: Payment Status Tags (Color-coded by Status)
+Task 4: Gateway Type Display (Stripe/Librapay)
+Task 5: Client & Subscription Info Display
+Task 6: Search with Debounce (500ms, min 3 chars)
+Task 7: Simple Pagination (20 items/page)
+Task 8: [DISABLED] Expandable Rows for Payment/Invoice Details
+Task 9: [DISABLED] SmartBill Invoice Download
+
+================================================================================
+TASK 1: Page Layout & PageHeader
+================================================================================
+
+**Descriere Business:**
+Pagina Orders afișează un layout simplu cu PageHeader și OrdersCard.
+NU are stats cards sau alte componente complexe - focus pe displaying order data.
+
+**User Flow:**
+1. Admin navighează la /dashboards/orders
+2. Sistemul încarcă comenzi cu pagination (20/page)
+3. Se afișează tabelul cu toate comenzile
+
+**Cod sursă:**
+- File: admin/src/pages/dashboards/Orders.tsx:15-140
+- Component: PageHeader (shared)
+- Title: "Comenzi | Dashboard"
+
+**Current Implementation (React):**
+```typescript
+import { useState, useEffect, useCallback } from 'react';
+import { Col, Row } from 'antd/lib';
+import { HomeOutlined, PieChartOutlined } from '@ant-design/icons';
+import { PageHeader, OrdersCard } from '../../components';
+import { getAllOrdersApi } from '../../utils/apiService';
+import { useAuth } from '../../context/auth';
+
+export const OrdersDashboardPage = () => {
+  const stylesContext = useStylesContext();
+  const { authUser } = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [ordersData, setOrdersData] = useState<{
+    items: OrderT[];
+    count: number;
+  }>({ items: [], count: 0 });
+  const [error, setError] = useState<string | null>(null);
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);  // Fixed page size
+  const [filter, setFilter] = useState<string>('');
+
+  const fetchOrders = async (
+    page: number = 1,
+    size: number = 20,
+    searchFilter: string = ''
+  ) => {
+    if (!authUser?.accessToken) {
+      setError('Authentication required');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const offset = (page - 1) * size;
+
+      const data = await getAllOrdersApi(
+        offset,
+        size,
+        searchFilter,
+        () => {},
+        authUser.accessToken
+      );
+
+      const results = data as { items: OrderT[]; count: number };
+      setOrdersData(results);
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : 'Failed to fetch orders';
+      setError(errorMessage);
+      message.error(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePaginationChange = (page: number, newPageSize: number) => {
+    setCurrentPage(page);
+    setPageSize(newPageSize);
+    fetchOrders(page, newPageSize, filter);
+  };
+
+  const handleSearch = useCallback(
+    (searchValue: string) => {
+      setFilter(searchValue);
+      setCurrentPage(1); // Reset to first page when searching
+      fetchOrders(1, pageSize, searchValue);
+    },
+    [pageSize]
+  );
+
+  const resetSearch = useCallback(() => {
+    setFilter('');
+    setCurrentPage(1);
+    fetchOrders(1, pageSize, '');
+  }, [pageSize]);
+
+  useEffect(() => {
+    fetchOrders(currentPage, pageSize, filter);
+  }, [authUser?.accessToken]);
+
+  return (
+    <div>
+      <Helmet>
+        <title>Comenzi | Dashboard</title>
+      </Helmet>
+      <PageHeader
+        title="comenzi | dashboard"
+        breadcrumbs={[
+          {
+            title: (
+              <>
+                <HomeOutlined />
+                <span>home</span>
+              </>
+            ),
+            path: '/',
+          },
+          {
+            title: (
+              <>
+                <PieChartOutlined />
+                <span>dashboards</span>
+              </>
+            ),
+            menu: {
+              items: DASHBOARD_ITEMS.map((d) => ({
+                key: d.title,
+                title: <Link to={d.path}>{d.title}</Link>,
+              })),
+            },
+          },
+          {
+            title: 'comenzi',
+          },
+        ]}
+      />
+      <Row {...stylesContext?.rowProps}>
+        <Col span={24}>
+          <OrdersCard
+            data={ordersData}
+            loading={loading}
+            handlePaginationChange={handlePaginationChange}
+            currentPage={currentPage}
+            handleSearch={handleSearch}
+            resetSearch={resetSearch}
+          />
+        </Col>
+      </Row>
+    </div>
+  );
+};
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref, onMounted, watch } from 'vue'
+import { Row, Col, message } from 'ant-design-vue'
+import { HomeOutlined, PieChartOutlined } from '@ant-design/icons-vue'
+import PageHeader from '@/components/PageHeader.vue'
+import OrdersCard from '@/components/OrdersCard.vue'
+import { getAllOrdersApi } from '@/utils/apiService'
+import { useAuthStore } from '@/stores/auth'
+import { DASHBOARD_ITEMS } from '@/constants'
+import type { OrderT } from '@/types'
+
+const authStore = useAuthStore()
+const loading = ref(false)
+const ordersData = ref<{ items: OrderT[]; count: number }>({ items: [], count: 0 })
+const error = ref<string | null>(null)
+const currentPage = ref(1)
+const pageSize = ref(20)  // Fixed page size
+const filter = ref('')
+
+const fetchOrders = async (
+  page: number = 1,
+  size: number = 20,
+  searchFilter: string = ''
+) => {
+  if (!authStore.accessToken) {
+    error.value = 'Authentication required'
+    return
+  }
+
+  try {
+    loading.value = true
+    error.value = null
+
+    const offset = (page - 1) * size
+
+    const data = await getAllOrdersApi(
+      offset,
+      size,
+      searchFilter,
+      () => {},
+      authStore.accessToken
+    )
+
+    ordersData.value = data as { items: OrderT[]; count: number }
+  } catch (err) {
+    const errorMessage =
+      err instanceof Error ? err.message : 'Failed to fetch orders'
+    error.value = errorMessage
+    message.error(errorMessage)
+  } finally {
+    loading.value = false
+  }
+}
+
+const handlePaginationChange = (page: number, newPageSize: number) => {
+  currentPage.value = page
+  pageSize.value = newPageSize
+  fetchOrders(page, newPageSize, filter.value)
+}
+
+const handleSearch = (searchValue: string) => {
+  filter.value = searchValue
+  currentPage.value = 1 // Reset to first page when searching
+  fetchOrders(1, pageSize.value, searchValue)
+}
+
+const resetSearch = () => {
+  filter.value = ''
+  currentPage.value = 1
+  fetchOrders(1, pageSize.value, '')
+}
+
+watch(() => authStore.accessToken, () => {
+  if (authStore.accessToken) {
+    fetchOrders(currentPage.value, pageSize.value, filter.value)
+  }
+}, { immediate: true })
+</script>
+
+<template>
+  <div>
+    <PageHeader
+      title="comenzi | dashboard"
+      :breadcrumbs="[
+        {
+          title: h('span', [
+            h(HomeOutlined),
+            h('span', 'home')
+          ]),
+          path: '/'
+        },
+        {
+          title: h('span', [
+            h(PieChartOutlined),
+            h('span', 'dashboards')
+          ]),
+          menu: {
+            items: DASHBOARD_ITEMS.map((d) => ({
+              key: d.title,
+              title: h(RouterLink, { to: d.path }, () => d.title)
+            }))
+          }
+        },
+        {
+          title: 'comenzi'
+        }
+      ]"
+    />
+    <a-row :gutter="[16, 16]">
+      <a-col :span="24">
+        <OrdersCard
+          :data="ordersData"
+          :loading="loading"
+          :currentPage="currentPage"
+          @pagination-change="handlePaginationChange"
+          @search="handleSearch"
+          @reset-search="resetSearch"
+        />
+      </a-col>
+    </a-row>
+  </div>
+</template>
+```
+
+**API:**
+```typescript
+// Get all orders
+// GET /v1/orders?offset=0&limit=20&filter=search_term
+// Response: { items: OrderT[], count: number }
+
+export const getAllOrdersApi = async (
+  offset: number = 0,
+  limit: number = 100,
+  filter: string = '',
+  setLoading: (status: boolean) => void,
+  accessToken: string
+) => {
+  const queryParams = new URLSearchParams({
+    offset: offset.toString(),
+    limit: limit.toString(),
+    ...(filter && { filter })
+  });
+
+  return await fetch(`/api/v1/orders?${queryParams}`, {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+    },
+  }).then(res => res.json());
+};
+```
+
+**Notes:**
+- **No Stats Cards**: Spre deosebire de alte dashboards, Orders nu are stats cards
+- **Simple Layout**: Doar PageHeader + OrdersCard
+- **Fixed Page Size**: 20 items per page (hardcoded, no custom size)
+- **Error Handling**: Message.error pentru API failures
+
+**Recommendations:**
+1. **Add Stats Cards**: Total Orders, Total Revenue, Failed Payments Count, Today's Orders
+2. **Date Range Filter**: Adaugă date range picker pentru filtering by order date
+3. **Export**: Adaugă CSV export pentru orders (for accounting)
+4. **Revenue Chart**: Adaugă chart pentru revenue over time
+
+**Migration Complexity**: LOW (simple page layout)
+
+**Estimated Effort**: 0.5 zi (1 developer)
+
+================================================================================
+TASK 2: Order Table with 7 Columns
+================================================================================
+
+**Descriere Business:**
+Tabelul afișează toate comenzile cu detalii complete: Order ID, Gateway (Stripe/Librapay),
+Payment Status, Amount, Date, Client, și Subscription. Tabelul este READ-ONLY (no edit/delete).
+
+**User Flow:**
+1. Admin vede tabelul cu toate comenzile
+2. Fiecare row afișează detalii complete despre comandă
+3. Admin poate vedea gateway type (Stripe vs Librapay)
+4. Admin poate vedea payment status cu color-coding
+5. Admin poate identifica client și subscription asociat
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/orders/OrdersCard.tsx:226-348 (table columns)
+- Type: OrderT (admin/src/types/orders.ts)
+
+**Order Type:**
+```typescript
+export type OrderT = {
+  orderId: number;              // Internal order ID
+  gatewayId: string;            // Stripe/Librapay payment ID
+  gatewayType: string;          // "Stripe" or "Librapay"
+  clientId: number;             // User ID
+  clientName: string;           // User full name
+  amount: number;               // Payment amount (in RON)
+  currency: string;             // "RON"
+  paymentStatus: string;        // "processing", "failed", "completed", "cancelled"
+  paymentError?: string;        // Error message (if failed)
+  orderDate: Date;              // Order creation date
+  subscriptionId?: number;      // Linked subscription ID
+  subscriptionProduct?: string; // Subscription type name
+  subscriptionStartDate?: Date; // Subscription start date
+  subscriptionEndDate?: Date;   // Subscription end date
+};
+```
+
+**Current Implementation (React):**
+```typescript
+const PARENT_TABLE_COLUMNS: TableColumnsType<OrderT> = [
+  // Column 1: Order ID
+  {
+    title: 'Order ID',
+    dataIndex: 'orderId',
+    key: 'orderId',
+    render: (orderId) => <span>{orderId}</span>,
+  },
+
+  // Column 2: Gateway ID + Type
+  {
+    title: 'Gateway ID',
+    dataIndex: 'gatewayId',
+    render: (_value, row) => (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'start',
+          gap: '2px',
+        }}
+      >
+        <span>{row.gatewayId}</span>
+        <Tag>{row.gatewayType}</Tag>  {/* Stripe or Librapay */}
+      </div>
+    ),
+  },
+
+  // Column 3: Payment Status (Color-coded Tag)
+  {
+    title: 'Payment Status',
+    key: 'paymentStatus',
+    render: (_value, row) => {
+      let color = 'gray';
+      switch (row.paymentStatus) {
+        case 'processing':
+          color = 'geekblue';
+          break;
+        case 'failed':
+          color = 'red';
+          break;
+        case 'completed':
+          color = 'green';
+          break;
+        case 'cancelled':
+          color = 'orange';
+          break;
+        default:
+          color = 'grey';
+      }
+
+      // Show error tooltip for failed payments
+      if (row.paymentError) {
+        return (
+          <Tooltip title={row.paymentError} color={color}>
+            <Tag color={color} key={row.paymentStatus}>
+              {row.paymentStatus.toUpperCase()}
+            </Tag>
+          </Tooltip>
+        );
+      }
+
+      return (
+        <Tag color={color} key={row.paymentStatus}>
+          {row.paymentStatus.toUpperCase()}
+        </Tag>
+      );
+    },
+  },
+
+  // Column 4: Amount + Currency
+  {
+    title: 'Amount',
+    dataIndex: 'amount',
+    render: (_value, row) => (
+      <span>
+        {row.amount} {row.currency}
+      </span>
+    ),
+  },
+
+  // Column 5: Date + Time
+  {
+    title: 'Date',
+    dataIndex: 'orderDate',
+    render: (orderDate) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+        <span>{dayjs(orderDate).format('DD-MM-YYYY')}</span>
+        <span>{dayjs(orderDate).format('HH:mm:ss')}</span>
+      </div>
+    ),
+  },
+
+  // Column 6: Client Name + ID
+  {
+    title: 'Client',
+    dataIndex: 'clientId',
+    render: (_value, row) => (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'start',
+          gap: '2px',
+        }}
+      >
+        <span>{row.clientName}</span>
+        <Tag>{row.clientId}</Tag>
+      </div>
+    ),
+  },
+
+  // Column 7: Subscription Product + ID
+  {
+    title: 'Subscription',
+    dataIndex: 'subscriptionId',
+    render: (_value, row) => {
+      if (!row.subscriptionProduct) {
+        return <span></span>;  // No subscription linked
+      }
+
+      return (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'start',
+            gap: '2px',
+          }}
+        >
+          <span>{row.subscriptionProduct}</span>
+          {row.subscriptionId && <Tag>{row.subscriptionId}</Tag>}
+        </div>
+      );
+    },
+  },
+];
+
+// Table rendering
+<Table
+  dataSource={data?.items}
+  columns={PARENT_TABLE_COLUMNS}
+  pagination={false}  // Pagination handled separately
+  rowKey="orderId"
+  className="overflow-scroll"
+/>
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { h, computed } from 'vue'
+import { Table, Tag, Tooltip } from 'ant-design-vue'
+import dayjs from 'dayjs'
+import type { TableColumnsType } from 'ant-design-vue'
+import type { OrderT } from '@/types'
+
+const ordersColumns = computed<TableColumnsType<OrderT>>(() => [
+  // Column 1: Order ID
+  {
+    title: 'Order ID',
+    dataIndex: 'orderId',
+    key: 'orderId'
+  },
+
+  // Column 2: Gateway ID + Type
+  {
+    title: 'Gateway ID',
+    dataIndex: 'gatewayId',
+    customRender: ({ record }) => {
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, [
+        h('span', record.gatewayId),
+        h(Tag, {}, () => record.gatewayType)
+      ])
+    }
+  },
+
+  // Column 3: Payment Status (Color-coded Tag)
+  {
+    title: 'Payment Status',
+    key: 'paymentStatus',
+    customRender: ({ record }) => {
+      let color = 'gray'
+      switch (record.paymentStatus) {
+        case 'processing':
+          color = 'geekblue'
+          break
+        case 'failed':
+          color = 'red'
+          break
+        case 'completed':
+          color = 'green'
+          break
+        case 'cancelled':
+          color = 'orange'
+          break
+        default:
+          color = 'grey'
+      }
+
+      // Show error tooltip for failed payments
+      if (record.paymentError) {
+        return h(Tooltip, { title: record.paymentError, color }, () =>
+          h(Tag, { color }, () => record.paymentStatus.toUpperCase())
+        )
+      }
+
+      return h(Tag, { color }, () => record.paymentStatus.toUpperCase())
+    }
+  },
+
+  // Column 4: Amount + Currency
+  {
+    title: 'Amount',
+    dataIndex: 'amount',
+    customRender: ({ record }) => {
+      return h('span', `${record.amount} ${record.currency}`)
+    }
+  },
+
+  // Column 5: Date + Time
+  {
+    title: 'Date',
+    dataIndex: 'orderDate',
+    customRender: ({ record }) => {
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, [
+        h('span', dayjs(record.orderDate).format('DD-MM-YYYY')),
+        h('span', dayjs(record.orderDate).format('HH:mm:ss'))
+      ])
+    }
+  },
+
+  // Column 6: Client Name + ID
+  {
+    title: 'Client',
+    dataIndex: 'clientId',
+    customRender: ({ record }) => {
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, [
+        h('span', record.clientName),
+        h(Tag, {}, () => record.clientId)
+      ])
+    }
+  },
+
+  // Column 7: Subscription Product + ID
+  {
+    title: 'Subscription',
+    dataIndex: 'subscriptionId',
+    customRender: ({ record }) => {
+      if (!record.subscriptionProduct) {
+        return h('span', '')  // No subscription linked
+      }
+
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, [
+        h('span', record.subscriptionProduct),
+        record.subscriptionId && h(Tag, {}, () => record.subscriptionId)
+      ])
+    }
+  }
+])
+</script>
+
+<template>
+  <a-table
+    :dataSource="data?.items"
+    :columns="ordersColumns"
+    :pagination="false"
+    rowKey="orderId"
+    class="overflow-scroll"
+  />
+</template>
+
+<style scoped>
+.overflow-scroll {
+  overflow-x: auto;
+}
+</style>
+```
+
+**Notes:**
+- **7 Columns**: Order ID, Gateway ID + Type, Payment Status, Amount, Date, Client, Subscription
+- **Read-Only**: No edit/delete buttons (orders are immutable)
+- **Gateway Type**: Tag showing "Stripe" or "Librapay"
+- **Payment Status**: Color-coded tags (blue=processing, red=failed, green=completed, orange=cancelled)
+- **Error Tooltip**: Failed payments show error message in tooltip
+- **No Subscription**: Some orders may not have subscription linked (empty cell)
+- **Separate Pagination**: Pagination handled outside table component
+
+**Recommendations:**
+1. **Clickable Links**: Make Client ID și Subscription ID clickable → navigate to details
+2. **Sort Columns**: Add sorting by Date, Amount, Status
+3. **Column Filters**: Add dropdown filters for Gateway Type, Payment Status
+4. **Row Actions**: Add "View Details" button pentru expandable info
+5. **Refund Button**: Add refund action for completed payments (admin use case)
+
+**Migration Complexity**: MEDIUM (7 columns, custom renders, color-coding)
+
+**Estimated Effort**: 1 zi (1 developer)
+
+================================================================================
+TASK 3: Payment Status Tags (Color-coded by Status)
+================================================================================
+
+**Descriere Business:**
+Payment status este afișat ca Tag color-coded pentru identificare rapidă:
+- **Processing** (geekblue): Payment în curs de procesare
+- **Failed** (red): Payment eșuat cu error message în tooltip
+- **Completed** (green): Payment realizat cu succes
+- **Cancelled** (orange): Payment anulat de user sau system
+
+**User Flow:**
+1. Admin vede tabelul cu comenzi
+2. Pentru fiecare order, vede payment status ca Tag color-coded
+3. Pentru failed payments, hover pe tag → tooltip cu error message
+4. Admin identifică rapid problemele (red tags)
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/orders/OrdersCard.tsx:251-287 (Payment Status column)
+
+**Current Implementation (React):**
+```typescript
+{
+  title: 'Payment Status',
+  key: 'paymentStatus',
+  render: (_value, row) => {
+    let color = 'gray';
+    switch (row.paymentStatus) {
+      case 'processing':
+        color = 'geekblue';
+        break;
+      case 'failed':
+        color = 'red';
+        break;
+      case 'completed':
+        color = 'green';
+        break;
+      case 'cancelled':
+        color = 'orange';
+        break;
+      default:
+        color = 'grey';
+    }
+
+    // Show error tooltip for failed payments
+    if (row.paymentError) {
+      return (
+        <Tooltip title={row.paymentError} color={color}>
+          <Tag color={color} key={row.paymentStatus}>
+            {row.paymentStatus.toUpperCase()}
+          </Tag>
+        </Tooltip>
+      );
+    }
+
+    return (
+      <Tag color={color} key={row.paymentStatus}>
+        {row.paymentStatus.toUpperCase()}
+      </Tag>
+    );
+  },
+}
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { h } from 'vue'
+import { Tag, Tooltip } from 'ant-design-vue'
+import type { OrderT } from '@/types'
+
+// Helper function pentru payment status color
+const getPaymentStatusColor = (status: string): string => {
+  switch (status) {
+    case 'processing':
+      return 'geekblue'
+    case 'failed':
+      return 'red'
+    case 'completed':
+      return 'green'
+    case 'cancelled':
+      return 'orange'
+    default:
+      return 'grey'
+  }
+}
+
+// Column definition
+const paymentStatusColumn = {
+  title: 'Payment Status',
+  key: 'paymentStatus',
+  customRender: ({ record }: { record: OrderT }) => {
+    const color = getPaymentStatusColor(record.paymentStatus)
+
+    // Show error tooltip for failed payments
+    if (record.paymentError) {
+      return h(Tooltip, { title: record.paymentError, color }, () =>
+        h(Tag, { color }, () => record.paymentStatus.toUpperCase())
+      )
+    }
+
+    return h(Tag, { color }, () => record.paymentStatus.toUpperCase())
+  }
+}
+</script>
+```
+
+**Payment Status Values:**
+
+**1. Processing (geekblue)**:
+```typescript
+paymentStatus: "processing"
+// Payment is being processed by gateway (Stripe/Librapay)
+// No error
+// Color: geekblue (blue variant)
+```
+
+**2. Failed (red)**:
+```typescript
+paymentStatus: "failed"
+paymentError: "Card declined: insufficient funds"
+// Payment failed with error message
+// Tooltip shows error details
+// Color: red
+```
+
+**3. Completed (green)**:
+```typescript
+paymentStatus: "completed"
+// Payment successfully completed
+// Subscription created (if applicable)
+// Color: green
+```
+
+**4. Cancelled (orange)**:
+```typescript
+paymentStatus: "cancelled"
+// Payment cancelled by user or system
+// No subscription created
+// Color: orange
+```
+
+**Error Tooltip Example:**
+```typescript
+// Failed payment with error
+{
+  orderId: 123,
+  paymentStatus: "failed",
+  paymentError: "Card declined: insufficient funds",
+  // ...
+}
+
+// Rendered as:
+<Tooltip title="Card declined: insufficient funds" color="red">
+  <Tag color="red">FAILED</Tag>
+</Tooltip>
+```
+
+**Notes:**
+- **4 Status Values**: processing, failed, completed, cancelled
+- **Color Mapping**: geekblue, red, green, orange
+- **Error Tooltip**: Doar pentru failed payments
+- **Uppercase Text**: Status text este uppercase în Tag
+- **Default Color**: grey pentru unknown statuses
+
+**Recommendations:**
+1. **Icon**: Adaugă icon în Tag (CheckCircle, CloseCircle, etc.)
+2. **Count Badge**: Show count de failed payments în PageHeader
+3. **Quick Filter**: Click pe tag → filter table by that status
+4. **Retry Button**: Pentru failed payments, adaugă "Retry Payment" button
+5. **Status History**: Show payment attempt history (for debugging)
+
+**Migration Complexity**: LOW (simple color mapping și tooltip)
+
+**Estimated Effort**: 0.5 zi (1 developer)
+
+================================================================================
+TASK 4: Gateway Type Display (Stripe/Librapay)
+================================================================================
+
+**Descriere Business:**
+Gateway Type arată payment gateway folosit (Stripe sau Librapay) ca Tag sub Gateway ID.
+Platformă suportă DUAL GATEWAYS pentru flexibilitate și redundancy.
+
+**User Flow:**
+1. Admin vede Gateway ID column
+2. Sub Gateway ID, vede Tag cu gateway type (Stripe sau Librapay)
+3. Admin identifică care gateway a fost folosit pentru fiecare order
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/orders/OrdersCard.tsx:233-248 (Gateway ID column)
+
+**Gateway Types:**
+- **Stripe**: Primary payment gateway (most orders)
+- **Librapay**: Secondary payment gateway (alternative/backup)
+
+**Current Implementation (React):**
+```typescript
+{
+  title: 'Gateway ID',
+  dataIndex: 'gatewayId',
+  render: (_value, row) => (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'start',
+        gap: '2px',
+      }}
+    >
+      <span>{row.gatewayId}</span>
+      <Tag>{row.gatewayType}</Tag>  {/* "Stripe" or "Librapay" */}
+    </div>
+  ),
+}
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { h } from 'vue'
+import { Tag } from 'ant-design-vue'
+import type { OrderT } from '@/types'
+
+// Column definition
+const gatewayColumn = {
+  title: 'Gateway ID',
+  dataIndex: 'gatewayId',
+  customRender: ({ record }: { record: OrderT }) => {
+    return h('div', {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'start',
+        gap: '2px'
+      }
+    }, [
+      h('span', record.gatewayId),
+      h(Tag, {}, () => record.gatewayType)
+    ])
+  }
+}
+</script>
+```
+
+**Gateway ID Examples:**
+
+**Stripe:**
+```typescript
+{
+  gatewayId: "pi_3OMNvbLeqDzV4xgN0Hd8LZkK",  // Stripe PaymentIntent ID
+  gatewayType: "Stripe"
+}
+```
+
+**Librapay:**
+```typescript
+{
+  gatewayId: "LP_20251103_123456",  // Librapay transaction ID
+  gatewayType: "Librapay"
+}
+```
+
+**Notes:**
+- **Gateway ID Format**: Different format pentru Stripe vs Librapay
+- **Stripe IDs**: Start with "pi_" (PaymentIntent) or "ch_" (Charge)
+- **Librapay IDs**: Custom format (ex: "LP_YYYYMMDD_XXXXXX")
+- **Simple Tag**: No color coding pentru gateway type (default Ant Design Tag style)
+
+**Recommendations:**
+1. **Color Coding**: Stripe = blue Tag, Librapay = purple Tag
+2. **Gateway Logo**: Show logo icon pentru each gateway
+3. **Link to Gateway**: Make Gateway ID clickable → open în Stripe/Librapay dashboard
+4. **Gateway Stats**: Show count de orders per gateway în stats cards
+5. **Filter by Gateway**: Add dropdown filter pentru gateway type
+
+**Migration Complexity**: LOW (simple tag display)
+
+**Estimated Effort**: 0.25 zi (1 developer)
+
+================================================================================
+TASK 5: Client & Subscription Info Display
+================================================================================
+
+**Descriere Business:**
+Fiecare order afișează Client (name + ID) și Subscription (product + ID) în coloane separate.
+Linkurile sunt implicite pentru navigare rapidă la client/subscription details.
+
+**User Flow:**
+1. Admin vede Client column cu name și ID Tag
+2. Admin vede Subscription column cu product name și ID Tag (dacă există)
+3. Admin poate identifica rapid client-ul și subscription-ul asociat
+4. [Future] Click pe ID → navigate la client/subscription details page
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/orders/OrdersCard.tsx:308-347 (Client + Subscription columns)
+
+**Current Implementation (React):**
+
+**Client Column:**
+```typescript
+{
+  title: 'Client',
+  dataIndex: 'clientId',
+  render: (_value, row) => (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'start',
+        gap: '2px',
+      }}
+    >
+      <span>{row.clientName}</span>
+      <Tag>{row.clientId}</Tag>
+    </div>
+  ),
+}
+```
+
+**Subscription Column:**
+```typescript
+{
+  title: 'Subscription',
+  dataIndex: 'subscriptionId',
+  render: (_value, row) => {
+    if (!row.subscriptionProduct) {
+      return <span></span>;  // No subscription linked
+    }
+
+    return (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'start',
+          gap: '2px',
+        }}
+      >
+        <span>{row.subscriptionProduct}</span>
+        {row.subscriptionId && <Tag>{row.subscriptionId}</Tag>}
+      </div>
+    );
+  },
+}
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { h } from 'vue'
+import { Tag } from 'ant-design-vue'
+import { RouterLink } from 'vue-router'
+import type { OrderT } from '@/types'
+
+// Client Column
+const clientColumn = {
+  title: 'Client',
+  dataIndex: 'clientId',
+  customRender: ({ record }: { record: OrderT }) => {
+    return h('div', {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '2px'
+      }
+    }, [
+      h('span', record.clientName),
+      h(Tag, {}, () => record.clientId)
+      // Future: Make clickable
+      // h(RouterLink, { to: `/users/${record.clientId}` }, () =>
+      //   h(Tag, { style: { cursor: 'pointer' } }, () => record.clientId)
+      // )
+    ])
+  }
+}
+
+// Subscription Column
+const subscriptionColumn = {
+  title: 'Subscription',
+  dataIndex: 'subscriptionId',
+  customRender: ({ record }: { record: OrderT }) => {
+    if (!record.subscriptionProduct) {
+      return h('span', '')  // No subscription linked
+    }
+
+    return h('div', {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '2px'
+      }
+    }, [
+      h('span', record.subscriptionProduct),
+      record.subscriptionId && h(Tag, {}, () => record.subscriptionId)
+      // Future: Make clickable
+      // h(RouterLink, { to: `/subscriptions/${record.subscriptionId}` }, () =>
+      //   h(Tag, { style: { cursor: 'pointer' } }, () => record.subscriptionId)
+      // )
+    ])
+  }
+}
+</script>
+```
+
+**Data Examples:**
+
+**With Subscription:**
+```typescript
+{
+  orderId: 123,
+  clientId: 456,
+  clientName: "John Doe",
+  subscriptionId: 789,
+  subscriptionProduct: "Abonament Premium",
+  subscriptionStartDate: "2025-01-01",
+  subscriptionEndDate: "2026-01-01",
+  // ...
+}
+```
+
+**Without Subscription:**
+```typescript
+{
+  orderId: 124,
+  clientId: 457,
+  clientName: "Jane Smith",
+  subscriptionId: null,  // No subscription
+  subscriptionProduct: null,
+  // ...
+}
+// Subscription column shows empty
+```
+
+**Notes:**
+- **Client**: Always present (orderId has clientId and clientName)
+- **Subscription**: Optional (some orders may not have subscription)
+- **Name + ID**: Both displayed for easy identification
+- **No Links**: Currently not clickable (feature for future)
+
+**Recommendations:**
+1. **Clickable Links**: Make Client ID și Subscription ID clickable → navigate to details
+2. **Avatar**: Add user avatar în Client column
+3. **Subscription Status**: Show subscription status badge (active/expired)
+4. **Email**: Add client email în Client column (useful for support)
+5. **Quick Actions**: Add dropdown menu cu "View Client", "View Subscription", "Contact"
+
+**Migration Complexity**: LOW (simple info display)
+
+**Estimated Effort**: 0.5 zi (1 developer)
+
+================================================================================
+TASK 6: Search with Debounce (500ms, min 3 chars)
+================================================================================
+
+**Descriere Business:**
+Search bar permite căutare după Order ID, Gateway ID, sau Client name cu debounce 500ms
+pentru a evita API spam. Minimum 3 caractere pentru trigger search.
+
+**User Flow:**
+1. Admin introduce text în search bar
+2. După 500ms de no typing, API call se face cu search term
+3. Tabelul se actualizează cu rezultatele filtrate
+4. Reset button clear-uiește search și reloads all orders
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/orders/OrdersCard.tsx:135-204 (Title component cu search)
+- Debounce: 500ms
+- Min chars: 3
+
+**Current Implementation (React):**
+```typescript
+const Title: React.FC<TitleProps> = ({ handleSearch, resetSearch }) => {
+  const inputRef = React.createRef<HTMLInputElement>();
+  const [searchValue, setSearchValue] = useState<string>('');
+
+  // Debounce function
+  function debounce<T extends (...args: any[]) => void>(
+    func: T,
+    wait: number
+  ): (...args: Parameters<T>) => void {
+    let timeout: NodeJS.Timeout;
+    return (...args: Parameters<T>) => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func(...args), wait);
+    };
+  }
+
+  const debouncedFetchResults = useCallback(
+    debounce<(searchValue: string) => void>(handleSearch, 500),  // 500ms debounce
+    [handleSearch]
+  );
+
+  const onReset = () => {
+    setSearchValue('');
+    resetSearch();
+  };
+
+  const onTypeSearch = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value;
+    setSearchValue(value);
+
+    if (value.length > 2) {
+      // Min 3 chars to trigger search
+      debouncedFetchResults(value);
+    } else if (value.length === 0) {
+      // Reset search when input is completely cleared
+      resetSearch();
+    }
+  };
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+      }}
+    >
+      <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Comenzi</h3>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <input
+          ref={inputRef}
+          onChange={onTypeSearch}
+          style={{
+            padding: '8px 12px',
+            border: '1px solid #d9d9d9',
+            borderRadius: '6px',
+            fontSize: '14px',
+            width: '300px',
+          }}
+          placeholder="Search by Order ID, Gateway ID, Client..."
+          value={searchValue}
+        />
+        <Button type="default" onClick={onReset}>
+          Reset
+        </Button>
+      </div>
+    </div>
+  );
+};
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref, watch } from 'vue'
+import { Button } from 'ant-design-vue'
+
+interface Props {
+  handleSearch: (searchValue: string) => void
+  resetSearch: () => void
+}
+
+const props = defineProps<Props>()
+
+const searchValue = ref('')
+let debounceTimeout: NodeJS.Timeout | null = null
+
+// Debounced search handler
+const onTypeSearch = (event: Event) => {
+  const value = (event.target as HTMLInputElement).value
+  searchValue.value = value
+
+  // Clear previous timeout
+  if (debounceTimeout) {
+    clearTimeout(debounceTimeout)
+  }
+
+  if (value.length > 2) {
+    // Min 3 chars to trigger search
+    debounceTimeout = setTimeout(() => {
+      props.handleSearch(value)
+    }, 500)  // 500ms debounce
+  } else if (value.length === 0) {
+    // Reset search when input is completely cleared
+    props.resetSearch()
+  }
+}
+
+const onReset = () => {
+  searchValue.value = ''
+  props.resetSearch()
+}
+</script>
+
+<template>
+  <div style="display: flex; justify-content: space-between; align-items: center;">
+    <h3 style="margin: 0; font-size: 16px; font-weight: 600;">Comenzi</h3>
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <input
+        v-model="searchValue"
+        @input="onTypeSearch"
+        style="
+          padding: 8px 12px;
+          border: 1px solid #d9d9d9;
+          border-radius: 6px;
+          font-size: 14px;
+          width: 300px;
+        "
+        placeholder="Search by Order ID, Gateway ID, Client..."
+      />
+      <a-button type="default" @click="onReset">
+        Reset
+      </a-button>
+    </div>
+  </div>
+</template>
+```
+
+**Search Logic:**
+
+**Step 1 - User Types:**
+```typescript
+// User types "John"
+// t=0ms: "J" → length=1 → no search (< 3 chars)
+// t=100ms: "Jo" → length=2 → no search (< 3 chars)
+// t=200ms: "Joh" → length=3 → start 500ms timer
+// t=300ms: "John" → length=4 → reset timer (500ms)
+```
+
+**Step 2 - Debounce Fires:**
+```typescript
+// t=800ms: No more typing → timer fires
+// API call: GET /v1/orders?filter=John
+// Search by: Order ID, Gateway ID, Client name
+```
+
+**Step 3 - Results:**
+```typescript
+// API returns filtered orders
+// Table updates with matching orders
+```
+
+**Step 4 - Reset:**
+```typescript
+// User clicks Reset button OR clears input
+// searchValue = ''
+// API call: GET /v1/orders (no filter)
+// Table shows all orders
+```
+
+**Search Fields:**
+Backend searches in:
+- **Order ID**: Exact match (ex: "123")
+- **Gateway ID**: Partial match (ex: "pi_3O")
+- **Client Name**: Partial match (ex: "John", "Doe")
+
+**API Integration:**
+```typescript
+// API: GET /v1/orders?offset=0&limit=20&filter=search_term
+// Filter parameter searches across Order ID, Gateway ID, Client Name
+
+const fetchOrders = async (
+  page: number = 1,
+  size: number = 20,
+  searchFilter: string = ''
+) => {
+  const offset = (page - 1) * size;
+
+  const data = await getAllOrdersApi(
+    offset,
+    size,
+    searchFilter,  // Search term
+    () => {},
+    authUser.accessToken
+  );
+
+  setOrdersData(data);
+};
+```
+
+**Notes:**
+- **Debounce: 500ms** (shorter than Campaigns 1000ms - faster feedback for support)
+- **Min Chars: 3** (prevents too broad searches)
+- **Auto Reset**: Clearing input triggers resetSearch() automatically
+- **Reset Button**: Explicit reset pentru clear search și reload all orders
+- **Native Input**: Uses native HTML input (not Ant Design Input component)
+
+**Recommendations:**
+1. **Search Icon**: Add search icon în input (visual feedback)
+2. **Loading State**: Show loading spinner în input când search is in progress
+3. **No Results**: Show "No orders found" message când search returns empty
+4. **Clear Button**: Add X button în input pentru quick clear
+5. **Advanced Search**: Add advanced search modal cu multiple filters (date range, status, gateway, etc.)
+
+**Migration Complexity**: LOW (standard debounced search)
+
+**Estimated Effort**: 0.5 zi (1 developer)
+
+================================================================================
+TASK 7: Simple Pagination (20 items/page)
+================================================================================
+
+**Descriere Business:**
+Pagination afișează 20 orders per page (fixed size, no custom input).
+Admin navighează între pages cu next/prev buttons.
+
+**User Flow:**
+1. Admin vede tabelul cu 20 orders
+2. Pagination controls afișează current page și total pages
+3. Admin click next/prev pentru navigare
+4. Tabelul se actualizează cu orders din acea pagină
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/orders/OrdersCard.tsx:380-389 (Pagination component)
+- Page size: 20 (fixed)
+- No size changer (spre deosebire de alte module)
+
+**Current Implementation (React):**
+```typescript
+<Table
+  dataSource={data?.items}
+  columns={PARENT_TABLE_COLUMNS}
+  pagination={false}  // Disable table's built-in pagination
+  rowKey="orderId"
+  className="overflow-scroll"
+/>
+
+<Pagination
+  current={currentPage ?? 1}
+  total={data?.count ?? 0}
+  pageSize={20}  // Fixed page size
+  showSizeChanger={false}  // No custom page size
+  align="end"
+  style={{ marginTop: '10px' }}
+  onChange={handlePaginationChange}
+/>
+```
+
+**Page Handler:**
+```typescript
+const handlePaginationChange = (page: number, newPageSize: number) => {
+  setCurrentPage(page);
+  setPageSize(newPageSize);  // Always 20
+  fetchOrders(page, newPageSize, filter);
+};
+
+// API call
+const fetchOrders = async (page: number, size: number, searchFilter: string) => {
+  const offset = (page - 1) * size;  // Calculate offset
+  const data = await getAllOrdersApi(offset, size, searchFilter, () => {}, accessToken);
+  setOrdersData(data);
+};
+
+// Example:
+// Page 1: offset = (1-1) * 20 = 0   → GET /v1/orders?offset=0&limit=20
+// Page 2: offset = (2-1) * 20 = 20  → GET /v1/orders?offset=20&limit=20
+// Page 3: offset = (3-1) * 20 = 40  → GET /v1/orders?offset=40&limit=20
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref } from 'vue'
+import { Table, Pagination } from 'ant-design-vue'
+import type { OrderT } from '@/types'
+
+const currentPage = ref(1)
+const pageSize = ref(20)  // Fixed page size
+
+const handlePaginationChange = (page: number, newPageSize: number) => {
+  currentPage.value = page
+  pageSize.value = newPageSize  // Always 20
+  fetchOrders(page, newPageSize, filter.value)
+}
+
+const fetchOrders = async (page: number, size: number, searchFilter: string) => {
+  const offset = (page - 1) * size
+  const data = await getAllOrdersApi(offset, size, searchFilter, () => {}, authStore.accessToken)
+  ordersData.value = data
+}
+</script>
+
+<template>
+  <a-table
+    :dataSource="data?.items"
+    :columns="ordersColumns"
+    :pagination="false"
+    rowKey="orderId"
+    class="overflow-scroll"
+  />
+
+  <a-pagination
+    v-model:current="currentPage"
+    :total="data?.count ?? 0"
+    :pageSize="20"
+    :showSizeChanger="false"
+    align="end"
+    :style="{ marginTop: '10px' }"
+    @change="handlePaginationChange"
+  />
+</template>
+```
+
+**Pagination Calculation:**
+
+**Total Orders: 156**
+```typescript
+total = 156
+pageSize = 20
+
+// Total pages calculation
+totalPages = Math.ceil(156 / 20) = 8 pages
+
+// Pagination UI:
+// < 1 2 3 4 5 6 7 8 >
+```
+
+**Page Navigation:**
+```typescript
+// Page 1: Shows orders 1-20
+offset = 0, limit = 20
+
+// Page 2: Shows orders 21-40
+offset = 20, limit = 20
+
+// Page 8 (last): Shows orders 141-156 (only 16 items)
+offset = 140, limit = 20
+```
+
+**Notes:**
+- **Fixed Page Size**: 20 items per page (no size changer)
+- **External Pagination**: Pagination component outside Table (not built-in)
+- **Right Aligned**: Pagination aligned to end (right side)
+- **Simpler than Other Modules**: No custom page size input like Campaigns
+- **Reset on Search**: When searching, currentPage resets to 1
+
+**Why Fixed Page Size?**
+- Orders module is simpler than Users/Campaigns
+- 20 is reasonable default pentru support use cases
+- No need for large page sizes (not for analytics)
+
+**Recommendations:**
+1. **Add Size Changer**: Allow 10, 20, 50, 100 options pentru flexibility
+2. **Show Total**: Display "Total X orders" în pagination
+3. **Quick Jump**: Add "Go to page" input pentru quick navigation
+4. **Page Info**: Show "Showing 1-20 of 156 orders" pentru context
+5. **Preserve Page**: Remember page când navigating back from details
+
+**Migration Complexity**: LOW (simple pagination)
+
+**Estimated Effort**: 0.25 zi (1 developer)
+
+================================================================================
+TASK 8: [DISABLED] Expandable Rows for Payment/Invoice Details
+================================================================================
+
+**Descriere Business:**
+Feature-ul de expandable rows este DISABLED în codul actual (commented out).
+Când enabled, permite expand fiecare order row pentru a vedea Payment și Invoice details
+în nested tables.
+
+**IMPORTANT**: Acest feature este COMMENTED OUT și NU este activ în prezent.
+
+**User Flow (când enabled):**
+1. Admin vede order table
+2. Rows cu payment/invoice details au expand icon
+3. Admin click expand → nested tables apar cu Payment și Invoice details
+4. Payment table: paymentId, status, amount, stripePaymentId, createdAt
+5. Invoice table: internalId, serie, nr factura, download link, createdAt
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/orders/OrdersCard.tsx:29-133 (ExpandedRowRender component)
+- File: admin/src/components/dashboard/orders/OrdersCard.tsx:367-377 (expandable config - COMMENTED OUT)
+
+**Current Implementation (React) - DISABLED:**
+```typescript
+// ExpandedRowRender component (still exists but not used)
+type ExpandedProps = { data: { data1?: Payment[]; data2?: Invoice[] } };
+
+export const ExpandedRowRender = ({
+  data: { data1, data2 },
+}: ExpandedProps) => {
+  return (
+    <>
+      {data1 && (
+        <Table
+          columns={CHILD_TABLE_COLUMNS}  // Payment columns
+          dataSource={data1}
+          pagination={{
+            pageSize: 5,
+            position: [],
+          }}
+        />
+      )}
+      {data2 && (
+        <Table
+          columns={CHILD_TABLE_COLUMNS2}  // Invoice columns
+          dataSource={data2}
+          pagination={{
+            pageSize: 5,
+            position: [],
+          }}
+        />
+      )}
+    </>
+  );
+};
+
+// Payment Table Columns
+const CHILD_TABLE_COLUMNS: TableColumnsType<ExpandedDataType> = [
+  {
+    title: 'paymentId',
+    dataIndex: 'id',
+    key: 'id',
+    render: (id: string) => <span>•{id}</span>,
+  },
+  {
+    title: 'status',
+    dataIndex: 'status',
+    key: 'status',
+    render: (status: string) => <span>{status}</span>,
+  },
+  {
+    title: 'Amount',
+    dataIndex: 'amount',
+    key: 'amount',
+    render: (amount: number) => <span>{amount / 100} ron</span>,
+  },
+  {
+    title: 'stripePaymentId',
+    dataIndex: 'stripePaymentId',
+    key: 'stripePaymentId',
+    render: (stripePaymentId: string) => <span>{stripePaymentId}</span>,
+  },
+  {
+    title: 'Created at',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    render: (createdAt: string) => (
+      <span>{dayjs(createdAt).format('DD/MM/YYYY HH:mm:ss')}</span>
+    ),
+  },
+];
+
+// Invoice Table Columns
+const CHILD_TABLE_COLUMNS2: TableColumnsType<ExpandedDataType2> = [
+  {
+    title: 'internalId',
+    dataIndex: 'id',
+    key: 'id',
+    render: (id: string) => <span>•{id}</span>,
+  },
+  {
+    title: 'Serie',
+    dataIndex: 'seriesName',
+    key: 'seriesName',
+    render: (seriesName: number) => <span>{seriesName}</span>,
+  },
+  {
+    title: 'nr factura',
+    dataIndex: 'externalId',
+    key: 'externalId',
+    render: (externalId: string) => <span>{externalId}</span>,
+  },
+  {
+    title: 'Smartbill',
+    dataIndex: 'id',
+    key: 'id',
+    render: (id: number) => <a onClick={() => downloadInvoice(id)}>Download invoice</a>,
+  },
+  {
+    title: 'Created at',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    render: (createdAt: string) => (
+      <span>{dayjs(createdAt).format('DD/MM/YYYY HH:mm:ss')}</span>
+    ),
+  },
+];
+
+// COMMENTED OUT expandable config
+<Table
+  dataSource={data?.items}
+  columns={PARENT_TABLE_COLUMNS}
+  pagination={false}
+  rowKey="orderId"
+  // expandable={{
+  //   rowExpandable: (record) => record.paymentId !== undefined,
+  //   expandedRowRender: (record) => (
+  //     <ExpandedRowRender
+  //       data={{
+  //         data1: record.payment && [record.payment],
+  //         data2: record?.invoice && [record.invoice],
+  //       }}
+  //     />
+  //   ),
+  // }}
+  className="overflow-scroll"
+/>
+```
+
+**Target Implementation (Vue.js 3) - If Enabled:**
+```vue
+<script setup lang="ts">
+import { h } from 'vue'
+import { Table } from 'ant-design-vue'
+import dayjs from 'dayjs'
+import type { Payment, Invoice } from '@/types'
+
+// Payment table columns
+const paymentColumns = [
+  {
+    title: 'paymentId',
+    dataIndex: 'id',
+    key: 'id',
+    customRender: ({ text }: any) => h('span', `•${text}`)
+  },
+  {
+    title: 'status',
+    dataIndex: 'status',
+    key: 'status'
+  },
+  {
+    title: 'Amount',
+    dataIndex: 'amount',
+    key: 'amount',
+    customRender: ({ text }: any) => h('span', `${text / 100} ron`)
+  },
+  {
+    title: 'stripePaymentId',
+    dataIndex: 'stripePaymentId',
+    key: 'stripePaymentId'
+  },
+  {
+    title: 'Created at',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    customRender: ({ text }: any) => h('span', dayjs(text).format('DD/MM/YYYY HH:mm:ss'))
+  }
+]
+
+// Invoice table columns
+const invoiceColumns = [
+  {
+    title: 'internalId',
+    dataIndex: 'id',
+    key: 'id',
+    customRender: ({ text }: any) => h('span', `•${text}`)
+  },
+  {
+    title: 'Serie',
+    dataIndex: 'seriesName',
+    key: 'seriesName'
+  },
+  {
+    title: 'nr factura',
+    dataIndex: 'externalId',
+    key: 'externalId'
+  },
+  {
+    title: 'Smartbill',
+    dataIndex: 'id',
+    key: 'id',
+    customRender: ({ text }: any) =>
+      h('a', { onClick: () => downloadInvoice(text) }, 'Download invoice')
+  },
+  {
+    title: 'Created at',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    customRender: ({ text }: any) => h('span', dayjs(text).format('DD/MM/YYYY HH:mm:ss'))
+  }
+]
+
+// Expanded row render
+const expandedRowRender = (record: any) => {
+  return h('div', [
+    record.payment && h(Table, {
+      columns: paymentColumns,
+      dataSource: [record.payment],
+      pagination: { pageSize: 5, hideOnSinglePage: true }
+    }),
+    record.invoice && h(Table, {
+      columns: invoiceColumns,
+      dataSource: [record.invoice],
+      pagination: { pageSize: 5, hideOnSinglePage: true }
+    })
+  ])
+}
+
+const expandable = {
+  expandedRowRender,
+  rowExpandable: (record: any) => record.paymentId !== undefined
+}
+</script>
+
+<template>
+  <a-table
+    :dataSource="data?.items"
+    :columns="ordersColumns"
+    :pagination="false"
+    rowKey="orderId"
+    :expandable="expandable"
+    class="overflow-scroll"
+  />
+</template>
+```
+
+**Types:**
+```typescript
+type Payment = {
+  id: number;
+  status: string;
+  amount: number;  // In cents (divide by 100)
+  stripePaymentId: string;
+  createdAt: Date;
+};
+
+type Invoice = {
+  id: number;  // Internal ID
+  seriesName: string;  // Serie (ex: "BC")
+  externalId: number;  // SmartBill invoice number
+  createdAt: Date;
+};
+```
+
+**Why Disabled?**
+- **Backend Data**: OrderT type nu include payment și invoice fields
+- **API Not Ready**: GET /v1/orders nu returnează nested payment/invoice data
+- **Feature Not Complete**: Expandable rows au fost planned dar nu implemented
+- **Code Remains**: Codul există pentru future implementation
+
+**Notes:**
+- **COMMENTED OUT**: Acest feature este disabled în cod
+- **Components Exist**: ExpandedRowRender și CHILD_TABLE_COLUMNS există dar nu sunt folosite
+- **Invoice Download**: downloadInvoice function există dar nu este apelată
+- **Backend Support**: Requires backend changes pentru a returna payment/invoice data
+
+**Recommendations:**
+1. **Remove Commented Code**: Dacă feature-ul nu va fi implemented, remove commented code
+2. **Backend API**: Implement backend pentru a returna nested payment/invoice data
+3. **Enable Feature**: Uncomment expandable config când backend is ready
+4. **Testing**: Test expandable rows cu real payment/invoice data
+5. **Alternative**: Adaugă "View Details" button care deschide modal cu payment/invoice info
+
+**Migration Complexity**: MEDIUM (requires backend support, nested tables)
+
+**Estimated Effort**: 1-1.5 zile (1 developer, IF enabled)
+
+================================================================================
+TASK 9: [DISABLED] SmartBill Invoice Download
+================================================================================
+
+**Descriere Business:**
+Invoice download function permite download PDF invoices from SmartBill.
+Feature-ul există în cod dar NU este folosit (invoice data not returned by API).
+
+**IMPORTANT**: Acest feature este UNUSED în prezent (invoice data missing from orders).
+
+**User Flow (când enabled):**
+1. Admin expand order row
+2. Invoice table afișează invoice details
+3. Admin click "Download invoice" link
+4. SmartBill PDF invoice se descarcă
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/orders/OrdersCard.tsx:19-27 (downloadInvoice function)
+
+**Current Implementation (React) - UNUSED:**
+```typescript
+const downloadInvoice = async (invoiceId: number) => {
+  const CUI = 'RO45702099';  // Company VAT number
+  const SERIES = 'BC';       // Invoice series
+  console.log('Download invoice', invoiceId);
+
+  // SmartBill API endpoint
+  await fetchDownload(
+    `${SMARTBILL_API}/invoice/pdf?cif=${CUI}&seriesname=${SERIES}&number=${invoiceId}`
+  );
+};
+
+// Used in invoice table column (when expandable rows are enabled)
+{
+  title: 'Smartbill',
+  dataIndex: 'id',
+  key: 'id',
+  render: (id: number) => <a onClick={() => downloadInvoice(id)}>Download invoice</a>,
+}
+```
+
+**Target Implementation (Vue.js 3) - If Enabled:**
+```vue
+<script setup lang="ts">
+import { fetchDownload } from '@/utils/apiService'
+import { SMARTBILL_API } from '@/constants/routes'
+
+const downloadInvoice = async (invoiceId: number) => {
+  const CUI = 'RO45702099'  // Company VAT number
+  const SERIES = 'BC'       // Invoice series
+  console.log('Download invoice', invoiceId)
+
+  try {
+    // SmartBill API endpoint
+    await fetchDownload(
+      `${SMARTBILL_API}/invoice/pdf?cif=${CUI}&seriesname=${SERIES}&number=${invoiceId}`
+    )
+  } catch (error) {
+    console.error('Failed to download invoice:', error)
+    message.error('Failed to download invoice')
+  }
+}
+
+// Column definition
+{
+  title: 'Smartbill',
+  dataIndex: 'id',
+  key: 'id',
+  customRender: ({ text }: any) =>
+    h('a', { onClick: () => downloadInvoice(text), style: { cursor: 'pointer' } }, 'Download invoice')
+}
+</script>
+```
+
+**SmartBill API:**
+```typescript
+// SmartBill API endpoint
+// GET https://ws.smartbill.ro/SBORO/api/invoice/pdf?cif=RO45702099&seriesname=BC&number=123
+
+// Parameters:
+// - cif: Company VAT number (RO45702099)
+// - seriesname: Invoice series (BC)
+// - number: Invoice number (123)
+
+// Response: PDF file download
+```
+
+**fetchDownload Utility:**
+```typescript
+export const fetchDownload = async (url: string) => {
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+    },
+  });
+
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = downloadUrl;
+  link.download = `invoice_${Date.now()}.pdf`;  // Generated filename
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(downloadUrl);
+};
+```
+
+**Why Unused?**
+- **No Invoice Data**: OrderT type nu include invoice field
+- **Expandable Rows Disabled**: Invoice table nu este afișat (expandable rows disabled)
+- **Backend Missing**: GET /v1/orders nu returnează invoice data
+- **Function Exists**: Codul există pentru future use
+
+**Notes:**
+- **UNUSED**: Această funcție nu este apelată în prezent
+- **SmartBill Integration**: Uses SmartBill API pentru PDF download
+- **Company Info**: Hardcoded CUI (RO45702099) și SERIES (BC)
+- **Depends on Task 8**: Requires expandable rows pentru a fi folosit
+
+**Recommendations:**
+1. **Backend Support**: Implement backend pentru a returna invoice data în orders
+2. **Enable Feature**: Enable expandable rows (Task 8) first
+3. **Error Handling**: Add proper error handling pentru download failures
+4. **Loading State**: Show loading spinner când downloading invoice
+5. **Alternative**: Add "View Invoice" button în main table (not just expandable row)
+
+**Migration Complexity**: LOW (simple download function)
+
+**Estimated Effort**: 0.25 zi (1 developer, IF enabled)
+
+================================================================================
+END OF ORDERS MANAGEMENT MODULE DOCUMENTATION
+================================================================================
+
+**Total Lines**: ~1,800 lines
+**Total Tasks**: 9 tasks (7 active + 2 disabled)
+**Total Estimated Effort**: 3-4 zile (1 developer)
+
+**Tasks Summary:**
+1. Page Layout & PageHeader - 0.5 zi
+2. Order Table with 7 Columns - 1 zi
+3. Payment Status Tags (Color-coded by Status) - 0.5 zi
+4. Gateway Type Display (Stripe/Librapay) - 0.25 zi
+5. Client & Subscription Info Display - 0.5 zi
+6. Search with Debounce (500ms, min 3 chars) - 0.5 zi
+7. Simple Pagination (20 items/page) - 0.25 zi
+8. [DISABLED] Expandable Rows for Payment/Invoice Details - 1-1.5 zile (IF enabled)
+9. [DISABLED] SmartBill Invoice Download - 0.25 zi (IF enabled)
+
+**Migration Priority**: LOW-MEDIUM (read-only display, simple table, no critical features)
+
+**Dependencies:**
+- Stripe/Librapay payment gateways
+- SmartBill Service (invoice download - disabled)
+- Order & Payment entities (backend)
+
+**Key Features:**
+- Read-only order table (no edit/delete)
+- Dual gateway support (Stripe + Librapay)
+- Color-coded payment status tags
+- Search with 500ms debounce
+- Fixed pagination (20/page)
+- 2 disabled features (expandable rows, invoice download)
+
+**Important Notes:**
+- **Simpler Module**: Orders este mai simplu decât Users/Campaigns/Subscriptions
+- **Read-Only**: No CRUD operations (orders are immutable)
+- **Support Tool**: Primarily for debugging și customer support
+- **2 Disabled Features**: Expandable rows și invoice download nu sunt active

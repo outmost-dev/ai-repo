@@ -1,0 +1,1278 @@
+================================================================================
+JIRA STORY: COURSE MODULE
+================================================================================
+
+Title: Course Module
+
+Description:
+Modulul Course gestionează toate operațiunile legate de cursuri video: creare, actualizare, ștergere, vizualizare cu access control bazat pe subscriptions, rating system, upload imagini și video la Vimeo, live streaming, și listare cu filtre complexe. Include logic sofisticat de access control (ADMIN, STANDARD, COURSE_BASED) și favorite lists integration.
+
+Locație cod sursă:
+- Controller: src/v1/Course/Controller/course.controller.ts
+- Service: src/v1/Course/Service/course.service.ts
+- Module: src/v1/Course/course.module.ts
+
+Endpoints implementate: 14
+
+Services utilizate:
+- CourseService (Service/course.service.ts)
+- UserService (din User Module) - access control validation
+- CategoryService (din Category Module) - category validation
+- LessonService (din Lesson Module) - cascade delete
+- ShortlistService (din Shortlist Module) - favorite lists
+- VimeoService (din Vimeo Module) - video upload & streaming
+- FileUploadService (shared/Services/upload.service.ts)
+- SitemapManipulationService (shared/Services/sitemap.manipulation.service.ts)
+
+Repositories:
+- CoursesRepository
+- LessonsRepository (pentru favorite list query)
+
+Dependencies:
+- Redis (access control cache via UserService)
+- Vimeo (video hosting, live streaming)
+- DigitalOcean Spaces (course image storage - COMMENTED OUT)
+- Slugify (generate URL-friendly slugs)
+- class-validator (DTO validation)
+- Sitemap service (production only - SEO)
+
+Guards utilizați:
+- AuthGuard('subscription-validation') - TOATE endpoint-urile necesită subscription validă
+- RolesGuard - pentru endpoint-uri ADMIN și CREATOR specifice
+
+Authorization Roles:
+- ADMIN - acces complet (create, update, delete orice course, upload images)
+- CREATOR - poate upload video (comentat: ar trebui să poată create/update)
+- Subscription-based access - user-ii văd courses bazat pe subscription level
+
+Access Control Logic:
+- ACCESS_TYPE.ADMIN - vede toate courses
+- ACCESS_TYPE.STANDARD - vede toate courses (cu excepții hardcodate pentru summit courses)
+- ACCESS_TYPE.COURSE_BASED - vede doar courses din categoriile la care are access
+- ACCESS_TYPE.NO_ACCESS - nu poate accesa courses
+
+Notes:
+- Image upload/download e PARTIAL IMPLEMENTED (cod comentat pentru AWS/DigitalOcean Spaces)
+- Search endpoint NU verifică access level (TODO în cod)
+- Delete course șterge cascadă toate lessons asociate
+- Rating system permite rating multiplu de același user (nu e one-time)
+- Hardcoded course IDs pentru business rules (109, 112, 113 - special courses)
+- Hardcoded subscription IDs pentru restrictive access (4, 46, 28)
+- Slug generation automată din title (lowercase, URL-friendly)
+- Sitemap update automată în production (SEO)
+- Favorite filter special (categoryFilter === 999)
+
+Special Business Rules (HARDCODED):
+- Course ID 109: Exclus pentru subscription types 4 și 46
+- Course IDs 112, 113: Doar pentru subscription type 28 (summit)
+- Subscription types 50, 51, 52: Map la categorii multiple (53, 54, 30)
+- FAV_CAT_FILTER = 999: Magic number pentru favorites
+
+================================================================================
+TASKS
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 1: GET /v1/course/:courseQueryData
+--------------------------------------------------------------------------------
+
+Title: GET /v1/course/:courseQueryData
+
+Description:
+
+Business Logic:
+1. Primește courseQueryData în URL (poate fi ID numeric sau slug string)
+2. Primește query param "type" pentru a determina dacă e ID (SearchType.ID) sau slug
+3. Caută course-ul în baza de date după ID sau slug
+4. Verifică access level al user-ului prin UserService.validateAccessToResources()
+5. Access control logic:
+   - ADMIN sau STANDARD → returnează course complet
+   - COURSE_BASED → verifică dacă course.categoryId e în lista de categorii permise (din subscriptions)
+   - Dacă user NU are access → aruncă "Abonamentul detinut ofera access limitat la aceasta pagina."
+6. Returnează course object cu toate detaliile (title, description, videoUrl, lessons, etc.)
+
+Cod sursă:
+- Controller: src/v1/Course/Controller/course.controller.ts:48-59
+- Service: src/v1/Course/Service/course.service.ts:56-83
+
+Request:
+GET /v1/course/123?type=id
+sau
+GET /v1/course/introducere-in-python?type=slug
+Headers: Authorization: Bearer {accessToken}
+
+Query Parameters:
+- type (SearchType enum): "id" sau "slug" - default slug
+
+Response (Success 200):
+{
+  "id": 123,
+  "title": "Introducere în Python",
+  "slug": "introducere-in-python",
+  "description": "Curs complet de Python pentru incepatori",
+  "videoUrl": "https://vimeo.com/...",
+  "imageUrl": "...",
+  "authorId": 1,
+  "authorName": "John Doe",
+  "categoryId": 30,
+  "isActive": true,
+  "isPractice": false,
+  "lessonCount": 15,
+  "displayOrder": 1,
+  "rate": [4.5, 5, 4, 5, 4.5],
+  "lessons": [...],
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-01-15T00:00:00.000Z"
+}
+
+Response (Error 422 - no access):
+{
+  "statusCode": 422,
+  "message": "Abonamentul detinut ofera access limitat la aceasta pagina."
+}
+
+Response (Error 404 - course not found):
+{
+  "statusCode": 404,
+  "message": "Course not found"
+}
+
+Authorization: AuthGuard('subscription-validation') - requires valid subscription
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- CoursesRepository.getOneCourse()
+- UserService.validateAccessToResources() - check access level
+- UserService.getCategoriesWithAccessFromSubs() - pentru COURSE_BASED access
+
+Access Control Flow:
+1. Retrieve access level from cache/subscriptions (via UserService)
+2. If ADMIN or STANDARD → grant full access
+3. If COURSE_BASED → check if course.categoryId in allowed categories
+4. If NO_ACCESS or category not allowed → deny access
+
+Notes:
+- Guard 'subscription-validation' verifică subscription validă înainte de controller
+- courseQueryData poate fi ID (numeric) sau slug (string)
+- COURSE_BASED users pot vedea doar courses din categoriile lor
+- Access level e cached în Redis pentru performance
+
+--------------------------------------------------------------------------------
+TASK 2: GET /v1/course/search
+--------------------------------------------------------------------------------
+
+Title: GET /v1/course/search
+
+Description:
+
+Business Logic:
+1. Primește searchValue ca query parameter (minimum 3 caractere)
+2. Caută courses după:
+   - Title (partial match)
+   - Description (partial match)
+3. Returnează lista de courses matching criteria
+4. Dacă searchValue < 3 caractere, aruncă "Search value must be greater than 2 characters"
+5. **TODO ÎN COD**: Nu verifică access level (POSIBIL SECURITY ISSUE)
+
+Cod sursă:
+- Controller: src/v1/Course/Controller/course.controller.ts:61-64
+- Service: src/v1/Course/Service/course.service.ts:85-94
+
+Request:
+GET /v1/course/search?searchValue=python
+Headers: Authorization: Bearer {accessToken}
+
+Query Parameters:
+- searchValue (string, required): minimum 3 characters
+
+Response (Success 200):
+{
+  "courses": [
+    {
+      "id": 123,
+      "title": "Introducere în Python",
+      "slug": "introducere-in-python",
+      "description": "Curs Python pentru incepatori",
+      "categoryId": 30,
+      ...
+    },
+    {
+      "id": 456,
+      "title": "Python Avansat",
+      ...
+    }
+  ],
+  "count": 2
+}
+
+Response (Error 400 - search too short):
+{
+  "statusCode": 400,
+  "message": "Search value must be greater than 2 characters"
+}
+
+Authorization: AuthGuard('subscription-validation')
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- CoursesRepository.searchCourse()
+
+Notes:
+- **SECURITY ISSUE**: Nu verifică access level (TODO în cod)
+- User-ii pot vedea TOATE courses în search results, chiar dacă nu au access
+- Search e case-insensitive
+- Partial match (LIKE query)
+
+Posibile îmbunătățiri .NET:
+- ADD access level check (filtrare după subscription)
+- Consider full-text search pentru performance
+- Add category filter
+- Add pagination
+
+--------------------------------------------------------------------------------
+TASK 3: GET /v1/course/all
+--------------------------------------------------------------------------------
+
+Title: GET /v1/course/all
+
+Description:
+
+Business Logic:
+1. Returnează lista paginată de courses cu filtre
+2. Query params: page, limit, categoryFilter, isActive, isPractice, orderBy, orderDirection
+3. **SPECIAL FAVORITE FILTER**: Dacă categoryFilter === 999 (FAV_CAT_FILTER):
+   - Returnează courses ȘI lessons din shortlist-ul user-ului
+   - Combină rezultatele (courses + lessons)
+4. Access control complex:
+   - ADMIN/STANDARD → vede toate courses (cu excepții hardcodate)
+   - COURSE_BASED → filtrare după categorii permise (șterge slug și videoUrl pentru courses fără access)
+5. **Hardcoded business rules**:
+   - Subscription types 4, 46 → exclude course ID 109
+   - Subscription type 28 (summit) → include courses 112, 113
+   - Fără summit → exclude courses 112, 113
+6. Returnează courses list + profileVersion
+
+Cod sursă:
+- Controller: src/v1/Course/Controller/course.controller.ts:66-73
+- Service: src/v1/Course/Service/course.service.ts:96-158
+
+Request:
+GET /v1/course/all?page=1&limit=20&categoryFilter=30&isActive=true&orderBy=displayOrder&orderDirection=ASC
+Headers: Authorization: Bearer {accessToken}
+
+Query Parameters:
+- page (number, optional): default 1
+- limit (number, optional): default 20
+- categoryFilter (number, optional): category ID sau 999 pentru favorites
+- isActive (boolean, optional): filter by active status
+- isPractice (boolean, optional): filter practice courses
+- orderBy (string, optional): field to order by (displayOrder, createdAt, title)
+- orderDirection (string, optional): ASC sau DESC
+
+Response (Success 200):
+{
+  "courses": [
+    {
+      "id": 123,
+      "title": "Introducere în Python",
+      "slug": "introducere-in-python",  // Removed for COURSE_BASED without access
+      "videoUrl": "...",  // Removed for COURSE_BASED without access
+      "categoryId": 30,
+      "lessonCount": 15,
+      ...
+    }
+  ],
+  "lessons": [...]  // Only if categoryFilter === 999 (favorites)
+  "count": 50,
+  "profileVersion": 4914
+}
+
+Response (Success 200 - Favorites):
+{
+  "courses": [...],  // Courses from shortlist
+  "lessons": [...],  // Lessons from shortlist
+  "count": 25,  // courses.length + lessons.length
+  "profileVersion": 4914
+}
+
+Authorization: AuthGuard('subscription-validation')
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- CoursesRepository.getCourseList()
+- CoursesRepository.getFavoriteList() - pentru favorites
+- LessonsRepository.getFavoriteList() - pentru favorite lessons
+- UserService.validateAccessToResources()
+- UserService.getCategoriesWithAccessFromSubs()
+- UserService.getActiveSubscriptionsByUserId()
+- ShortlistService.getAuthActiveShortlist()
+
+Access Control Logic:
+1. ADMIN/STANDARD:
+   - Vede toate courses
+   - Dacă NU are subscription type 28 → exclude courses 112, 113
+2. COURSE_BASED:
+   - Vede toate courses în listă DAR:
+   - Pentru courses din categorii fără access → delete slug și videoUrl
+   - Dacă are subscription types 4 sau 46 → exclude course 109
+3. Favorites (categoryFilter === 999):
+   - Combină courses și lessons din shortlist
+   - Filtrare bazată pe access level
+
+Hardcoded Course IDs:
+- **109**: Exclus pentru restrictive subscriptions (4, 46)
+- **112, 113**: Summit courses - doar pentru subscription type 28
+
+Hardcoded Subscription IDs:
+- **4, 46**: Restrictive subscriptions (exclude course 109)
+- **28**: Summit subscription (access to courses 112, 113)
+- **50, 51, 52**: Map la categorii multiple (logic în UserService)
+
+Notes:
+- categoryFilter = 999 e MAGIC NUMBER pentru favorites
+- Slug și videoUrl sunt ȘTERSE din response pentru courses fără access (nu e filtrat complet)
+- Business logic complexă cu hardcoded IDs (greu de menținut)
+- profileVersion e returnat pentru cache invalidation
+
+Posibile îmbunătățiri .NET:
+- Replace magic numbers cu constants/enums
+- Move business rules în configurare (nu hardcodat)
+- Consider separate endpoint pentru favorites
+- Add comprehensive filtering (author, tags, difficulty)
+
+--------------------------------------------------------------------------------
+TASK 4: GET /v1/course/:courseId/image
+--------------------------------------------------------------------------------
+
+Title: GET /v1/course/:courseId/image
+
+Description:
+
+Business Logic:
+1. Primește courseId în URL
+2. **IMPLEMENTARE INCOMPLETĂ**: Întotdeauna returnează default image
+3. Cod comentat sugerează că ar trebui să încarce din AWS/DigitalOcean Spaces
+4. Citește default-courses.jpg din directory public/
+5. Returnează image stream cu Content-Type: image/jpeg
+
+Cod sursă:
+- Controller: src/v1/Course/Controller/course.controller.ts:75-82
+- Service: src/v1/Course/Service/course.service.ts:238-246
+
+Request:
+GET /v1/course/123/image
+Headers: Authorization: Bearer {accessToken}
+
+Response (Success 200):
+Content-Type: image/jpeg
+[Image Binary Data - JPEG stream from default-courses.jpg]
+
+Authorization: AuthGuard('subscription-validation')
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- fs.createReadStream() - Node.js filesystem
+
+Notes:
+- **IMPLEMENTARE INCOMPLETĂ**: courseId e IGNORAT
+- Întotdeauna returnează default-courses.jpg
+- Cod comentat pentru AWS/DigitalOcean Spaces integration
+- Similar cu bug-ul din User Module (profile-image)
+
+Posibile îmbunătățiri .NET:
+- Implement real image loading from DigitalOcean Spaces
+- Check if course has custom image (flag în DB)
+- Add image caching headers
+- Consider CDN integration
+
+--------------------------------------------------------------------------------
+TASK 5: PUT /v1/course/image
+--------------------------------------------------------------------------------
+
+Title: PUT /v1/course/image
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru ADMIN role
+2. Upload course image via multipart/form-data
+3. Primește courseId ca query parameter
+4. Validează MIME type: doar image/jpeg și image/png
+5. Verifică dacă course-ul există
+6. **IMPLEMENTARE INCOMPLETĂ**: Buffer e primit dar NU e uploaded
+7. Cod comentat sugerează upload la DigitalOcean Spaces (directory: courses/)
+8. Returnează success message chiar dacă upload-ul NU se întâmplă
+
+Cod sursă:
+- Controller: src/v1/Course/Controller/course.controller.ts:84-109
+- Service: src/v1/Course/Service/course.service.ts:248-253
+
+Request:
+PUT /v1/course/image?courseId=123
+Headers:
+  Authorization: Bearer {accessToken}
+  Content-Type: multipart/form-data
+
+Form Data:
+- file: [Binary Image Data]
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Upload successfully ended"
+}
+
+Response (Error 400 - invalid file type):
+{
+  "statusCode": 400,
+  "message": "File must be image"
+}
+
+Response (Error 400 - invalid multipart):
+{
+  "statusCode": 400,
+  "message": "Not valid multipart request"
+}
+
+Response (Error 403 - not admin):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+
+Authorization:
+- AuthGuard('subscription-validation')
+- @Roles(UserRoles.ADMIN) - DOAR ADMIN
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- CoursesRepository.getOneCourse() - verify course exists
+- concat-stream - buffer file upload
+- (COMMENTED) doServices.uploadImage() - DigitalOcean Spaces upload
+
+File Upload Flow (INCOMPLETE):
+1. Receive multipart request
+2. Validate MIME type (image/jpeg sau image/png)
+3. Stream file to buffer via concat-stream
+4. **MISSING**: Upload buffer to DigitalOcean Spaces
+5. Return success message
+
+Notes:
+- **FAKE SUCCESS**: Returnează success chiar dacă imaginea NU e uploaded
+- Cod comentat pentru: this.doServices.uploadImage(courseId.toString(), 'courses', buffer)
+- File format ar trebui: courses/{courseId}.jpg
+- console.log(course, buffer) - debug leftover în cod
+
+Posibile îmbunătățiri .NET:
+- IMPLEMENT actual upload to DigitalOcean Spaces
+- Add validation pentru file size
+- Add image optimization (resize, compress)
+- Update course.imageUrl în DB după upload
+- Return uploaded image URL în response
+
+--------------------------------------------------------------------------------
+TASK 6: POST /v1/course
+--------------------------------------------------------------------------------
+
+Title: POST /v1/course
+
+Description:
+
+Business Logic:
+1. Creează un course nou
+2. **TODO ÎN COD**: Ar trebui @Roles(CREATOR) sau ADMIN, dar guard-ul e comentat
+3. Validare title: nu poate fi doar whitespace
+4. Generează slug automat din title (lowercase, URL-friendly)
+5. Verifică dacă category-ul există și e valid
+6. Creează course în baza de date
+7. **PRODUCTION ONLY**: Adaugă slug-ul în sitemap pentru SEO
+8. Cod comentat pentru multipart upload cu imagine
+9. Returnează created course object
+
+Cod sursă:
+- Controller: src/v1/Course/Controller/course.controller.ts:117-124
+- Service: src/v1/Course/Service/course.service.ts:160-236
+
+Request:
+POST /v1/course
+Headers: Authorization: Bearer {accessToken}
+Body:
+{
+  "title": "Introducere în Python",
+  "description": "Curs complet Python pentru incepatori",
+  "categoryId": 30,
+  "imageUrl": "https://...",
+  "videoUrl": "https://vimeo.com/...",  // Optional
+  "authorName": "John Doe",
+  "authorId": 1,  // Optional - defaults to authUser.id
+  "isActive": true,
+  "isPractice": false,
+  "displayOrder": 1
+}
+
+Response (Success 201):
+{
+  "id": 789,
+  "title": "Introducere în Python",
+  "slug": "introducere-in-python",  // Auto-generated
+  "description": "Curs complet Python pentru incepatori",
+  "categoryId": 30,
+  "imageUrl": "https://...",
+  "videoUrl": "https://vimeo.com/...",
+  "authorName": "John Doe",
+  "authorId": 1,
+  "isActive": true,
+  "isPractice": false,
+  "displayOrder": 1,
+  "lessonCount": 0,
+  "rate": [],
+  "createdAt": "2024-01-20T10:30:00.000Z"
+}
+
+Response (Error 400 - whitespace title):
+{
+  "statusCode": 400,
+  "message": "Course title can not be whitespace"
+}
+
+Response (Error 400 - invalid category):
+{
+  "statusCode": 400,
+  "message": "Categoria nu este valida"
+}
+
+Response (Error 400 - validation errors):
+{
+  "statusCode": 400,
+  "message": [
+    {
+      "property": "title",
+      "constraints": { "isNotEmpty": "title should not be empty" }
+    }
+  ]
+}
+
+Authorization: AuthGuard('subscription-validation')
+Note: @Roles guard COMMENTED OUT - ar trebui CREATOR sau ADMIN
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- CategoryService.getCategory() - validate category exists
+- CoursesRepository.createCourse()
+- slugify() - generate URL slug
+- class-validator - DTO validation
+- SitemapManipulationService.addToIndexedSitemap() - SEO (production only)
+
+Slug Generation:
+- Input: "Introducere în Python"
+- Output: "introducere-in-python"
+- Options: { lower: true } - lowercase conversion
+- Handles special characters, spaces, diacritice
+
+DTO Validation:
+- title: required, not empty
+- categoryId: required, must be valid category ID
+- description: optional
+- imageUrl: optional
+- videoUrl: optional
+- isActive: boolean, default false
+- isPractice: boolean, default false
+- displayOrder: number, optional
+
+Sitemap Update (Production):
+- Adds slug to sitemap.xml
+- Date: current date (YYYY-MM-DD format)
+- Purpose: SEO indexing
+- Only in production environment
+
+Notes:
+- **SECURITY**: @Roles guard e COMENTAT - oricine cu subscription poate crea courses
+- authorId poate fi override de admin (TODO în cod)
+- Cod comentat pentru multipart image upload la creare
+- videoUrl e opțional (poate fi adăugat mai târziu via upload)
+- Title e trimmed de whitespace la începutul și sfârșitul
+
+Posibile îmbunătățiri .NET:
+- ENABLE @Roles guard (CREATOR sau ADMIN)
+- Add duplicate title/slug check
+- Add image upload în same request
+- Add default values configuration
+- Add course template support
+
+--------------------------------------------------------------------------------
+TASK 7: PATCH /v1/course/:courseId
+--------------------------------------------------------------------------------
+
+Title: PATCH /v1/course/:courseId
+
+Description:
+
+Business Logic:
+1. Actualizează un course existent
+2. **TODO ÎN COD**: Ar trebui @Roles(CREATOR) sau ADMIN, dar guard-ul e comentat
+3. Validare title: nu poate fi doar whitespace (dacă e prezent)
+4. Verifică dacă course-ul există
+5. Dacă se schimbă categoryId, validează noua categorie
+6. Re-generează slug dacă title se schimbă
+7. **PRODUCTION ONLY**: Update sitemap cu noul slug
+8. Toate câmpurile sunt opționale (partial update)
+9. Returnează updated course object
+
+Cod sursă:
+- Controller: src/v1/Course/Controller/course.controller.ts:126-133
+- Service: src/v1/Course/Service/course.service.ts:278-310
+
+Request:
+PATCH /v1/course/123
+Headers: Authorization: Bearer {accessToken}
+Body:
+{
+  "title": "Python - Curs Complet",  // Optional
+  "description": "Updated description",  // Optional
+  "categoryId": 31,  // Optional
+  "isActive": true,  // Optional
+  "videoUrl": "https://vimeo.com/new-video",  // Optional
+  "displayOrder": 2  // Optional
+}
+
+Response (Success 200):
+{
+  "id": 123,
+  "title": "Python - Curs Complet",
+  "slug": "python-curs-complet",  // Updated if title changed
+  "description": "Updated description",
+  "categoryId": 31,
+  "videoUrl": "https://vimeo.com/new-video",
+  "isActive": true,
+  "displayOrder": 2,
+  "updatedAt": "2024-01-20T11:00:00.000Z"
+}
+
+Response (Error 404 - course not found):
+{
+  "statusCode": 404,
+  "message": "Course could not found by given id"
+}
+
+Response (Error 400 - whitespace title):
+{
+  "statusCode": 400,
+  "message": "Course title can not be whitespace"
+}
+
+Response (Error 400 - invalid category):
+{
+  "statusCode": 400,
+  "message": "Category not found"
+}
+
+Authorization: AuthGuard('subscription-validation')
+Note: @Roles guard COMMENTED OUT - ar trebui CREATOR sau ADMIN
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- CoursesRepository.findOneOrFail() - verify course exists
+- CategoryService.getCategory() - validate new category (if changed)
+- CoursesRepository.updateCourse()
+- SitemapManipulationService.addToIndexedSitemap() - update SEO (production)
+
+UpdateCourseDto Fields (all optional):
+- title: string (trimmed, non-whitespace)
+- description: string
+- categoryId: number
+- imageUrl: string
+- videoUrl: string
+- authorName: string
+- authorId: number
+- isActive: boolean
+- isPractice: boolean
+- displayOrder: number
+
+Slug Regeneration:
+- Dacă title se schimbă → regenerate slug
+- Slug-ul vechi devine invalid (broken links!)
+- Sitemap e updated cu noul slug
+
+Category Update:
+- Dacă categoryId se schimbă:
+  - Validate new category exists
+  - Retrieve category.ancestors pentru update
+  - Update course.categoryId
+
+Notes:
+- **SECURITY**: @Roles guard COMENTAT - oricine poate update courses
+- Partial update - doar câmpurile din request sunt actualizate
+- Slug change poate break existing links (consider redirects)
+- Nu există ownership check (oricine poate update orice course)
+
+Posibile îmbunătățiri .NET:
+- ENABLE @Roles guard + ownership check (creator sau admin)
+- Add slug redirect handling (301 redirect de la old la new)
+- Add version history/audit log
+- Add validation că videoUrl e valid Vimeo URL
+- Consider slug immutability (doar admin poate schimba)
+
+--------------------------------------------------------------------------------
+TASK 8: PATCH /v1/course/:courseId/rate
+--------------------------------------------------------------------------------
+
+Title: PATCH /v1/course/:courseId/rate
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru ADMIN role
+2. User-ul (admin) poate rata un course
+3. Rating value: 1-5 (validat în DTO)
+4. Verifică dacă user-ul există
+5. Adaugă rating în course.rate array (nu replace!)
+6. **NU E ONE-TIME**: User-ul poate rata același course de multiple ori
+7. Returnează success message (nu returnează course object cu updated rating)
+
+Cod sursă:
+- Controller: src/v1/Course/Controller/course.controller.ts:135-147
+- Service: src/v1/Course/Service/course.service.ts:255-264
+
+Request:
+PATCH /v1/course/123/rate
+Headers: Authorization: Bearer {accessToken}
+Body:
+{
+  "rateValue": 4.5  // 1-5 scale
+}
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Course has been rated"
+}
+
+Response (Error 400 - user not found):
+{
+  "statusCode": 400,
+  "message": "User not found"
+}
+
+Response (Error 400 - invalid rate value):
+{
+  "statusCode": 400,
+  "message": "Rate value must be between 1 and 5"
+}
+
+Response (Error 403 - not admin):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+
+Authorization:
+- AuthGuard('subscription-validation')
+- @Roles(UserRoles.ADMIN) - DOAR ADMIN
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UserService.getUser() - verify user exists
+- CoursesRepository.rateCourse()
+
+Rating Logic:
+- Rating e stocat în course.rate ca array: [4.5, 5, 4, 5, 3.5, ...]
+- Fiecare rating e adăugat la array (nu replace)
+- Average rate e calculat din toate ratings (vezi TASK 10)
+- **NU EXISTĂ RESTRICȚIE**: User poate rata același course de multiple ori
+
+Notes:
+- **DOAR ADMIN poate rata** - logic ciudată (ar trebui să fie orice user cu subscription)
+- Nu există one-time rating enforcement
+- Nu există user-rating mapping (nu știm cine a dat ce rating)
+- Rating array poate crește indefinit
+- RateValue validation în DTO (1-5 range)
+
+Posibile îmbunătățiri .NET:
+- CHANGE authorization: Orice user autentificat poate rata (nu doar admin)
+- ADD one-time rating per user (store userId cu rating)
+- CREATE separate RatingEntity (userId, courseId, rateValue, createdAt)
+- ADD ability to UPDATE rating (nu doar append)
+- ADD rating distribution stats (câte ratings de 1, 2, 3, 4, 5)
+- PREVENT multiple ratings de același user
+
+--------------------------------------------------------------------------------
+TASK 9: GET /v1/course/:courseId/rate-of-user
+--------------------------------------------------------------------------------
+
+Title: GET /v1/course/:courseId/rate-of-user
+
+Description:
+
+Business Logic:
+1. Returnează rating-ul dat de user pentru un course specific
+2. **IMPLEMENTARE INCOMPLETĂ**: Returnează TOATE ratings, nu doar al user-ului
+3. Verifică dacă user-ul există
+4. Query repository pentru rating (probabil returnează array complet)
+5. Returnează course object cu field "rate"
+6. Guard @Roles(ADMIN) e COMENTAT - orice user poate accesa
+
+Cod sursă:
+- Controller: src/v1/Course/Controller/course.controller.ts:149-156
+- Service: src/v1/Course/Service/course.service.ts:266-271
+
+Request:
+GET /v1/course/123/rate-of-user
+Headers: Authorization: Bearer {accessToken}
+
+Response (Success 200):
+{
+  "id": 123,
+  "rate": [4.5, 5, 4, 5, 3.5]  // PROBABLY - ar trebui doar user's rating
+}
+
+Response (Error 400 - user not found):
+{
+  "statusCode": 400,
+  "message": "User not found"
+}
+
+Authorization: AuthGuard('subscription-validation')
+Note: @Roles(ADMIN) COMMENTED OUT
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UserService.getUser() - verify user exists
+- CoursesRepository.getRateOfUser()
+
+Notes:
+- **PROBABIL BUG**: Returnează toate ratings, nu doar user's rating
+- Nu există user-rating mapping în database (rate e array simplu)
+- Endpoint nu are sens fără user-rating association
+- Guard comentat - orice user poate vedea
+
+Posibile îmbunătățiri .NET:
+- REDESIGN rating system cu user-rating mapping
+- CREATE RatingEntity (userId, courseId, rateValue)
+- RETURN doar rating-ul specific user-ului autentificat
+- ADD timestamp pentru rating
+
+--------------------------------------------------------------------------------
+TASK 10: GET /v1/course/:courseId/average-rate
+--------------------------------------------------------------------------------
+
+Title: GET /v1/course/:courseId/average-rate
+
+Description:
+
+Business Logic:
+1. Calculează rating-ul mediu pentru un course
+2. Preia toate ratings din course.rate array
+3. Calculează average (sum / count)
+4. Returnează course object cu field "rate" = average
+5. Public endpoint - orice user cu subscription poate accesa
+
+Cod sursă:
+- Controller: src/v1/Course/Controller/course.controller.ts:158-161
+- Service: src/v1/Course/Service/course.service.ts:273-276
+
+Request:
+GET /v1/course/123/average-rate
+Headers: Authorization: Bearer {accessToken}
+
+Response (Success 200):
+{
+  "id": 123,
+  "rate": 4.4  // Average of [4.5, 5, 4, 5, 3.5] = 4.4
+}
+
+Response (Error 404 - course not found):
+{
+  "statusCode": 404,
+  "message": "Course not found"
+}
+
+Authorization: AuthGuard('subscription-validation')
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- CoursesRepository.getAverageRate()
+
+Calculation:
+- Input: rate = [4.5, 5, 4, 5, 3.5]
+- Average: (4.5 + 5 + 4 + 5 + 3.5) / 5 = 4.4
+- Return: { id: 123, rate: 4.4 }
+
+Notes:
+- Public endpoint (orice user cu subscription)
+- Simple average calculation
+- Dacă rate array e gol → average = 0 sau null
+
+Posibile îmbunătățiri .NET:
+- ADD rating count în response
+- ADD rating distribution (câte 1*, 2*, 3*, 4*, 5*)
+- CACHE average rate (recalculate doar la new ratings)
+- ADD weighted average (recent ratings au weight mai mare)
+
+--------------------------------------------------------------------------------
+TASK 11: DELETE /v1/course/:courseId
+--------------------------------------------------------------------------------
+
+Title: DELETE /v1/course/:courseId
+
+Description:
+
+Business Logic:
+1. Șterge un course și toate lessons asociate (CASCADE DELETE)
+2. **OWNERSHIP CHECK**:
+   - ADMIN poate șterge orice course
+   - Non-admin poate șterge DOAR propriile courses (course.authorId === authUser.id)
+3. Verifică dacă course-ul există
+4. Șterge TOATE lessons asociate cu course-ul (via LessonService)
+5. Șterge course-ul din baza de date
+6. Cod comentat pentru ștergere imagine din DigitalOcean Spaces
+7. Returnează success message
+8. Dacă user non-admin încearcă să șteargă alt course → "Operation not permitted"
+
+Cod sursă:
+- Controller: src/v1/Course/Controller/course.controller.ts:163-174
+- Service: src/v1/Course/Service/course.service.ts:312-332
+
+Request:
+DELETE /v1/course/123
+Headers: Authorization: Bearer {accessToken}
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Course has been deleted"
+}
+
+Response (Error 500 - not authorized):
+{
+  "statusCode": 500,
+  "message": "Operation not permitted"
+}
+
+Response (Error 404 - course not found):
+{
+  "statusCode": 404,
+  "message": "Course not found"
+}
+
+Response (Error 404 - delete failed):
+{
+  "statusCode": 404,
+  "message": "{error details}"
+}
+
+Authorization: AuthGuard('subscription-validation')
+Note: @Roles guard COMMENTED OUT - ownership check în service
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- CoursesRepository.findOneOrFail() - verify course exists
+- LessonService.deleteLessonsBelongsToCourse() - cascade delete lessons
+- CoursesRepository.deleteCourse()
+- (COMMENTED) awsService.deleteImage() - delete image from S3
+
+Ownership Check:
+```
+if (authUserRole !== ADMIN && course.authorId !== authUserId) {
+  throw "Operation not permitted"
+}
+```
+
+Delete Flow:
+1. Verify course exists
+2. Check ownership (admin sau author)
+3. Delete ALL lessons belonging to course
+4. Delete course
+5. (COMMENTED) Delete course image from S3
+
+Notes:
+- **CASCADING DELETE**: Toate lessons sunt șterse automat
+- Guard @Roles COMENTAT - ownership check e în service logic
+- InternalServerErrorException (500) pentru unauthorized e incorect (ar trebui 403)
+- Image delete e comentat (nu se curăță storage)
+- Subscriptions care referențiază course-ul NU sunt șterse (potential orphan references)
+
+Posibile îmbunătățiri .NET:
+- CHANGE error code: 403 Forbidden (nu 500 Internal Server Error)
+- ADD confirmation step (prevent accidental deletes)
+- ADD soft delete option (isDeleted flag)
+- IMPLEMENT image cleanup from DigitalOcean Spaces
+- ADD cascade handling pentru subscriptions (prevent orphans)
+- ADD audit log pentru admin deletes
+
+--------------------------------------------------------------------------------
+TASK 12: PUT /v1/course/upload/:courseId
+--------------------------------------------------------------------------------
+
+Title: PUT /v1/course/upload/:courseId
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru CREATOR role
+2. Upload video file pentru un course via multipart/form-data
+3. File e procesat în file.middleware (max 300MB)
+4. File buffer e extras din req.body.file
+5. Delegează la FileUploadService.handleFileUpload():
+   - Salvează video temporar în /uploads/
+   - Upload la Vimeo API
+   - Șterge file-ul temporar local
+   - Returnează Vimeo video URI
+6. Vimeo privacy settings: embed=private, view=unlisted, download=false
+
+Cod sursă:
+- Controller: src/v1/Course/Controller/course.controller.ts:176-184
+- Service: FileUploadService.handleFileUpload()
+
+Request:
+PUT /v1/course/upload/123
+Headers:
+  Authorization: Bearer {accessToken}
+  Content-Type: multipart/form-data
+
+Form Data:
+- file: [Binary Video Data - max 300MB]
+
+Response (Success 200):
+{
+  "videoUri": "/videos/987654321",  // Vimeo video ID
+  "embedUrl": "https://player.vimeo.com/video/987654321"
+}
+
+Response (Error 400 - file too large):
+{
+  "statusCode": 400,
+  "message": "File size exceeds 300MB limit"
+}
+
+Response (Error 400 - invalid file):
+{
+  "statusCode": 400,
+  "message": "Invalid video file"
+}
+
+Response (Error 403 - not creator):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+
+Response (Error 500 - Vimeo upload failed):
+{
+  "statusCode": 500,
+  "message": "Failed to upload video to Vimeo"
+}
+
+Authorization:
+- AuthGuard('subscription-validation')
+- @Roles(UserRoles.CREATOR) - DOAR CREATOR
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- FileUploadService.handleFileUpload()
+- VimeoService (internal to upload service)
+- file.middleware - multipart processing (300MB limit)
+
+Upload Flow:
+1. Multipart request processed în file.middleware
+2. File buffer extracted: req.body.file
+3. Save file to /uploads/{courseId}.mp4 (temporary)
+4. Upload to Vimeo:
+   - Create video object în Vimeo
+   - Upload file chunks
+   - Set privacy: embed=private, view=unlisted
+5. Get Vimeo video URI
+6. Delete temporary local file
+7. Return Vimeo URI
+
+Vimeo Privacy Settings:
+- **embed**: private (doar embedded pe somaway.ro)
+- **view**: unlisted (nu apare în Vimeo search)
+- **download**: false (users nu pot download)
+
+Notes:
+- Max file size: 300MB (configurat în file.middleware)
+- Temporary storage: /uploads/ directory
+- Nu actualizează automat course.videoUrl (trebuie update separat via PATCH)
+- Upload process poate dura mult (depending on file size)
+
+Posibile îmbunătățiri .NET:
+- ADD progress tracking pentru upload
+- ADD validation pentru video format (MP4, etc.)
+- AUTO-UPDATE course.videoUrl după upload success
+- ADD resume upload support (pentru files mari)
+- ADD video transcoding queue (async processing)
+- IMPLEMENT chunked upload pentru files > 300MB
+
+--------------------------------------------------------------------------------
+TASK 13: POST /v1/course/start-streaming/:courseId
+--------------------------------------------------------------------------------
+
+Title: POST /v1/course/start-streaming/:courseId
+
+Description:
+
+Business Logic:
+1. Inițiază un live stream pentru un course
+2. courseId din URL e prezent DAR NU E FOLOSIT în implementare
+3. Apelează VimeoService.startStream() fără parametri
+4. Returnează stream URL și stream key pentru broadcasting
+5. No authorization check specific (folosește guard-ul global subscription-validation)
+
+Cod sursă:
+- Controller: src/v1/Course/Controller/course.controller.ts:186-189
+- Service: VimeoService.startStream()
+
+Request:
+POST /v1/course/start-streaming/123
+Headers: Authorization: Bearer {accessToken}
+
+Response (Success 200):
+{
+  "streamUrl": "rtmp://rtmp.vimeo.com/live/...",
+  "streamKey": "abc123def456",
+  "embedUrl": "https://vimeo.com/event/...",
+  "status": "ready"
+}
+
+Response (Error 500 - Vimeo API failed):
+{
+  "statusCode": 500,
+  "message": "Failed to start Vimeo stream"
+}
+
+Authorization: AuthGuard('subscription-validation')
+Note: No @Roles guard - oricine cu subscription poate start streaming
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- VimeoService.startStream()
+
+Notes:
+- **courseId NU E FOLOSIT** - stream-ul nu e asociat cu course-ul
+- **NO AUTHORIZATION** - orice user cu subscription poate start stream
+- Stream settings (privacy, etc.) sunt configurate în VimeoService
+- Nu există management de multiple streams (un stream per account?)
+- Nu se salvează stream info în database
+
+Posibile îmbunătățiri .NET:
+- ADD @Roles guard (ADMIN sau CREATOR)
+- USE courseId pentru a asocia stream-ul cu course-ul
+- SAVE stream info în database (streamId, courseId, status, startedAt)
+- ADD stream management (stop, pause, get status)
+- ADD stream scheduling (future start time)
+- LIMIT concurrent streams per user
+
+--------------------------------------------------------------------------------
+TASK 14: GET /v1/course/video/:videoId
+--------------------------------------------------------------------------------
+
+Title: GET /v1/course/video/:videoId
+
+Description:
+
+Business Logic:
+1. Returnează player data pentru un Vimeo video
+2. Primește videoId din URL (Vimeo video ID)
+3. Apelează VimeoService.getVideoPlayerData(videoId)
+4. Returnează embed URL, thumbnail, duration, etc.
+5. Public endpoint - orice user cu subscription poate accesa
+6. NU verifică dacă user-ul are access la course-ul asociat (POSIBIL SECURITY ISSUE)
+
+Cod sursă:
+- Controller: src/v1/Course/Controller/course.controller.ts:191-194
+- Service: VimeoService.getVideoPlayerData()
+
+Request:
+GET /v1/course/video/987654321
+Headers: Authorization: Bearer {accessToken}
+
+Response (Success 200):
+{
+  "videoId": "987654321",
+  "embedUrl": "https://player.vimeo.com/video/987654321",
+  "thumbnail": "https://i.vimeocdn.com/video/...",
+  "duration": 3600,  // seconds
+  "title": "Lesson 1: Introduction",
+  "description": "...",
+  "width": 1920,
+  "height": 1080
+}
+
+Response (Error 404 - video not found):
+{
+  "statusCode": 404,
+  "message": "Video not found on Vimeo"
+}
+
+Response (Error 500 - Vimeo API failed):
+{
+  "statusCode": 500,
+  "message": "Failed to retrieve video data from Vimeo"
+}
+
+Authorization: AuthGuard('subscription-validation')
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- VimeoService.getVideoPlayerData()
+
+Notes:
+- **SECURITY CONCERN**: Nu verifică access rights (user poate accesa orice video dacă are ID-ul)
+- videoId e Vimeo video ID (nu courseId)
+- Player data include embed URL pentru iframe embedding
+- Thumbnail URL poate fi folosit pentru preview
+
+Posibile îmbunătățiri .NET:
+- ADD access control check (verify user has access to course associated cu video)
+- ADD course-video mapping în database
+- ADD video analytics tracking (views, watch time)
+- CACHE video player data (reduce Vimeo API calls)
+- ADD video quality options (SD, HD, 4K)
+
+================================================================================
+END OF STORY
+================================================================================
+
+Summary:
+- Total Tasks: 14
+- Total Endpoints: 14 (7 GET, 1 POST, 2 PATCH, 1 PUT, 1 DELETE, 2 special)
+- Complex Features: Access control based on subscription levels, rating system, Vimeo integration, favorites, hardcoded business rules
+- Third-party Integrations: Vimeo (video hosting, live streaming), DigitalOcean Spaces (COMMENTED)
+- Security Issues: Multiple @Roles guards commented out, search endpoint no access check, video endpoint no access validation
+
+Migration Priority: HIGH (core business functionality, complex access control)
+Estimated Story Points: 34
+
+Special Notes:
+- Multiple INCOMPLETE implementations (image upload/download)
+- Hardcoded course IDs (109, 112, 113) și subscription IDs (4, 46, 28) pentru business rules
+- Access control system complex cu special cases
+- Rating system fără user-rating mapping (poate fi improved)
+- @Roles guards COMENTATE în multiple endpoints (security risk)
+- Favorite filter cu magic number (999)
+- Sitemap integration pentru SEO (production only)
+- Cascade delete pentru lessons
+- Slug generation și management
+
+Critical Bugs/Issues:
+1. Image download returnează întotdeauna default (courseId ignorat)
+2. Image upload nu uploadează de fapt (cod comentat)
+3. Search endpoint nu verifică access level
+4. Video endpoint poate fi accesat fără access check
+5. Multiple @Roles guards comentate
+6. Rate system permite multiple ratings de același user
+7. Start streaming nu folosește courseId parameter

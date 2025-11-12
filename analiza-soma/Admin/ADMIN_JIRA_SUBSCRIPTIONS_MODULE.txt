@@ -1,0 +1,3766 @@
+================================================================================
+JIRA STORY - ADMIN DASHBOARD: SUBSCRIPTIONS MANAGEMENT MODULE
+================================================================================
+
+Story Title: Subscriptions Management Module - React to Vue.js Migration
+
+Story Type: Story (Module-Level)
+
+Priority: HIGH
+
+Labels: admin-dashboard, subscriptions-management, react-to-vue, migration, payment-tracking, stripe-integration
+
+Epic Link: Admin Dashboard Migration
+
+================================================================================
+STORY DESCRIPTION
+================================================================================
+
+Modulul Subscriptions Management gestionează abonamentele utilizatorilor și tipurile
+de abonamente disponibile. Este compus din 2 componente principale:
+1. **Subscriptions Table** (READ-ONLY) - vizualizare abonamente existente cu detalii payment și invoice
+2. **Subscription Types** (CRUD) - gestionare tipuri de abonamente disponibile pentru achiziție
+
+**Caracteristici principale:**
+- Vizualizare listă abonamente cu detalii client, status, date, cost
+- Expandable rows pentru vizualizare payment și invoice details
+- Download invoice PDF (SmartBill integration)
+- 6 status-uri pentru subscripții (PENDING, WAITING_FOR_PAYMENT, PAYMENT_INITIATED, PAYMENT_ACCEPTED, PAYMENT_REFUSED, EXPIRED)
+- CRUD complet pentru tipuri de abonamente (sidebar component)
+- 3 forme de abonamente: Somaway (standard), Summit (category-based), Free
+- Integration cu Stripe (stripePriceId pentru recurring payments)
+- Integration cu MailerLite (group assignment după achiziție)
+- Category assignment pentru subscription types (disabled după creare)
+- Statistici despre abonamente (total = real data, rest = mock)
+- Responsive drawer pentru formular (640px desktop, 100% mobile)
+
+**Locație cod sursă:**
+- Page: admin/src/pages/dashboards/Subscriptions.tsx
+- Table Component: admin/src/components/dashboard/subscriptions/SubscriptionsCard/SubscriptionsCard.tsx
+- Types Sidebar: admin/src/components/dashboard/subscriptions/SubscriptionTypes/SubscriptionTypes.tsx
+- Form Component: admin/src/components/dashboard/subscriptions/SubscriptionTypeForm/SubscriptionTypeForm.tsx
+- API Service: admin/src/utils/apiService.tsx
+- Types: admin/src/types/subscriptions.ts
+
+**Endpoints utilizate:**
+
+**Subscriptions (Read-Only)**:
+- GET /v1/subscriptions/all - Get all subscriptions with client, payment, invoice details
+- DELETE /v1/subscriptions/:id - Delete subscription (admin only)
+
+**Subscription Types (CRUD)**:
+- GET /v1/subscription-types/all - Get all subscription types
+- POST /v1/subscription-types - Create subscription type
+- PATCH /v1/subscription-types/:id - Update subscription type
+- DELETE /v1/subscription-types/:id - Delete subscription type
+
+**SmartBill Invoice**:
+- GET /api/v1/smartbill/invoice/pdf?cif={CUI}&seriesname={SERIES}&number={invoiceId} - Download invoice PDF
+
+**Dependencies:**
+- Categories Module (pentru category assignment în subscription types)
+- SmartBill Service (invoice generation și download)
+- Stripe Service (recurring payments, stripePriceId)
+- MailerLite Service (group assignment după achiziție)
+- Payment Module (payment tracking și status)
+
+**Tech Stack (Current - React):**
+- React 18.2.0 + TypeScript 5.0.2
+- Ant Design 5.20.1 (Table expandable, List, Drawer, Form, Select, Radio, Tag, Popconfirm, Popover)
+- dayjs (date formatting)
+- react-responsive (useMediaQuery)
+
+**Tech Stack (Target - Vue.js 3):**
+- Vue 3.4+ Composition API
+- Ant Design Vue 4.x
+- dayjs (same)
+- @vueuse/core (useMediaQuery → useBreakpoints)
+
+**Subscription Type:**
+```typescript
+type SubscriptionT = {
+  id?: number;
+  clientId: number;
+  status: SubscriptionStatuses; // 0-5 (6 statuses)
+  paymentId: number;
+  courseId?: number;
+  startDate: Date;
+  endDate: Date;
+  observations?: string;
+  totalCost: number; // în RON
+  transferId: string;
+  subTypeId: number; // Foreign key to SubscriptionType
+  createdAt: Date;
+  updatedAt: Date;
+
+  // Relations (eager loaded)
+  invoice?: Invoice;
+  payment?: Payment;
+  client?: Client;
+};
+
+enum SubscriptionStatuses {
+  PENDING = 0,              // Subscription is created
+  WAITING_FOR_PAYMENT = 1,  // Waiting for payment
+  PAYMENT_INITIATED = 2,    // Payment in progress
+  PAYMENT_ACCEPTED = 3,     // Payment successful, subscription active
+  PAYMENT_REFUSED = 4,      // Payment failed
+  EXPIRED = 5,              // Subscription expired
+}
+
+enum SubscriptionStatusColors {
+  PENDING = 'gray',
+  WAITING_FOR_PAYMENT = 'orange',
+  PAYMENT_INITIATED = 'blue',
+  PAYMENT_ACCEPTED = 'green',
+  PAYMENT_REFUSED = 'red',
+  EXPIRED = 'black',
+}
+```
+
+**Subscription Type Type:**
+```typescript
+type SubscriptionTypeT = {
+  id: number;
+  title: string;                  // Ex: "Abonament Anual"
+  subtitle: string;               // Ex: "Discount 20%"
+  form: number;                   // 1=Somaway, 2=Summit, 3=Free
+  price: number;                  // Pret în RON
+  description: string;            // Descriere detalată
+  productName: string;            // Nume produs (vizibil în dashboard useri)
+  buttonTitle: string;            // Text pe buton (ex: "Cumpără acum")
+  categoryId?: number;            // Pentru form=2 (Summit) - categorie asociată
+  courseId?: number;              // Pentru form=3 (Free) - curs asociat
+  isActive: boolean;              // Vizibil pe pagina de abonamente
+  status: number;                 // 0=Dezactivat, 1=Normal, 2=Campanie
+  stripePriceId: string;          // Stripe recurring price ID
+  duration: number;               // Durata în luni
+  bonusMonths?: number;           // Luni bonus
+  mailerLiteGroup?: string;       // Grup MailerLite (după achiziție)
+  category: Category;             // Relation
+  createdAt?: Date;
+  updatedAt?: Date;
+};
+```
+
+**Notes:**
+- **Subscriptions Table**: READ-ONLY - nu există formular de creare/editare subscripții (acestea sunt create din frontend client prin payment flow)
+- **Delete Subscription**: Disponibil dar trebuie folosit cu atenție (poate afecta istoricul userului)
+- **Expandable Rows**: Afișează payment details și invoice details pentru fiecare subscripție
+- **SmartBill Integration**: Download invoice PDF (CUI: RO45702099, Series: BC)
+- **Subscription Types Form Restrictions**:
+  - `categoryId` și `form` sunt disabled după creare (nu pot fi modificate pentru a păstra consistența istoricului)
+  - Notă importantă: "O data creat un tip de abonament nu-si mai poate modifica categoria si tipul pentru a nu afecta userii care au achizitionat deja tipul de abonament"
+- **3 Forme de Abonamente**:
+  1. **Somaway (form=1)**: Access la toate materialele
+  2. **Summit (form=2)**: Access doar la o categorie de cursuri (categoryId required)
+  3. **Free (form=3)**: Access la o categorie de cursuri, fără payment
+- **Stripe Integration**: stripePriceId pentru recurring payments (monthly/yearly)
+- **MailerLite Integration**: Group assignment după achiziție (ex: "Premium Subscribers")
+
+================================================================================
+TASKS (12 COMPONENTS / FEATURES)
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 1: Page Layout & Dual Component Structure
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Pagina Subscriptions Management afișează 2 componente principale:
+1. **Main Area (18 cols)**: Stats cards + Subscriptions Table (read-only)
+2. **Sidebar (6 cols)**: Subscription Types list cu CRUD + Community Groups + Recommended Courses
+
+Utilizatorul vede toate abonamentele existente în tabel (cu expandable rows pentru
+detalii payment/invoice) și poate gestiona tipurile de abonamente din sidebar.
+
+**User Flow:**
+1. Admin navighează la /dashboards/subscriptions
+2. Sistemul încarcă toate abonamentele (GET /v1/subscriptions/all)
+3. Sistemul încarcă toate tipurile de abonamente (GET /v1/subscription-types/all)
+4. Se afișează 4 stats cards în partea de sus (total subscriptions = real, rest = mock)
+5. Se afișează tabelul cu subscripții în main area (read-only, nu există create/edit)
+6. Se afișează lista cu tipuri de abonamente în sidebar (CRUD complet)
+7. Admin poate:
+   - Vizualiza detalii subscripții (expand rows pentru payment/invoice)
+   - Download invoice PDF (SmartBill)
+   - Delete subscripții (cu atenție - afectează istoricul)
+   - CRUD tipuri de abonamente (sidebar)
+
+**Cod sursă:**
+- File: admin/src/pages/dashboards/Subscriptions.tsx:1-261
+- Main states: subscriptionsData, subscriptionTypes, modalAction, loading, editModalWidth
+- Hooks: useMediaQuery (responsive), useAuth (JWT token), useFetchData (mock data)
+
+**Current Implementation (React):**
+```typescript
+import { useState, useEffect, useCallback } from 'react';
+import { useMediaQuery } from 'react-responsive';
+import { getAllSubscriptionsApi, getSubscriptionTypesApi, handleDeleteSubscriptionApi } from '../../utils/apiService';
+
+export const SubscriptionsDashboardPage = () => {
+  const { authUser, countUsers } = useAuth();
+  const [editModalWidth, setEditModalWidth] = useState<string>();
+  const [modalAction, setModalAction] = useState<MODAL_ACTIONS>(CLOSE);
+  const [, setSubscriptionToUpdate] = useState<SubscriptionT>();
+  const [loading, setLoading] = useState(false);
+  const [subscriptionsData, setSubscriptionsData] = useState<SubscriptionT[]>([]);
+  const [subscriptionTypes, setSubscriptionTypes] = useState<SubscriptionTypeT[]>([]);
+
+  const isLarge = useMediaQuery({ minWidth: 960 });
+
+  useEffect(() => {
+    if (isLarge) {
+      setEditModalWidth('640');
+    } else {
+      setEditModalWidth('100%');
+    }
+  }, [isLarge]);
+
+  useEffect(() => {
+    if (!loading) {
+      // Fetch subscriptions (read-only display)
+      getAllSubscriptionsApi(setLoading, authUser?.accessToken ?? "").then((data: unknown) => {
+        const results = (data as SubscriptionResponse).subscriptions;
+        setSubscriptionsData(results);
+      });
+
+      // Fetch subscription types (CRUD in sidebar)
+      getSubscriptionTypesApi(setLoading, authUser?.accessToken ?? "").then((data: unknown) => {
+        const types = (data as SubscriptionTypesResponse).subscriptionTypes;
+        setSubscriptionTypes(types);
+      });
+    }
+  }, []);
+
+  const handleDeleteSubscription = useCallback(async (recordId: number) => {
+    const res: ResponseT = await handleDeleteSubscriptionApi(recordId) as unknown as ResponseT;
+    if ([200, 201].includes(res?.status)) {
+      syncAfterDelete(recordId);
+      message.open({ 'type': 'success', 'content': `Subscription ${recordId} deleted successfully` });
+    } else {
+      message.open({ 'type': 'error', 'content': `Subscription ${recordId} cannot be deleted` });
+    }
+  }, []);
+
+  // Sync methods pentru subscriptionsData
+  const syncAfterUpdate = (newRecord: SubscriptionT) => {
+    setSubscriptionsData(prevState => prevState?.map(item =>
+      Number(item.id) === Number(newRecord?.id) ? newRecord : item
+    ));
+  }
+
+  const syncAfterCreate = (newRecord: SubscriptionT) => {
+    setSubscriptionsData(prevState => [newRecord, ...prevState]);
+  }
+
+  const syncAfterDelete = (recordId: number) => {
+    setSubscriptionsData(prevState => prevState?.filter(item => item.id !== recordId));
+  }
+
+  return (
+    <div>
+      <Helmet>
+        <title>Abonamente | Dashboard</title>
+      </Helmet>
+      <PageHeader title="abonamente | dashboard" breadcrumbs={[...]} />
+
+      <Row {...stylesContext?.rowProps}>
+        {/* Main Area (18 cols) - Subscriptions Table */}
+        <Col xs={24} xl={18}>
+          <Row {...stylesContext?.rowProps}>
+            {/* 4 Stats Cards */}
+            <Col xs={24} sm={12} xl={6}>
+              <LearningStatsCard
+                title="Abonamente prezente în platformă"
+                value={subscriptionsData?.length}
+                icon={SafetyCertificateOutlined}
+                color="blue"
+                progress={76}
+                style={{ height: '100%' }}
+              />
+            </Col>
+            {/* ... 3 more stats cards with mock data ... */}
+
+            {/* Subscriptions Table (READ-ONLY) */}
+            <Col span={24}>
+              <SubscriptionsCard
+                data={subscriptionsData}
+                loading={loading}
+                handleEditModal={handleEditModal}
+                handleDeleteSubscription={handleDeleteSubscription}
+              />
+            </Col>
+          </Row>
+        </Col>
+
+        {/* Sidebar (6 cols) - Subscription Types CRUD */}
+        <Col xs={24} xl={6}>
+          <Row {...stylesContext?.rowProps}>
+            {/* Subscription Types List with CRUD */}
+            <Col span={24}>
+              <SubscriptionTypes
+                typesData={subscriptionTypes}
+                loading={loading}
+                setSubscriptionTypes={setSubscriptionTypes}
+                editModalWidth={editModalWidth}
+              />
+            </Col>
+
+            {/* Community Groups (mock data) */}
+            <Col span={24}>
+              <CommunityGroupCard
+                data={communitiesData as CommunityGroup[] | undefined}
+                loading={communitiesDataLoading}
+                error={communitiesDataError as React.ReactNode}
+              />
+            </Col>
+
+            {/* Recommended Courses Carousel (mock data) */}
+            <Col span={24}>
+              <CoursesCarousel
+                data={recommendedSubscriptionsData as RecommendedCourses[] | undefined}
+                loading={recommendedSubscriptionsDataLoading}
+                error={recommendedSubscriptionsDataError as React.ReactNode}
+              />
+            </Col>
+          </Row>
+        </Col>
+      </Row>
+
+      {/* Drawer pentru Subscription Form (COMMENTED OUT - no create/edit for subscriptions) */}
+      <Drawer
+        title={`${modalAction === UPDATE ? 'Update' : 'Create'} a subscription`}
+        width={editModalWidth}
+        placement="right"
+        open={modalAction !== CLOSE}
+        onClose={() => handleEditModal(CLOSE)}
+      >
+        {/* {!!((subscriptionToUpdate) || modalAction === CREATE) && (
+          <SubscriptionsForm recordToUpdate={subscriptionToUpdate} handleEditModal={handleEditModal} />
+        )} */}
+      </Drawer>
+    </div>
+  );
+};
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { useBreakpoints } from '@vueuse/core'
+import { message } from 'ant-design-vue'
+import { getAllSubscriptionsApi, getSubscriptionTypesApi, handleDeleteSubscriptionApi } from '@/utils/apiService'
+import { useAuthStore } from '@/stores/auth'
+import type { SubscriptionT, SubscriptionTypeT, SubscriptionResponse, SubscriptionTypesResponse, ResponseT } from '@/types'
+
+const authStore = useAuthStore()
+
+// Reactive state
+const modalAction = ref<MODAL_ACTIONS>('CLOSE')
+const loading = ref(false)
+const subscriptionsData = ref<SubscriptionT[]>([])
+const subscriptionTypes = ref<SubscriptionTypeT[]>([])
+
+// Responsive drawer width
+const breakpoints = useBreakpoints({ large: 960 })
+const isLarge = breakpoints.greaterOrEqual('large')
+const editModalWidth = computed(() => isLarge.value ? '640px' : '100%')
+
+// Fetch subscriptions (read-only display)
+const fetchSubscriptions = async () => {
+  try {
+    loading.value = true
+    const data = await getAllSubscriptionsApi(authStore.accessToken) as unknown as SubscriptionResponse
+    subscriptionsData.value = data.subscriptions
+  } catch (error) {
+    message.error('Failed to load subscriptions')
+    console.error(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+// Fetch subscription types (CRUD in sidebar)
+const fetchSubscriptionTypes = async () => {
+  try {
+    const data = await getSubscriptionTypesApi(authStore.accessToken) as unknown as SubscriptionTypesResponse
+    subscriptionTypes.value = data.subscriptionTypes
+  } catch (error) {
+    message.error('Failed to load subscription types')
+    console.error(error)
+  }
+}
+
+// Delete subscription
+const handleDeleteSubscription = async (recordId: number) => {
+  try {
+    const res = await handleDeleteSubscriptionApi(recordId) as ResponseT
+    if ([200, 201].includes(res?.status)) {
+      syncAfterDelete(recordId)
+      message.success(`Subscription ${recordId} deleted successfully`)
+    } else {
+      message.error(`Subscription ${recordId} cannot be deleted`)
+    }
+  } catch (error) {
+    message.error('Failed to delete subscription')
+    console.error(error)
+  }
+}
+
+// Sync methods
+const syncAfterDelete = (recordId: number) => {
+  subscriptionsData.value = subscriptionsData.value.filter(item => item.id !== recordId)
+}
+
+onMounted(async () => {
+  await Promise.all([
+    fetchSubscriptions(),
+    fetchSubscriptionTypes()
+  ])
+})
+</script>
+
+<template>
+  <div>
+    <a-page-header
+      title="abonamente | dashboard"
+      :breadcrumb="breadcrumbs"
+    />
+
+    <a-row :gutter="[16, 16]">
+      <!-- Main Area (18 cols) - Subscriptions Table -->
+      <a-col :xs="24" :xl="18">
+        <a-row :gutter="[16, 16]">
+          <!-- 4 Stats Cards -->
+          <a-col :xs="24" :sm="12" :xl="6">
+            <LearningStatsCard
+              title="Abonamente prezente în platformă"
+              :value="subscriptionsData.length"
+              icon="SafetyCertificateOutlined"
+              color="blue"
+              :progress="76"
+              style="height: 100%"
+            />
+          </a-col>
+          <!-- ... 3 more stats cards with mock data ... -->
+
+          <!-- Subscriptions Table (READ-ONLY) -->
+          <a-col :span="24">
+            <SubscriptionsCard
+              :data="subscriptionsData"
+              :loading="loading"
+              :handleDeleteSubscription="handleDeleteSubscription"
+            />
+          </a-col>
+        </a-row>
+      </a-col>
+
+      <!-- Sidebar (6 cols) - Subscription Types CRUD -->
+      <a-col :xs="24" :xl="6">
+        <a-row :gutter="[16, 16]">
+          <!-- Subscription Types List with CRUD -->
+          <a-col :span="24">
+            <SubscriptionTypes
+              :typesData="subscriptionTypes"
+              :loading="loading"
+              :setSubscriptionTypes="(types: SubscriptionTypeT[]) => subscriptionTypes = types"
+              :editModalWidth="editModalWidth"
+            />
+          </a-col>
+
+          <!-- Community Groups (mock data) -->
+          <a-col :span="24">
+            <CommunityGroupCard
+              :data="communitiesData"
+              :loading="communitiesDataLoading"
+              :error="communitiesDataError"
+            />
+          </a-col>
+
+          <!-- Recommended Courses Carousel (mock data) -->
+          <a-col :span="24">
+            <CoursesCarousel
+              :data="recommendedSubscriptionsData"
+              :loading="recommendedSubscriptionsDataLoading"
+              :error="recommendedSubscriptionsDataError"
+            />
+          </a-col>
+        </a-row>
+      </a-col>
+    </a-row>
+  </div>
+</template>
+```
+
+**Notes:**
+- **Dual Component Structure**: Main area (18 cols) cu Subscriptions Table + Sidebar (6 cols) cu Subscription Types
+- **No Subscription Form**: Commented out - subscripțiile sunt create din frontend client prin payment flow (nu din admin)
+- **Delete Only**: Admin poate doar să șteargă subscripții (cu atenție - afectează istoricul)
+- **Subscription Types CRUD**: Full CRUD în sidebar pentru tipuri de abonamente
+- **Mock Data**: Community Groups și Recommended Courses sunt mock data (JSON files)
+
+**Recommendations:**
+1. **Error Handling**: Adaugă try-catch în toate API calls
+2. **Loading States**: Separate loading states pentru subscriptions și subscription types
+3. **Confirmation Dialog**: Adaugă dialog de confirmare pentru delete subscription cu warning despre impact
+4. **Filters**: Adaugă filters pentru subscriptions table (by status, by date range, by client)
+5. **Export**: Adaugă export CSV pentru subscriptions (pentru raportare)
+6. **Real-time Updates**: Consideră WebSocket pentru real-time updates la status change (payment accepted, etc.)
+
+**Migration Complexity**: MEDIUM-HIGH (dual component structure, complex data relationships)
+
+**Estimated Effort**: 1-2 zile (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 2: Subscriptions Table with Expandable Rows (Read-Only)
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Tabelul afișează toate abonamentele utilizatorilor cu detalii despre client, status,
+date (start/end), cost, și observații. Fiecare row este expandable pentru a afișa
+detalii despre payment și invoice. Tabelul este READ-ONLY - nu există create/edit
+operations (subscripțiile sunt create din frontend client).
+
+**User Flow:**
+1. Admin vede tabelul cu toate abonamentele
+2. Click pe expand arrow → row se extinde și afișează:
+   - Payment details (paymentId, status, amount, stripePaymentId, createdAt)
+   - Invoice details (internalId, serie, număr factură, download link)
+3. Hover pe client name → tooltip cu email și telefon
+4. Click pe "Download invoice" → download PDF de la SmartBill
+5. Click pe Delete → confirmă ștergerea → subscripția este ștearsă (cu warning)
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/subscriptions/SubscriptionsCard/SubscriptionsCard.tsx:1-239
+- Props: data (subscriptions), loading, handleDeleteSubscription
+- Parent columns: 8 columns (Sub ID, Client, Status, Start Date, End Date, Cost, Observations, Created At + Delete)
+- Child tables: 2 tables (Payments table, Invoices table)
+- Expandable logic: expandedRowRender cu 2 nested tables
+
+**Current Implementation (React):**
+```typescript
+import {
+  Alert,
+  Button,
+  Card,
+  Popconfirm,
+  Table,
+  TableColumnsType,
+  Tag,
+  Tooltip,
+} from 'antd';
+import { DeleteOutlined } from '@ant-design/icons';
+import { SubscriptionT, Payment, Invoice, Client, SubscriptionStatusColors, SubscriptionStatuses } from '../../../../types/subscriptions.ts';
+import dayjs from 'dayjs';
+import { fetchDownload } from '../../../../utils/apiService.tsx';
+import { SMARTBILL_API } from '../../../../constants/routes.ts';
+
+const downloadInvoice = async (invoiceId: number) => {
+  const CUI = "RO45702099";
+  const SERIES = "BC";
+  await fetchDownload(`${SMARTBILL_API}/invoice/pdf?cif=${CUI}&seriesname=${SERIES}&number=${invoiceId}`);
+};
+
+// Child table columns - Payments
+const CHILD_TABLE_COLUMNS: TableColumnsType<Payment> = [
+  {
+    title: 'paymentId',
+    dataIndex: 'id',
+    key: 'id',
+    render: (id: string) => <span>•{id}</span>,
+  },
+  {
+    title: 'status',
+    dataIndex: 'status',
+    key: 'status',
+    render: (status: string) => <span>{status}</span>,
+  },
+  {
+    title: 'Amount',
+    dataIndex: 'amount',
+    key: 'amount',
+    render: (amount: number) => <span>{amount / 100} ron</span>, // Convert from cents
+  },
+  {
+    title: 'stripePaymentId',
+    dataIndex: 'stripePaymentId',
+    key: 'stripePaymentId',
+    render: (stripePaymentId: string) => <span>{stripePaymentId}</span>,
+  },
+  {
+    title: 'Created at',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    render: (createdAt: string) => <span>{dayjs(createdAt).format('DD/MM/YYYY HH:mm:ss')}</span>,
+  },
+];
+
+// Child table columns - Invoices
+const CHILD_TABLE_COLUMNS2: TableColumnsType<Invoice> = [
+  {
+    title: 'internalId',
+    dataIndex: 'id',
+    key: 'id',
+    render: (id: string) => <span>•{id}</span>,
+  },
+  {
+    title: 'Serie',
+    dataIndex: 'seriesName',
+    key: 'seriesName',
+    render: (seriesName: number) => <span>{seriesName}</span>,
+  },
+  {
+    title: 'nr factura',
+    dataIndex: 'externalId',
+    key: 'externalId',
+    render: (externalId: string) => <span>{externalId}</span>,
+  },
+  {
+    title: 'Smartbill',
+    dataIndex: 'id',
+    key: 'id',
+    render: (id: number) =>
+      <a onClick={() => downloadInvoice(id)}>
+        Download invoice
+      </a>,
+  },
+  {
+    title: 'Created at',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    render: (createdAt: string) => <span>{dayjs(createdAt).format('DD/MM/YYYY HH:mm:ss')}</span>,
+  },
+];
+
+// Expanded row render component
+export const ExpandedRowRender = ({ data: { data1, data2 } }: { data: { data1?: Payment[], data2?: Invoice[] } }) => {
+  return (<>
+    {data1 &&
+      <Table
+        columns={CHILD_TABLE_COLUMNS}
+        dataSource={data1}
+        pagination={{ pageSize: 5, position: [] }}
+      />}
+    {data2 &&
+      <Table
+        columns={CHILD_TABLE_COLUMNS2}
+        dataSource={data2}
+        pagination={{ pageSize: 5, position: [] }}
+      />}
+  </>);
+};
+
+type Props = {
+  data?: SubscriptionT[];
+  loading?: boolean;
+  handleDeleteSubscription: (subscriptionId: number) => void;
+  error?: ReactNode;
+} & CardProps;
+
+export const SubscriptionsCard = ({ error, data, handleDeleteSubscription, ...others }: Props) => {
+
+  const PARENT_TABLE_COLUMNS: TableColumnsType<SubscriptionT> = [
+    {
+      title: '#Sub ID',
+      dataIndex: 'id',
+      key: 'id',
+      render: (id) => <span>{id}</span>,
+    },
+    {
+      title: 'Client',
+      dataIndex: 'client',
+      key: 'client',
+      render: (client: Client) => <span>
+        <Tooltip title={`email: ${client.email}   phone: ${client.phone}`} color="#303">
+          <span className="text-capitalize">{`${client.fullName} (${client.id})`}</span>
+        </Tooltip>
+      </span>,
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status: SubscriptionStatuses) => <span>
+        <Tag color={SubscriptionStatusColors[SubscriptionStatuses[status] as unknown as keyof typeof SubscriptionStatuses]} key={status}>
+          {SubscriptionStatuses[status]}
+        </Tag>
+      </span>,
+    },
+    {
+      title: 'Start Date',
+      dataIndex: 'startDate',
+      key: 'startDate',
+      render: (startDate: string) => <span>{dayjs(startDate).format('DD.MM.YY HH:mm')}</span>,
+    },
+    {
+      title: 'End Date',
+      dataIndex: 'endDate',
+      key: 'endDate',
+      render: (endDate: string) => <span>{dayjs(endDate).format('DD.MM.YY HH:mm')}</span>,
+    },
+    {
+      title: 'Cost',
+      dataIndex: 'totalCost',
+      key: 'totalCost',
+      render: (_: number) => <span>{_} ron</span>,
+    },
+    {
+      title: 'Observatii',
+      dataIndex: 'observations',
+      key: 'observations',
+      render: (_: string) => <span>{_}</span>,
+    },
+    {
+      title: 'Creat la',
+      dataIndex: 'createdAt',
+      key: 'createdAt',
+      render: (createdAt: string, record) => <span>
+        {dayjs(createdAt).format('DD/MM/YYYY HH:mm')}
+
+        <Popconfirm
+          title="Esti sigur ca vrei sa stergi acest abonament???"
+          onConfirm={() => handleDeleteSubscription(record.id as number)}
+          okText="Yes"
+          cancelText="No"
+        >
+          <Button type="link" danger>
+            <DeleteOutlined />
+          </Button>
+        </Popconfirm>
+      </span>,
+    },
+  ];
+
+  return error ? (
+    <Alert message="Error" description={error.toString()} type="error" showIcon />
+  ) : (
+    <Card
+      title="Abonamente"
+      extra={
+        <Popover content="Editarea/crearea abonamentelor este restrictionata.">
+          <Button icon={<QuestionOutlined />} type="text" />
+        </Popover>
+      }
+      {...others}
+    >
+      <Table
+        dataSource={data}
+        columns={PARENT_TABLE_COLUMNS}
+        rowKey="id"
+        expandable={{
+          rowExpandable: (record) => record.paymentId !== undefined,
+          expandedRowRender: (record) => (
+            <ExpandedRowRender
+              data={{
+                data1: record.payment && [record.payment],
+                data2: record?.invoice && [record.invoice]
+              }}
+            />
+          ),
+        }}
+        className="overflow-scroll"
+      />
+    </Card>
+  );
+};
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { computed, h } from 'vue'
+import { Table, Tag, Tooltip, Popconfirm, Button, Alert, Card, Popover, type TableColumnsType } from 'ant-design-vue'
+import { DeleteOutlined, QuestionOutlined } from '@ant-design/icons-vue'
+import dayjs from 'dayjs'
+import { fetchDownload } from '@/utils/apiService'
+import { SMARTBILL_API } from '@/constants/routes'
+import type { SubscriptionT, Payment, Invoice, Client, SubscriptionStatuses } from '@/types'
+
+interface Props {
+  data?: SubscriptionT[]
+  loading?: boolean
+  handleDeleteSubscription: (subscriptionId: number) => void
+  error?: string
+}
+
+const props = defineProps<Props>()
+
+const SubscriptionStatusColors = {
+  PENDING: 'gray',
+  WAITING_FOR_PAYMENT: 'orange',
+  PAYMENT_INITIATED: 'blue',
+  PAYMENT_ACCEPTED: 'green',
+  PAYMENT_REFUSED: 'red',
+  EXPIRED: 'black',
+}
+
+const downloadInvoice = async (invoiceId: number) => {
+  const CUI = "RO45702099"
+  const SERIES = "BC"
+  await fetchDownload(`${SMARTBILL_API}/invoice/pdf?cif=${CUI}&seriesname=${SERIES}&number=${invoiceId}`)
+}
+
+// Child table columns - Payments
+const paymentColumns = computed<TableColumnsType<Payment>>(() => [
+  {
+    title: 'paymentId',
+    dataIndex: 'id',
+    key: 'id',
+    customRender: ({ text }) => `•${text}`
+  },
+  {
+    title: 'status',
+    dataIndex: 'status',
+    key: 'status'
+  },
+  {
+    title: 'Amount',
+    dataIndex: 'amount',
+    key: 'amount',
+    customRender: ({ text }) => `${text / 100} ron` // Convert from cents
+  },
+  {
+    title: 'stripePaymentId',
+    dataIndex: 'stripePaymentId',
+    key: 'stripePaymentId'
+  },
+  {
+    title: 'Created at',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    customRender: ({ text }) => dayjs(text).format('DD/MM/YYYY HH:mm:ss')
+  }
+])
+
+// Child table columns - Invoices
+const invoiceColumns = computed<TableColumnsType<Invoice>>(() => [
+  {
+    title: 'internalId',
+    dataIndex: 'id',
+    key: 'id',
+    customRender: ({ text }) => `•${text}`
+  },
+  {
+    title: 'Serie',
+    dataIndex: 'seriesName',
+    key: 'seriesName'
+  },
+  {
+    title: 'nr factura',
+    dataIndex: 'externalId',
+    key: 'externalId'
+  },
+  {
+    title: 'Smartbill',
+    dataIndex: 'id',
+    key: 'id',
+    customRender: ({ text }) => h(
+      'a',
+      { onClick: () => downloadInvoice(text) },
+      'Download invoice'
+    )
+  },
+  {
+    title: 'Created at',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    customRender: ({ text }) => dayjs(text).format('DD/MM/YYYY HH:mm:ss')
+  }
+])
+
+// Parent table columns
+const columns = computed<TableColumnsType<SubscriptionT>>(() => [
+  {
+    title: '#Sub ID',
+    dataIndex: 'id',
+    key: 'id'
+  },
+  {
+    title: 'Client',
+    dataIndex: 'client',
+    key: 'client',
+    customRender: ({ text: client }: { text: Client }) => h(
+      Tooltip,
+      { title: `email: ${client.email}   phone: ${client.phone}`, color: '#303' },
+      () => h('span', { class: 'text-capitalize' }, `${client.fullName} (${client.id})`)
+    )
+  },
+  {
+    title: 'Status',
+    dataIndex: 'status',
+    key: 'status',
+    customRender: ({ text: status }) => {
+      const statusName = SubscriptionStatuses[status]
+      const color = SubscriptionStatusColors[statusName as keyof typeof SubscriptionStatusColors]
+      return h(Tag, { color }, () => statusName)
+    }
+  },
+  {
+    title: 'Start Date',
+    dataIndex: 'startDate',
+    key: 'startDate',
+    customRender: ({ text }) => dayjs(text).format('DD.MM.YY HH:mm')
+  },
+  {
+    title: 'End Date',
+    dataIndex: 'endDate',
+    key: 'endDate',
+    customRender: ({ text }) => dayjs(text).format('DD.MM.YY HH:mm')
+  },
+  {
+    title: 'Cost',
+    dataIndex: 'totalCost',
+    key: 'totalCost',
+    customRender: ({ text }) => `${text} ron`
+  },
+  {
+    title: 'Observatii',
+    dataIndex: 'observations',
+    key: 'observations'
+  },
+  {
+    title: 'Creat la',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    customRender: ({ text, record }) => [
+      dayjs(text).format('DD/MM/YYYY HH:mm'),
+      h(
+        Popconfirm,
+        {
+          title: 'Esti sigur ca vrei sa stergi acest abonament???',
+          onConfirm: () => props.handleDeleteSubscription(record.id as number),
+          okText: 'Yes',
+          cancelText: 'No'
+        },
+        () => h(Button, { type: 'link', danger: true }, () => h(DeleteOutlined))
+      )
+    ]
+  }
+])
+
+// Expanded row render
+const expandedRowRender = (record: SubscriptionT) => {
+  const paymentData = record.payment ? [record.payment] : []
+  const invoiceData = record.invoice ? [record.invoice] : []
+
+  return h('div', [
+    paymentData.length > 0 && h(Table, {
+      columns: paymentColumns.value,
+      dataSource: paymentData,
+      pagination: { pageSize: 5, hideOnSinglePage: true }
+    }),
+    invoiceData.length > 0 && h(Table, {
+      columns: invoiceColumns.value,
+      dataSource: invoiceData,
+      pagination: { pageSize: 5, hideOnSinglePage: true }
+    })
+  ])
+}
+
+const dataSource = computed(() => props.data || [])
+</script>
+
+<template>
+  <a-alert
+    v-if="error"
+    message="Error"
+    :description="error"
+    type="error"
+    show-icon
+  />
+  <a-card v-else title="Abonamente">
+    <template #extra>
+      <a-popover content="Editarea/crearea abonamentelor este restrictionata.">
+        <a-button :icon="h(QuestionOutlined)" type="text" />
+      </a-popover>
+    </template>
+
+    <a-table
+      :dataSource="dataSource"
+      :columns="columns"
+      :loading="loading"
+      rowKey="id"
+      :expandable="{
+        rowExpandable: (record: SubscriptionT) => record.paymentId !== undefined,
+        expandedRowRender: expandedRowRender
+      }"
+      class="overflow-scroll"
+    />
+  </a-card>
+</template>
+```
+
+**Notes:**
+- **Expandable Rows**: 2 nested tables (payments și invoices) afișate când row-ul este expandat
+- **READ-ONLY**: Nu există buton de create/edit - subscripțiile sunt create din frontend client
+- **Delete Warning**: Popconfirm cu text explicit ("Esti sigur ca vrei sa stergi acest abonament???")
+- **SmartBill Integration**: Download invoice PDF cu CUI și Series hardcodate
+- **Amount Conversion**: Payment amount este în cents (se divide cu 100 pentru RON)
+- **6 Status Tags**: Colored tags pentru fiecare status (gray, orange, blue, green, red, black)
+
+**Recommendations:**
+1. **Filters**: Adaugă filters pentru status, date range, client
+2. **Search**: Adaugă search pentru client name/email
+3. **Pagination**: Adaugă pagination pentru main table (implicit disabled)
+4. **Export**: Adaugă export CSV pentru raportare
+5. **Status History**: Adaugă istoric status changes în expanded row
+6. **Payment Link**: Adaugă link direct la Stripe dashboard pentru payment ID
+7. **Delete Confirmation**: Adaugă warning mai detaliat despre impact (ex: "Acest user va pierde accesul la conținut")
+
+**Migration Complexity**: HIGH (complex expandable rows, nested tables, SmartBill integration)
+
+**Estimated Effort**: 1-2 zile (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 3: Subscription Status Management (6 Statuses)
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Subscripțiile au 6 status-uri posibile care reflectă starea payment flow-ului:
+0-PENDING, 1-WAITING_FOR_PAYMENT, 2-PAYMENT_INITIATED, 3-PAYMENT_ACCEPTED,
+4-PAYMENT_REFUSED, 5-EXPIRED. Fiecare status are o culoare asociată pentru vizualizare
+rapidă în tabel.
+
+**User Flow:**
+1. Subscription lifecycle:
+   - **PENDING** (gray): Subscripția a fost creată, waiting for payment initiation
+   - **WAITING_FOR_PAYMENT** (orange): User-ul a inițiat checkout, waiting for payment
+   - **PAYMENT_INITIATED** (blue): Payment în proces la Stripe
+   - **PAYMENT_ACCEPTED** (green): Payment success, subscripția este activă
+   - **PAYMENT_REFUSED** (red): Payment failed, subscripția nu este activă
+   - **EXPIRED** (black): Subscripția a expirat (după endDate)
+2. Status afișat ca colored tag în tabel
+3. Status poate fi filtrat pentru raportare
+
+**Cod sursă:**
+- File: admin/src/types/subscriptions.ts:45-60 (enum definitions)
+- File: admin/src/components/dashboard/subscriptions/SubscriptionsCard/SubscriptionsCard.tsx:159-166 (Status column rendering)
+
+**Current Implementation (React):**
+```typescript
+// In subscriptions.ts (types)
+export enum SubscriptionStatuses {
+  PENDING = 0,              // Subscription is created
+  WAITING_FOR_PAYMENT = 1,  // Waiting for payment
+  PAYMENT_INITIATED = 2,    // Payment in progress
+  PAYMENT_ACCEPTED = 3,     // Payment successful, subscription active
+  PAYMENT_REFUSED = 4,      // Payment failed
+  EXPIRED = 5,              // Subscription expired
+}
+
+export enum SubscriptionStatusColors {
+  PENDING = 'gray',
+  WAITING_FOR_PAYMENT = 'orange',
+  PAYMENT_INITIATED = 'blue',
+  PAYMENT_ACCEPTED = 'green',
+  PAYMENT_REFUSED = 'red',
+  EXPIRED = 'black',
+}
+
+// In SubscriptionsCard.tsx (Status column)
+{
+  title: 'Status',
+  dataIndex: 'status',
+  key: 'status',
+  render: (status: SubscriptionStatuses) => <span>
+    <Tag color={SubscriptionStatusColors[SubscriptionStatuses[status] as unknown as keyof typeof SubscriptionStatuses]} key={status}>
+      {SubscriptionStatuses[status]}
+    </Tag>
+  </span>,
+}
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+// In types/subscriptions.ts
+export enum SubscriptionStatuses {
+  PENDING = 0,
+  WAITING_FOR_PAYMENT = 1,
+  PAYMENT_INITIATED = 2,
+  PAYMENT_ACCEPTED = 3,
+  PAYMENT_REFUSED = 4,
+  EXPIRED = 5,
+}
+
+export const SubscriptionStatusColors = {
+  PENDING: 'gray',
+  WAITING_FOR_PAYMENT: 'orange',
+  PAYMENT_INITIATED: 'blue',
+  PAYMENT_ACCEPTED: 'green',
+  PAYMENT_REFUSED: 'red',
+  EXPIRED: 'black',
+} as const
+
+export const SubscriptionStatusLabels = {
+  [SubscriptionStatuses.PENDING]: 'PENDING',
+  [SubscriptionStatuses.WAITING_FOR_PAYMENT]: 'WAITING_FOR_PAYMENT',
+  [SubscriptionStatuses.PAYMENT_INITIATED]: 'PAYMENT_INITIATED',
+  [SubscriptionStatuses.PAYMENT_ACCEPTED]: 'PAYMENT_ACCEPTED',
+  [SubscriptionStatuses.PAYMENT_REFUSED]: 'PAYMENT_REFUSED',
+  [SubscriptionStatuses.EXPIRED]: 'EXPIRED',
+} as const
+</script>
+
+<script setup lang="ts">
+// In SubscriptionsCard.vue (Status column)
+import { computed, h } from 'vue'
+import { Tag } from 'ant-design-vue'
+import { SubscriptionStatuses, SubscriptionStatusColors, SubscriptionStatusLabels } from '@/types'
+
+const columns = computed(() => [
+  {
+    title: 'Status',
+    dataIndex: 'status',
+    key: 'status',
+    filters: [
+      { text: 'PENDING', value: SubscriptionStatuses.PENDING },
+      { text: 'WAITING_FOR_PAYMENT', value: SubscriptionStatuses.WAITING_FOR_PAYMENT },
+      { text: 'PAYMENT_INITIATED', value: SubscriptionStatuses.PAYMENT_INITIATED },
+      { text: 'PAYMENT_ACCEPTED', value: SubscriptionStatuses.PAYMENT_ACCEPTED },
+      { text: 'PAYMENT_REFUSED', value: SubscriptionStatuses.PAYMENT_REFUSED },
+      { text: 'EXPIRED', value: SubscriptionStatuses.EXPIRED },
+    ],
+    onFilter: (value: number, record: SubscriptionT) => record.status === value,
+    customRender: ({ text: status }: { text: SubscriptionStatuses }) => {
+      const label = SubscriptionStatusLabels[status]
+      const color = SubscriptionStatusColors[label as keyof typeof SubscriptionStatusColors]
+      return h(Tag, { color }, () => label)
+    }
+  }
+])
+</script>
+```
+
+**Notes:**
+- **6 Statuses**: Enum cu valori 0-5 pentru starea subscripției
+- **Color Mapping**: Fiecare status are culoarea sa (gray, orange, blue, green, red, black)
+- **Lifecycle**: PENDING → WAITING_FOR_PAYMENT → PAYMENT_INITIATED → PAYMENT_ACCEPTED/PAYMENT_REFUSED → EXPIRED
+- **Status nu poate fi editat manual**: Status se updatează automat prin backend logic (payment webhooks, cron jobs)
+
+**Recommendations:**
+1. **Status History**: Adaugă tabel cu istoric status changes (timestamp + old status → new status)
+2. **Filters**: Adaugă filters în table column pentru filtrare după status
+3. **Status Icons**: Adaugă icon-uri pentru fiecare status (CheckCircleOutlined pentru ACCEPTED, CloseCircleOutlined pentru REFUSED, etc.)
+4. **Tooltips**: Adaugă tooltips cu explicație pentru fiecare status
+5. **Status Count**: Afișează count pentru fiecare status în stats cards (ex: "15 PAYMENT_ACCEPTED")
+6. **Manual Override**: Adaugă feature pentru admin să override status manual (cu logging)
+
+**Migration Complexity**: LOW (simple enum + tag rendering)
+
+**Estimated Effort**: 1-2 ore (1 developer)
+
+================================================================================
+SUMMARY - SUBSCRIPTIONS MANAGEMENT MODULE (PARȚIAL)
+================================================================================
+
+**Tasks Documented So Far**: 3 of 12
+
+**Remaining Tasks**:
+4. Payment & Invoice Details (Expandable rows)
+5. Invoice Download (SmartBill integration)
+6. Subscription Types Sidebar (List with CRUD)
+7. Subscription Type Form (Complex form with 12+ fields)
+8. Subscription Type Types & Statuses (3 forms + 3 statuses)
+9. Category Assignment & Restrictions (Disabled after creation)
+10. MailerLite Integration (Group assignment)
+11. Stripe Integration (stripePriceId for recurring payments)
+12. Statistics Cards
+
+**Total Estimated Effort**: 12-15 zile (1 developer) - PROJECTED
+
+**Migration Priority**: HIGH (complex payment workflow, integrations)
+
+**Note**: Acest modul este foarte complex datorită integrărilor multiple (Stripe, SmartBill, MailerLite) și logicii de payment workflow. Continuăm cu restul task-urilor...
+
+--------------------------------------------------------------------------------
+TASK 4: Payment & Invoice Details (Expandable Rows)
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Când un row de subscripție este expandat, se afișează 2 tabele nested:
+1. **Payment Details Table**: Detalii despre payment-ul asociat (paymentId, status, amount, stripePaymentId, createdAt)
+2. **Invoice Details Table**: Detalii despre factura generată (internalId, serie, număr, download link, createdAt)
+
+Fiecare tabel are propriile coloane și paginare (max 5 entries per page).
+
+**User Flow:**
+1. Admin click pe expand arrow pe un row din subscriptions table
+2. Sistemul verifică dacă subscripția are paymentId
+3. Dacă există payment și/sau invoice:
+   - Afișează Payment Details Table cu 1 row (payment-ul asociat)
+   - Afișează Invoice Details Table cu 1 row (invoice-ul asociat)
+4. Admin vede detalii complete despre payment (status, amount, stripePaymentId)
+5. Admin vede detalii despre invoice (serie, număr, link download)
+6. Click pe "Download invoice" → download PDF de la SmartBill
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/subscriptions/SubscriptionsCard/SubscriptionsCard.tsx:33-128
+- Child table 1: CHILD_TABLE_COLUMNS (Payment) - 5 columns
+- Child table 2: CHILD_TABLE_COLUMNS2 (Invoice) - 5 columns
+- ExpandedRowRender component: Renders 2 nested tables cu conditional rendering
+
+**Current Implementation (React):**
+```typescript
+type ExpandedDataType = Payment;
+type ExpandedDataType2 = Invoice;
+
+// Payment table columns
+const CHILD_TABLE_COLUMNS: TableColumnsType<ExpandedDataType> = [
+  {
+    title: 'paymentId',
+    dataIndex: 'id',
+    key: 'id',
+    render: (id: string) => <span>•{id}</span>,
+  },
+  {
+    title: 'status',
+    dataIndex: 'status',
+    key: 'status',
+    render: (status: string) => <span>{status}</span>,
+  },
+  {
+    title: 'Amount',
+    dataIndex: 'amount',
+    key: 'amount',
+    render: (amount: number) => <span>{amount / 100} ron</span>, // Convert from cents
+  },
+  {
+    title: 'stripePaymentId',
+    dataIndex: 'stripePaymentId',
+    key: 'stripePaymentId',
+    render: (stripePaymentId: string) => <span>{stripePaymentId}</span>,
+  },
+  {
+    title: 'Created at',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    render: (createdAt: string) => <span>{dayjs(createdAt).format('DD/MM/YYYY HH:mm:ss')}</span>,
+  },
+];
+
+// Invoice table columns
+const CHILD_TABLE_COLUMNS2: TableColumnsType<ExpandedDataType2> = [
+  {
+    title: 'internalId',
+    dataIndex: 'id',
+    key: 'id',
+    render: (id: string) => <span>•{id}</span>,
+  },
+  {
+    title: 'Serie',
+    dataIndex: 'seriesName',
+    key: 'seriesName',
+    render: (seriesName: number) => <span>{seriesName}</span>,
+  },
+  {
+    title: 'nr factura',
+    dataIndex: 'externalId',
+    key: 'externalId',
+    render: (externalId: string) => <span>{externalId}</span>,
+  },
+  {
+    title: 'Smartbill',
+    dataIndex: 'id',
+    key: 'id',
+    render: (id: number) =>
+      <a onClick={() => downloadInvoice(id)}>
+        Download invoice
+      </a>,
+  },
+  {
+    title: 'Created at',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    render: (createdAt: string) => <span>{dayjs(createdAt).format('DD/MM/YYYY HH:mm:ss')}</span>,
+  },
+];
+
+type ExpandedProps = { data: { data1?: Payment[], data2?: Invoice[] } };
+
+export const ExpandedRowRender = ({ data: { data1, data2 } }: ExpandedProps) => {
+  return (<>
+    {data1 &&
+      <Table
+        columns={CHILD_TABLE_COLUMNS}
+        dataSource={data1}
+        pagination={{ pageSize: 5, position: [] }}
+      />}
+    {data2 &&
+      <Table
+        columns={CHILD_TABLE_COLUMNS2}
+        dataSource={data2}
+        pagination={{ pageSize: 5, position: [] }}
+      />}
+  </>);
+};
+
+// In SubscriptionsCard component - expandable config
+expandable={{
+  rowExpandable: (record) => record.paymentId !== undefined,
+  expandedRowRender: (record) => (
+    <ExpandedRowRender
+      data={{
+        data1: record.payment && [record.payment],
+        data2: record?.invoice && [record.invoice]
+      }}
+    />
+  ),
+}}
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { h } from 'vue'
+import { Table, type TableColumnsType } from 'ant-design-vue'
+import dayjs from 'dayjs'
+import type { Payment, Invoice, SubscriptionT } from '@/types'
+
+// Payment table columns
+const paymentColumns: TableColumnsType<Payment> = [
+  {
+    title: 'paymentId',
+    dataIndex: 'id',
+    key: 'id',
+    customRender: ({ text }) => `•${text}`
+  },
+  {
+    title: 'status',
+    dataIndex: 'status',
+    key: 'status'
+  },
+  {
+    title: 'Amount',
+    dataIndex: 'amount',
+    key: 'amount',
+    customRender: ({ text }) => `${text / 100} ron` // Convert from cents
+  },
+  {
+    title: 'stripePaymentId',
+    dataIndex: 'stripePaymentId',
+    key: 'stripePaymentId'
+  },
+  {
+    title: 'Created at',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    customRender: ({ text }) => dayjs(text).format('DD/MM/YYYY HH:mm:ss')
+  }
+]
+
+// Invoice table columns (with download link)
+const invoiceColumns: TableColumnsType<Invoice> = [
+  {
+    title: 'internalId',
+    dataIndex: 'id',
+    key: 'id',
+    customRender: ({ text }) => `•${text}`
+  },
+  {
+    title: 'Serie',
+    dataIndex: 'seriesName',
+    key: 'seriesName'
+  },
+  {
+    title: 'nr factura',
+    dataIndex: 'externalId',
+    key: 'externalId'
+  },
+  {
+    title: 'Smartbill',
+    dataIndex: 'id',
+    key: 'id',
+    customRender: ({ text }) => h(
+      'a',
+      { onClick: () => downloadInvoice(text) },
+      'Download invoice'
+    )
+  },
+  {
+    title: 'Created at',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    customRender: ({ text }) => dayjs(text).format('DD/MM/YYYY HH:mm:ss')
+  }
+]
+
+// Expanded row render function
+const expandedRowRender = (record: SubscriptionT) => {
+  const paymentData = record.payment ? [record.payment] : []
+  const invoiceData = record.invoice ? [record.invoice] : []
+
+  return h('div', { class: 'nested-tables' }, [
+    // Payment table (if payment exists)
+    paymentData.length > 0 && h('div', { class: 'payment-details' }, [
+      h('h4', 'Payment Details'),
+      h(Table, {
+        columns: paymentColumns,
+        dataSource: paymentData,
+        pagination: { pageSize: 5, hideOnSinglePage: true },
+        rowKey: 'id'
+      })
+    ]),
+
+    // Invoice table (if invoice exists)
+    invoiceData.length > 0 && h('div', { class: 'invoice-details', style: { marginTop: '16px' } }, [
+      h('h4', 'Invoice Details'),
+      h(Table, {
+        columns: invoiceColumns,
+        dataSource: invoiceData,
+        pagination: { pageSize: 5, hideOnSinglePage: true },
+        rowKey: 'id'
+      })
+    ])
+  ])
+}
+</script>
+
+<template>
+  <a-table
+    :dataSource="dataSource"
+    :columns="columns"
+    :loading="loading"
+    rowKey="id"
+    :expandable="{
+      rowExpandable: (record: SubscriptionT) => record.paymentId !== undefined,
+      expandedRowRender: expandedRowRender
+    }"
+    class="overflow-scroll"
+  />
+</template>
+
+<style scoped>
+.nested-tables {
+  padding: 16px;
+  background-color: #fafafa;
+}
+
+.payment-details h4,
+.invoice-details h4 {
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: #1890ff;
+}
+</style>
+```
+
+**Notes:**
+- **2 Nested Tables**: Payment Details și Invoice Details afișate în expandable row
+- **Conditional Rendering**: Tabelele apar doar dacă există payment/invoice (data1, data2)
+- **Amount Conversion**: Payment amount este în cents (se divide cu 100)
+- **Single Row per Table**: Fiecare tabel afișează exact 1 row (payment sau invoice asociat subscripției)
+- **Pagination Disabled**: Position: [] în React (hide pagination), hideOnSinglePage în Vue
+- **Download Link**: Invoice table are coloană cu link pentru download PDF
+
+**Payment Type:**
+```typescript
+type Payment = {
+  id: number;
+  status: number;          // Payment status code
+  amount: number;          // În cents (100 = 1 RON)
+  stripePaymentId: string; // Stripe payment intent ID
+  createdAt: Date;
+};
+```
+
+**Invoice Type:**
+```typescript
+type Invoice = {
+  id: number;              // Internal invoice ID
+  exportId: string;        // SmartBill external invoice ID
+  seriesName: string;      // Serie (ex: "BC")
+  issueDate: Date;         // Invoice issue date
+};
+```
+
+**Recommendations:**
+1. **Payment Status Tags**: Afișează payment status ca colored tag (similar cu subscription status)
+2. **Copy to Clipboard**: Adaugă buton pentru copy stripePaymentId
+3. **Stripe Dashboard Link**: Adaugă link direct la Stripe dashboard pentru payment
+4. **Invoice Preview**: Adaugă preview modal pentru invoice înainte de download
+5. **Multiple Invoices**: Dacă există mai multe invoice-uri, afișează toate (nu doar primul)
+6. **Loading States**: Adaugă loading spinner pentru download invoice
+
+**Migration Complexity**: MEDIUM (2 nested tables, conditional rendering, download integration)
+
+**Estimated Effort**: 1 zi (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 5: Invoice Download (SmartBill Integration)
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Admin poate download invoice PDF generat în SmartBill prin click pe link "Download invoice"
+din expanded row. PDF-ul este fetchuit de la SmartBill API cu parametrii CUI și Series hardcodate.
+
+**User Flow:**
+1. Admin expandează row de subscripție
+2. Dacă există invoice, vede tabel cu invoice details
+3. Click pe "Download invoice" link în coloana Smartbill
+4. Browser download PDF file (invoice-{invoiceId}.pdf)
+5. PDF este generat de SmartBill cu detalii factura (client, produse, total, TVA)
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/subscriptions/SubscriptionsCard/SubscriptionsCard.tsx:25-31 (downloadInvoice function)
+- File: admin/src/utils/apiService.tsx (fetchDownload helper)
+- Constants: CUI = "RO45702099", SERIES = "BC"
+
+**Current Implementation (React):**
+```typescript
+import { fetchDownload } from '../../../../utils/apiService.tsx';
+import { SMARTBILL_API } from '../../../../constants/routes.ts';
+
+const downloadInvoice = async (invoiceId: number) => {
+  const CUI = "RO45702099";      // Company VAT number (hardcoded)
+  const SERIES = "BC";           // Invoice series (hardcoded)
+  console.log('Download invoice', invoiceId);
+
+  // Call SmartBill API to download invoice PDF
+  await fetchDownload(`${SMARTBILL_API}/invoice/pdf?cif=${CUI}&seriesname=${SERIES}&number=${invoiceId}`);
+};
+
+// In invoice table column
+{
+  title: 'Smartbill',
+  dataIndex: 'id',
+  key: 'id',
+  render: (id: number) =>
+    <a onClick={() => downloadInvoice(id)}>
+      Download invoice
+    </a>,
+}
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { message } from 'ant-design-vue'
+import { fetchDownload } from '@/utils/apiService'
+import { SMARTBILL_API } from '@/constants/routes'
+
+const downloadInvoice = async (invoiceId: number) => {
+  try {
+    const CUI = "RO45702099"  // Company VAT number (hardcoded)
+    const SERIES = "BC"       // Invoice series (hardcoded)
+
+    console.log('Download invoice', invoiceId)
+
+    // Call SmartBill API to download invoice PDF
+    await fetchDownload(`${SMARTBILL_API}/invoice/pdf?cif=${CUI}&seriesname=${SERIES}&number=${invoiceId}`)
+
+    message.success(`Invoice ${invoiceId} downloaded successfully`)
+  } catch (error) {
+    console.error('Download invoice error:', error)
+    message.error('Failed to download invoice. Please try again.')
+  }
+}
+
+// In invoice table columns
+const invoiceColumns = computed<TableColumnsType<Invoice>>(() => [
+  // ... other columns ...
+  {
+    title: 'Smartbill',
+    dataIndex: 'id',
+    key: 'id',
+    customRender: ({ text: invoiceId }) => h(
+      'a',
+      {
+        onClick: () => downloadInvoice(invoiceId),
+        style: { color: '#1890ff', cursor: 'pointer', textDecoration: 'underline' }
+      },
+      'Download invoice'
+    )
+  }
+])
+</script>
+```
+
+**fetchDownload Helper (apiService.tsx):**
+```typescript
+export const fetchDownload = async (url: string) => {
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/pdf',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    // Get filename from response headers or use default
+    const contentDisposition = response.headers.get('content-disposition');
+    const filename = contentDisposition
+      ? contentDisposition.split('filename=')[1].replace(/"/g, '')
+      : `invoice-${Date.now()}.pdf`;
+
+    // Create blob and download
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(downloadUrl);
+  } catch (error) {
+    console.error('Download error:', error);
+    throw error;
+  }
+};
+```
+
+**Notes:**
+- **SmartBill API**: External API pentru invoice generation și download
+- **Hardcoded Constants**: CUI (VAT number) și SERIES (invoice series) sunt hardcodate (specific companiei)
+- **PDF Download**: Browser download PDF file cu content-disposition header
+- **Error Handling**: Try-catch pentru network errors și API errors
+- **No Authentication**: SmartBill API call nu necesită JWT token (probabil API key în backend)
+
+**SmartBill API Format:**
+```
+GET /api/v1/smartbill/invoice/pdf?cif={CUI}&seriesname={SERIES}&number={invoiceId}
+
+Response:
+- Content-Type: application/pdf
+- Content-Disposition: attachment; filename="invoice-{invoiceId}.pdf"
+- Binary PDF data
+```
+
+**Recommendations:**
+1. **Loading State**: Adaugă loading spinner during download (poate dura câteva secunde)
+2. **Error Messages**: Afișează error messages specifice (invoice not found, SmartBill API down, etc.)
+3. **Download Icon**: Adaugă DownloadOutlined icon lângă text
+4. **Confirmation**: Adaugă confirmation dialog pentru download (optional)
+5. **Preview Modal**: Adaugă preview modal cu PDF înainte de download (folosind PDF viewer library)
+6. **Batch Download**: Adaugă feature pentru download multiple invoices at once
+7. **Download History**: Track download history (cine a downloadat, când)
+
+**Migration Complexity**: LOW (simple API call + file download)
+
+**Estimated Effort**: 2-4 ore (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 6: Subscription Types Sidebar (List with CRUD)
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Sidebar-ul din dreapta afișează lista cu toate tipurile de abonamente disponibile
+(SubscriptionTypes). Admin poate vizualiza, crea, edita și șterge tipuri de abonamente.
+Lista este paginată (5 items per page) și fiecare item afișează: title, form type, price,
+productName, category, course, și status active/inactive.
+
+**User Flow:**
+1. Admin vede lista cu subscription types în sidebar (max 5 pe pagină)
+2. Fiecare item afișează: titlu, form type, price, status activ/inactiv
+3. Click pe "+" button (în card header) → deschide drawer pentru create
+4. Click pe EditOutlined icon → deschide drawer pentru edit
+5. Click pe DeleteOutlined icon → confirmă ștergerea → type este șters
+6. După create/update/delete → lista se sincronizează automat (syncAfterCreate, syncAfterUpdate, syncAfterDelete)
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/subscriptions/SubscriptionTypes/SubscriptionTypes.tsx:1-153
+- Props: typesData, loading, setSubscriptionTypes, editModalWidth
+- List component: Ant Design List cu pagination și itemLayout="vertical"
+- CRUD operations: handleEditModal (CREATE, UPDATE, SYNC), handleDeleteSubscriptionType
+
+**Current Implementation (React):**
+```typescript
+import { Alert, Button, CardProps, Drawer, Flex, List, message, Popconfirm, Typography } from 'antd';
+import { DeleteOutlined, PlusOutlined, EditOutlined } from '@ant-design/icons';
+import { Card } from '../../../index.ts';
+import { ReactNode, useCallback, useState } from 'react';
+import { useMediaQuery } from 'react-responsive';
+import { SubscriptionTypeT } from '../../../../types/subscriptions.ts';
+import { MODAL_ACTIONS } from '../../../../constants/index.ts';
+import { SubscriptionTypeForm } from '../SubscriptionTypeForm/SubscriptionTypeForm.tsx';
+import { ResponseT } from '../../../../types/courses.ts';
+import { handleDeleteSubscriptionTypeApi } from '../../../../utils/apiService.tsx';
+
+const { CLOSE, UPDATE, SYNC, CREATE } = MODAL_ACTIONS;
+
+type Props = {
+  typesData?: SubscriptionTypeT[];
+  loading?: boolean;
+  error?: ReactNode;
+  editModalWidth?: string;
+  setSubscriptionTypes: React.Dispatch<React.SetStateAction<SubscriptionTypeT[]>>
+} & CardProps;
+
+export const SubscriptionTypes = ({ typesData, loading, error, editModalWidth, setSubscriptionTypes, ...others }: Props) => {
+  const isLarge = useMediaQuery({ maxWidth: 1024 });
+
+  const [modalAction, setModalAction] = useState<MODAL_ACTIONS>(CLOSE);
+  const [recordToUpdate, setRecordToUpdate] = useState<SubscriptionTypeT>();
+
+  const handleEditModal = (action: MODAL_ACTIONS, handledRecord?: SubscriptionTypeT) => {
+    setModalAction(action);
+    setRecordToUpdate(handledRecord);
+
+    // Sync ui data after closing the modal
+    if (action === SYNC && handledRecord) {
+      syncAfterUpdate(handledRecord as SubscriptionTypeT);
+      setModalAction(CLOSE);
+      setRecordToUpdate(undefined);
+    }
+    if (action === CREATE && handledRecord) {
+      syncAfterCreate(handledRecord as SubscriptionTypeT);
+      setModalAction(CLOSE);
+      setRecordToUpdate(undefined);
+    }
+  }
+
+  const handleDeleteSubscriptionType = useCallback(async (recordId: number) => {
+    const res: ResponseT = await handleDeleteSubscriptionTypeApi(recordId) as unknown as ResponseT;
+    if ([200, 201].includes(res?.status)) {
+      syncAfterDelete(recordId);
+      message.open({ 'type': 'success', 'content': `Subscription Type ${recordId} deleted successfully` });
+    } else {
+      message.open({ 'type': 'error', 'content': `Subscription Type ${recordId} cannot be deleted` });
+    }
+  }, []);
+
+  const syncAfterCreate = (newRecord: SubscriptionTypeT) => {
+    setSubscriptionTypes(prevState => [newRecord, ...prevState]);
+  }
+
+  const syncAfterUpdate = (newRecord: SubscriptionTypeT) => {
+    setSubscriptionTypes(prevState => prevState?.map(function (record) {
+      if (Number(record.id) === Number(newRecord?.id)) {
+        return newRecord;
+      }
+      return record;
+    }));
+  }
+
+  const syncAfterDelete = (recordId: number) => {
+    setSubscriptionTypes(prevState => prevState?.filter((item) => item.id !== recordId));
+  }
+
+  return (
+    <Card
+      title="Tipuri de abonamente"
+      className="exam-card card"
+      actions={[<Button>Vezi toate</Button>]}
+      extra={<Button icon={<PlusOutlined />} onClick={() => { handleEditModal(CREATE) }} />}
+      {...others}
+    >
+      {error ? (
+        <Alert message="Error" description={error.toString()} type="error" showIcon />
+      ) : (
+        <List
+          itemLayout="vertical"
+          size="large"
+          pagination={{
+            onChange: (page) => {
+              console.log(page);
+            },
+            pageSize: 5,
+            align: 'center',
+          }}
+          dataSource={typesData}
+          renderItem={(record) => (
+            <List.Item key={record.id}>
+              <Flex align="center" justify="space-between">
+                <Flex vertical={!isLarge} gap={!isLarge ? 'small' : 'middle'}>
+                  <Typography.Title level={5} style={{ margin: 0 }}>
+                    {record.title} (id {record.id} - tip {record.form})
+                  </Typography.Title>
+                  <Typography.Text style={{ fontWeight: 'bold' }}>Price: {record.price}</Typography.Text>
+                  {record?.productName &&
+                    <Typography.Text>
+                      Dashboard useri: {record?.productName}
+                    </Typography.Text>}
+                  {record?.categoryId &&
+                    <Typography.Text>
+                      Categorie: {record?.categoryId}
+                    </Typography.Text>}
+                  {record?.courseId &&
+                    <Typography.Text>
+                      Id Curs: {record?.courseId}
+                    </Typography.Text>}
+                  <Typography.Text>
+                    {record?.isActive ? <span style={{ color: 'green' }}>Activ</span> : <span style={{ color: 'red' }}>Inactiv</span>}
+                  </Typography.Text>
+                </Flex>
+                <div>
+                  <Button size="small" icon={<EditOutlined />} type="link" onClick={() => { handleEditModal(UPDATE, record) }} />
+                  <Popconfirm title="Esti sigur ca vrei sa stergi acest tip de abonament?" onConfirm={() => handleDeleteSubscriptionType(record.id as number)} okText="Da" cancelText="Nu" >
+                    <Button size="small" type="link" danger icon={<DeleteOutlined />} />
+                  </Popconfirm>
+                </div>
+              </Flex>
+            </List.Item>
+          )}
+          loading={loading}
+        />
+      )}
+
+      <Drawer
+        title={`${modalAction === UPDATE ? 'Update' : 'Create'} a Type`}
+        width={editModalWidth}
+        placement="right"
+        open={modalAction !== CLOSE}
+        onClose={() => handleEditModal(CLOSE)}
+      >
+        {!!((recordToUpdate) || modalAction === CREATE) && (
+          <SubscriptionTypeForm recordToUpdate={recordToUpdate} handleEditModal={handleEditModal} />
+        )}
+      </Drawer>
+    </Card>
+  );
+};
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+import { List, Button, Drawer, Flex, Typography, Popconfirm, Alert, message, Card } from 'ant-design-vue'
+import { DeleteOutlined, PlusOutlined, EditOutlined } from '@ant-design/icons-vue'
+import { useBreakpoints } from '@vueuse/core'
+import type { SubscriptionTypeT, ResponseT } from '@/types'
+import { MODAL_ACTIONS } from '@/constants'
+import SubscriptionTypeForm from './SubscriptionTypeForm.vue'
+import { handleDeleteSubscriptionTypeApi } from '@/utils/apiService'
+
+const { CLOSE, UPDATE, SYNC, CREATE } = MODAL_ACTIONS
+
+interface Props {
+  typesData?: SubscriptionTypeT[]
+  loading?: boolean
+  error?: string
+  editModalWidth?: string
+  setSubscriptionTypes: (types: SubscriptionTypeT[]) => void
+}
+
+const props = defineProps<Props>()
+
+const breakpoints = useBreakpoints({ large: 1024 })
+const isLarge = breakpoints.smaller('large')
+
+const modalAction = ref<MODAL_ACTIONS>(CLOSE)
+const recordToUpdate = ref<SubscriptionTypeT>()
+
+const handleEditModal = (action: MODAL_ACTIONS, handledRecord?: SubscriptionTypeT) => {
+  modalAction.value = action
+  recordToUpdate.value = handledRecord
+
+  // Sync ui data after closing the modal
+  if (action === SYNC && handledRecord) {
+    syncAfterUpdate(handledRecord)
+    modalAction.value = CLOSE
+    recordToUpdate.value = undefined
+  }
+  if (action === CREATE && handledRecord) {
+    syncAfterCreate(handledRecord)
+    modalAction.value = CLOSE
+    recordToUpdate.value = undefined
+  }
+}
+
+const handleDeleteSubscriptionType = async (recordId: number) => {
+  try {
+    const res = await handleDeleteSubscriptionTypeApi(recordId) as ResponseT
+    if ([200, 201].includes(res?.status)) {
+      syncAfterDelete(recordId)
+      message.success(`Subscription Type ${recordId} deleted successfully`)
+    } else {
+      message.error(`Subscription Type ${recordId} cannot be deleted`)
+    }
+  } catch (error) {
+    console.error('Delete error:', error)
+    message.error('Failed to delete subscription type')
+  }
+}
+
+const syncAfterCreate = (newRecord: SubscriptionTypeT) => {
+  const currentTypes = props.typesData || []
+  props.setSubscriptionTypes([newRecord, ...currentTypes])
+}
+
+const syncAfterUpdate = (newRecord: SubscriptionTypeT) => {
+  const currentTypes = props.typesData || []
+  props.setSubscriptionTypes(
+    currentTypes.map(record =>
+      Number(record.id) === Number(newRecord?.id) ? newRecord : record
+    )
+  )
+}
+
+const syncAfterDelete = (recordId: number) => {
+  const currentTypes = props.typesData || []
+  props.setSubscriptionTypes(
+    currentTypes.filter(item => item.id !== recordId)
+  )
+}
+
+const dataSource = computed(() => props.typesData || [])
+</script>
+
+<template>
+  <a-card
+    title="Tipuri de abonamente"
+    class="exam-card card"
+  >
+    <template #extra>
+      <a-button :icon="h(PlusOutlined)" @click="handleEditModal(CREATE)" />
+    </template>
+
+    <template #actions>
+      <a-button>Vezi toate</a-button>
+    </template>
+
+    <a-alert
+      v-if="error"
+      message="Error"
+      :description="error"
+      type="error"
+      show-icon
+    />
+
+    <a-list
+      v-else
+      item-layout="vertical"
+      size="large"
+      :pagination="{
+        onChange: (page) => console.log(page),
+        pageSize: 5,
+        align: 'center'
+      }"
+      :dataSource="dataSource"
+      :loading="loading"
+    >
+      <template #renderItem="{ item: record }">
+        <a-list-item :key="record.id">
+          <a-flex align="center" justify="space-between">
+            <a-flex :vertical="!isLarge" :gap="!isLarge ? 'small' : 'middle'">
+              <a-typography-title :level="5" :style="{ margin: 0 }">
+                {{ record.title }} (id {{ record.id }} - tip {{ record.form }})
+              </a-typography-title>
+
+              <a-typography-text :style="{ fontWeight: 'bold' }">
+                Price: {{ record.price }}
+              </a-typography-text>
+
+              <a-typography-text v-if="record?.productName">
+                Dashboard useri: {{ record?.productName }}
+              </a-typography-text>
+
+              <a-typography-text v-if="record?.categoryId">
+                Categorie: {{ record?.categoryId }}
+              </a-typography-text>
+
+              <a-typography-text v-if="record?.courseId">
+                Id Curs: {{ record?.courseId }}
+              </a-typography-text>
+
+              <a-typography-text>
+                <span v-if="record?.isActive" style="color: green">Activ</span>
+                <span v-else style="color: red">Inactiv</span>
+              </a-typography-text>
+            </a-flex>
+
+            <div>
+              <a-button
+                size="small"
+                type="link"
+                :icon="h(EditOutlined)"
+                @click="handleEditModal(UPDATE, record)"
+              />
+              <a-popconfirm
+                title="Esti sigur ca vrei sa stergi acest tip de abonament?"
+                ok-text="Da"
+                cancel-text="Nu"
+                @confirm="handleDeleteSubscriptionType(record.id as number)"
+              >
+                <a-button
+                  size="small"
+                  type="link"
+                  danger
+                  :icon="h(DeleteOutlined)"
+                />
+              </a-popconfirm>
+            </div>
+          </a-flex>
+        </a-list-item>
+      </template>
+    </a-list>
+
+    <a-drawer
+      :title="`${modalAction === UPDATE ? 'Update' : 'Create'} a Type`"
+      :width="editModalWidth"
+      placement="right"
+      :open="modalAction !== CLOSE"
+      @close="handleEditModal(CLOSE)"
+    >
+      <SubscriptionTypeForm
+        v-if="recordToUpdate || modalAction === CREATE"
+        :recordToUpdate="recordToUpdate"
+        :handleEditModal="handleEditModal"
+      />
+    </a-drawer>
+  </a-card>
+</template>
+
+<style scoped>
+.exam-card {
+  height: 100%;
+}
+</style>
+```
+
+**Notes:**
+- **List Component**: Ant Design List cu itemLayout="vertical" și pagination (5 items/page)
+- **CRUD Operations**: Create (+ button), Update (edit icon), Delete (delete icon cu Popconfirm)
+- **Sync Methods**: syncAfterCreate, syncAfterUpdate, syncAfterDelete (update UI fără re-fetch)
+- **Responsive**: Flex layout cu vertical/horizontal switch based pe screen size
+- **Drawer**: Modal drawer pentru create/edit form (width: 640px desktop, 100% mobile)
+- **Active Status**: Green text pentru activ, red text pentru inactiv
+
+**Recommendations:**
+1. **Filters**: Adaugă filters pentru form type (Somaway, Summit, Free) și status (Activ, Inactiv)
+2. **Search**: Adaugă search box pentru căutare după title
+3. **Sorting**: Adaugă sorting după price, createdAt, title
+4. **Bulk Actions**: Adaugă select multiple și bulk delete/activate/deactivate
+5. **Quick Edit**: Adaugă inline edit pentru price și status (fără să deschizi drawer)
+6. **Duplicate**: Adaugă buton "Duplicate" pentru a crea un tip similar
+
+**Migration Complexity**: MEDIUM (list rendering, CRUD operations, drawer management)
+
+**Estimated Effort**: 1 zi (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 7: Subscription Type Form (Complex Form with 12+ Fields)
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Formularul pentru create/edit subscription type conține 12+ câmpuri pentru configurare completă:
+title, subtitle, description, buttonTitle, productName, price, form (1/2/3), categoryId,
+status (0/1/2), stripePriceId, duration, bonusMonths, mailerLiteGroup, isActive.
+
+**Important**: După creare, câmpurile `categoryId` și `form` sunt disabled pentru a nu afecta
+userii care au achizitionat deja tipul de abonament.
+
+**User Flow:**
+1. Admin click pe + button (create) sau edit icon (update) în lista de subscription types
+2. Se deschide drawer cu formularul
+3. Admin completează/editează câmpurile (title, price, form, category, etc.)
+4. Pentru form type:
+   - **Form 1 (Somaway)**: Access la toate materialele → categoryId optional
+   - **Form 2 (Summit)**: Access doar la o categorie → categoryId required
+   - **Form 3 (Free)**: Access la o categorie, fără payment → categoryId required
+5. Adaugă stripePriceId pentru recurring payments (extracted din Stripe dashboard)
+6. Setează duration (luni) + bonusMonths (optional)
+7. Setează mailerLiteGroup pentru auto-assignment după achiziție
+8. Toggle isActive (Disponibil/Indisponibil pe pagina de abonamente)
+9. Click "Salveaza" → form submit → API call (POST/PATCH) → success message → drawer închis → listă sincronizată
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/subscriptions/SubscriptionTypeForm/SubscriptionTypeForm.tsx:1-319
+- Form fields: 12 campos principais + hidden id field
+- Validation: title (min 4), productName (min 4), buttonTitle (min 4), price (required), form (required), status (required), isActive (required)
+- Disabled fields după creare: categoryId, form (pentru a păstra consistența istoricului)
+
+**Current Implementation (React):**
+```typescript
+import { Button, Col, Form, Input, message, Radio, Row, Select } from 'antd';
+import { SaveOutlined } from '@ant-design/icons';
+import { SubscriptionTypeT, ResponseT, SelectType } from '../../../../types';
+import { MAIN, MODAL_ACTIONS } from '../../../../constants';
+import { getMainCategoriesApi, handlePushSubscriptionTypeApi } from '../../../../utils/apiService';
+import { useEffect, useState } from 'react';
+import { useAuth } from '../../../../context/auth';
+
+const { CREATE, SYNC } = MODAL_ACTIONS;
+
+type Props = {
+  recordToUpdate: SubscriptionTypeT | undefined;
+  handleEditModal: (action: MODAL_ACTIONS, newSubscriptionType?: SubscriptionTypeT) => void;
+};
+
+export const SubscriptionTypeForm = ({ recordToUpdate, handleEditModal }: Props) => {
+  const [form] = Form.useForm();
+  const [loading, setLoading] = useState(true);
+  const { authUser } = useAuth();
+  const [categoryOptions, setCategoryOptions] = useState<SelectType[]>([]);
+
+  // Form type options (3 types)
+  const subTypeOptions = [
+    { value: '1', label: 'Abonament Somaway' },      // Access la toate materialele
+    { value: '2', label: 'Tip summit' },              // Access doar la o categorie
+    { value: '3', label: 'Tip Free' },                // Access la o categorie, fără payment
+  ];
+
+  // Status options (3 statuses)
+  const subTypeStatuses = [
+    { value: '0', label: 'Dezactivat' },
+    { value: '1', label: 'Normal' },
+    { value: '2', label: 'Campanie' },
+  ];
+
+  const onFinish = async (formBody: SubscriptionTypeT) => {
+    // Convert isActive string to boolean
+    formBody.isActive = formBody.isActive.toString() === 'true';
+
+    const fetchMethod = formBody?.id ? 'PATCH' : 'POST';
+    const res: ResponseT = (await handlePushSubscriptionTypeApi(fetchMethod, formBody)) as unknown as ResponseT;
+
+    if ([200, 201].includes(res?.status)) {
+      const modalAction = formBody?.id ? SYNC : CREATE;
+      handleEditModal(modalAction, res.data as unknown as SubscriptionTypeT);
+
+      message.open({
+        type: 'success',
+        content: `Type ${(res.data as unknown as SubscriptionTypeT).id} ${
+          formBody?.id ? 'updated' : 'created'
+        } successfully`,
+      });
+    } else {
+      console.log('Failed:', res);
+    }
+  };
+
+  const onFinishFailed = (errorInfo: unknown) => {
+    console.log('Failed:', errorInfo);
+    message.open({
+      type: 'error',
+      content: 'Could not save type details. Please try again later!',
+    });
+  };
+
+  // Fetch categories for dropdown (only main categories)
+  useEffect(() => {
+    getMainCategoriesApi(MAIN, setLoading, authUser?.accessToken ?? '').then((res: ResponseT) => {
+      if ([200, 201].includes(res?.status)) {
+        const categoriesData = (res.data as unknown as CategoryResponse)?.categories;
+        setCategoryOptions([
+          { value: '0', label: 'No Parent' },
+          ...categoriesData.map((category) => ({
+            value: category.id?.toString() ?? '0',
+            label: category.title,
+          })),
+        ]);
+      }
+    });
+  }, []);
+
+  return (
+    <Form
+      form={form}
+      name="user-profile-details-form"
+      layout="vertical"
+      initialValues={
+        (recordToUpdate && {
+          id: recordToUpdate?.id,
+          title: recordToUpdate?.title,
+          subtitle: recordToUpdate?.subtitle,
+          buttonTitle: recordToUpdate?.buttonTitle,
+          description: recordToUpdate?.description,
+          price: recordToUpdate?.price,
+          form: recordToUpdate?.form?.toString() ?? '1',
+          status: recordToUpdate?.status?.toString() ?? '1',
+          categoryId: recordToUpdate?.categoryId?.toString(),
+          isActive: recordToUpdate.isActive ? 'true' : 'false',
+          productName: recordToUpdate?.productName,
+          stripePriceId: recordToUpdate?.stripePriceId,
+          duration: recordToUpdate?.duration,
+          bonusMonths: recordToUpdate?.bonusMonths,
+          mailerLiteGroup: recordToUpdate?.mailerLiteGroup,
+        }) ||
+        {}
+      }
+      onFinish={onFinish}
+      onFinishFailed={onFinishFailed}
+      autoComplete="on"
+      requiredMark={false}
+    >
+      <Row gutter={[16, 0]}>
+        <Form.Item<SubscriptionTypeT> name="id">
+          <Input type="hidden" />
+        </Form.Item>
+
+        {/* Row 1: Title + Product Name */}
+        <Col sm={24} lg={12}>
+          <Form.Item<SubscriptionTypeT>
+            label="Titlu Abonament (vizibil pagina abonamente)"
+            name="title"
+            rules={[{ required: true, min: 4, message: 'Titlul este obligatoriu!' }]}
+          >
+            <Input />
+          </Form.Item>
+        </Col>
+        <Col sm={24} lg={12}>
+          <Form.Item<SubscriptionTypeT>
+            label="Tip produs (vizibil dashboard useri)"
+            name="productName"
+            rules={[{ required: true, min: 4, message: 'Acest camp este obligatoriu!' }]}
+          >
+            <Input />
+          </Form.Item>
+        </Col>
+
+        {/* Row 2: Subtitle (Discount) + Button Title */}
+        <Col sm={24} lg={12}>
+          <Form.Item<SubscriptionTypeT> label="Discount" name="subtitle" rules={[{ required: false }]}>
+            <Input />
+          </Form.Item>
+        </Col>
+        <Col sm={24} lg={12}>
+          <Form.Item<SubscriptionTypeT>
+            label="Titlu buton"
+            name="buttonTitle"
+            rules={[{ required: true, min: 4, message: 'Textul pe buton este obligatoriu!' }]}
+          >
+            <Input />
+          </Form.Item>
+        </Col>
+
+        {/* Row 3: Description (full width) */}
+        <Col sm={24} lg={24}>
+          <Form.Item<SubscriptionTypeT> label="Descriere" name="description" rules={[]}>
+            <Input type="textarea" />
+          </Form.Item>
+        </Col>
+
+        {/* Row 4: Category + Price */}
+        <Col sm={24} lg={8}>
+          {loading ? (
+            <Loader />
+          ) : (
+            <Form.Item<SubscriptionTypeT> label="Categorie" name="categoryId">
+              <Select disabled={Boolean(recordToUpdate?.id)} options={categoryOptions} />
+            </Form.Item>
+          )}
+        </Col>
+        <Col sm={24} lg={8}>
+          <Form.Item<SubscriptionTypeT>
+            label="Pret"
+            name="price"
+            rules={[{ required: true, message: 'Pretul este obligatoriu!' }]}
+          >
+            <Input />
+          </Form.Item>
+        </Col>
+
+        {/* Row 5: Form Type + Stripe Price ID */}
+        <Col sm={24} lg={12}>
+          <Form.Item<SubscriptionTypeT>
+            label="Tip"
+            name="form"
+            rules={[{ required: true, message: 'Tipul este obligatoriu!' }]}
+          >
+            <Select disabled={Boolean(recordToUpdate?.id)} options={subTypeOptions} />
+          </Form.Item>
+        </Col>
+        <Col sm={24} lg={12}>
+          <Form.Item<SubscriptionTypeT> label="stripePriceId (recurenta extrasa din stripe)" name="stripePriceId">
+            <Input />
+          </Form.Item>
+        </Col>
+
+        {/* Info text about form types */}
+        <i style={{ marginLeft: '10px', color: 'gray' }}>
+          Abonament tip somaway (standard) - access la toate materialele <br />
+          Abonament tip summit - access doar la o categorie de categorie cursuri <br />
+          Abonament tip free - acces la o categorie de cursuri, fara a trece prin payment
+          <br />
+          <br />
+        </i>
+
+        {/* Row 6: Status + Duration + Bonus Months */}
+        <Col sm={24} lg={12}>
+          <Form.Item<SubscriptionTypeT>
+            label="Status"
+            name="status"
+            rules={[{ required: true, message: 'Tipul este obligatoriu!' }]}
+          >
+            <Select options={subTypeStatuses} />
+          </Form.Item>
+        </Col>
+        <Col sm={24} lg={6}>
+          <Form.Item<SubscriptionTypeT> label="Durata (luni)" name="duration">
+            <Input />
+          </Form.Item>
+        </Col>
+        <Col sm={24} lg={6}>
+          <Form.Item<SubscriptionTypeT> label="Bonus (luni)" name="bonusMonths">
+            <Input />
+          </Form.Item>
+        </Col>
+
+        {/* Row 7: MailerLite Group (full width) */}
+        <Col lg={24}>
+          <Form.Item<SubscriptionTypeT>
+            label="Grup MailerLite (denumirea grupului dupa achizitia abonamentului)"
+            name="mailerLiteGroup"
+            rules={[
+              {
+                max: 255,
+                message: 'Denumirea grupului nu poate depasi 255 de caractere',
+              },
+            ]}
+          >
+            <Input />
+          </Form.Item>
+        </Col>
+
+        {/* Row 8: isActive (Radio group) */}
+        <Col span={24}>
+          <Form.Item<SubscriptionTypeT>
+            label="Vizibil pe pagina de abonamente"
+            name="isActive"
+            rules={[{ required: true, message: 'Please select status!' }]}
+          >
+            <Radio.Group>
+              <Radio value="true">Disponibil</Radio>
+              <Radio value="false">Indisponibil</Radio>
+            </Radio.Group>
+          </Form.Item>
+        </Col>
+      </Row>
+
+      {/* Submit button */}
+      <Form.Item>
+        <Button type="primary" htmlType="submit" icon={<SaveOutlined />}>
+          Salveaza
+        </Button>
+      </Form.Item>
+
+      {/* Important warning text */}
+      <i>
+        O data creat un tip de abonament nu-si mai poate modifica categoria si tipul pentru a nu afecta
+        userii care au achizitionat deja tipul de abonament. Daca se doreste modificarea, se va crea un nou
+        tip de abonament iar cel vechi se va pastra inactiv pentru a nu pierde istoricul userilor care au
+        cumparat in trecut acest tip de abonament.
+        <br />
+      </i>
+    </Form>
+  );
+};
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref, onMounted, reactive } from 'vue'
+import { Form, Input, Select, Radio, Button, message, Row, Col } from 'ant-design-vue'
+import { SaveOutlined } from '@ant-design/icons-vue'
+import type { SubscriptionTypeT, ResponseT, SelectType, CategoryResponse } from '@/types'
+import { MAIN, MODAL_ACTIONS } from '@/constants'
+import { getMainCategoriesApi, handlePushSubscriptionTypeApi } from '@/utils/apiService'
+import { useAuthStore } from '@/stores/auth'
+
+const { CREATE, SYNC } = MODAL_ACTIONS
+
+interface Props {
+  recordToUpdate?: SubscriptionTypeT
+  handleEditModal: (action: MODAL_ACTIONS, newSubscriptionType?: SubscriptionTypeT) => void
+}
+
+const props = defineProps<Props>()
+const authStore = useAuthStore()
+
+const formRef = ref()
+const loading = ref(true)
+const categoryOptions = ref<SelectType[]>([])
+
+// Form type options (3 types)
+const subTypeOptions = [
+  { value: '1', label: 'Abonament Somaway' },
+  { value: '2', label: 'Tip summit' },
+  { value: '3', label: 'Tip Free' },
+]
+
+// Status options (3 statuses)
+const subTypeStatuses = [
+  { value: '0', label: 'Dezactivat' },
+  { value: '1', label: 'Normal' },
+  { value: '2', label: 'Campanie' },
+]
+
+// Form initial values
+const formState = reactive<SubscriptionTypeT>(
+  props.recordToUpdate
+    ? {
+        id: props.recordToUpdate.id,
+        title: props.recordToUpdate.title,
+        subtitle: props.recordToUpdate.subtitle,
+        buttonTitle: props.recordToUpdate.buttonTitle,
+        description: props.recordToUpdate.description,
+        price: props.recordToUpdate.price,
+        form: props.recordToUpdate.form?.toString() ?? '1',
+        status: props.recordToUpdate.status?.toString() ?? '1',
+        categoryId: props.recordToUpdate.categoryId?.toString(),
+        isActive: props.recordToUpdate.isActive ? 'true' : 'false',
+        productName: props.recordToUpdate.productName,
+        stripePriceId: props.recordToUpdate.stripePriceId,
+        duration: props.recordToUpdate.duration,
+        bonusMonths: props.recordToUpdate.bonusMonths,
+        mailerLiteGroup: props.recordToUpdate.mailerLiteGroup,
+      }
+    : ({} as SubscriptionTypeT)
+)
+
+// Form validation rules
+const rules = {
+  title: [{ required: true, min: 4, message: 'Titlul este obligatoriu!' }],
+  productName: [{ required: true, min: 4, message: 'Acest camp este obligatoriu!' }],
+  buttonTitle: [{ required: true, min: 4, message: 'Textul pe buton este obligatoriu!' }],
+  price: [{ required: true, message: 'Pretul este obligatoriu!' }],
+  form: [{ required: true, message: 'Tipul este obligatoriu!' }],
+  status: [{ required: true, message: 'Tipul este obligatoriu!' }],
+  isActive: [{ required: true, message: 'Please select status!' }],
+  mailerLiteGroup: [{ max: 255, message: 'Denumirea grupului nu poate depasi 255 de caractere' }],
+}
+
+const onFinish = async (values: SubscriptionTypeT) => {
+  try {
+    // Convert isActive string to boolean
+    values.isActive = values.isActive.toString() === 'true'
+
+    const fetchMethod = values?.id ? 'PATCH' : 'POST'
+    const res = (await handlePushSubscriptionTypeApi(fetchMethod, values)) as ResponseT
+
+    if ([200, 201].includes(res?.status)) {
+      const modalAction = values?.id ? SYNC : CREATE
+      props.handleEditModal(modalAction, res.data as SubscriptionTypeT)
+
+      message.success(
+        `Type ${(res.data as SubscriptionTypeT).id} ${values?.id ? 'updated' : 'created'} successfully`
+      )
+    } else {
+      message.error('Could not save type details. Please try again later!')
+    }
+  } catch (error) {
+    console.error('Form submit error:', error)
+    message.error('Could not save type details. Please try again later!')
+  }
+}
+
+const onFinishFailed = (errorInfo: any) => {
+  console.log('Failed:', errorInfo)
+  message.error('Could not save type details. Please try again later!')
+}
+
+// Fetch categories for dropdown
+onMounted(async () => {
+  try {
+    loading.value = true
+    const res = (await getMainCategoriesApi(MAIN, authStore.accessToken)) as ResponseT
+
+    if ([200, 201].includes(res?.status)) {
+      const categoriesData = (res.data as CategoryResponse)?.categories
+      categoryOptions.value = [
+        { value: '0', label: 'No Parent' },
+        ...categoriesData.map((category) => ({
+          value: category.id?.toString() ?? '0',
+          label: category.title,
+        })),
+      ]
+    }
+  } catch (error) {
+    console.error('Failed to load categories:', error)
+    message.error('Failed to load categories')
+  } finally {
+    loading.value = false
+  }
+})
+</script>
+
+<template>
+  <a-form
+    ref="formRef"
+    :model="formState"
+    :rules="rules"
+    layout="vertical"
+    :required-mark="false"
+    @finish="onFinish"
+    @finishFailed="onFinishFailed"
+  >
+    <a-row :gutter="[16, 0]">
+      <!-- Hidden ID field -->
+      <a-form-item name="id" hidden>
+        <a-input v-model:value="formState.id" type="hidden" />
+      </a-form-item>
+
+      <!-- Row 1: Title + Product Name -->
+      <a-col :sm="24" :lg="12">
+        <a-form-item label="Titlu Abonament (vizibil pagina abonamente)" name="title">
+          <a-input v-model:value="formState.title" />
+        </a-form-item>
+      </a-col>
+      <a-col :sm="24" :lg="12">
+        <a-form-item label="Tip produs (vizibil dashboard useri)" name="productName">
+          <a-input v-model:value="formState.productName" />
+        </a-form-item>
+      </a-col>
+
+      <!-- Row 2: Subtitle + Button Title -->
+      <a-col :sm="24" :lg="12">
+        <a-form-item label="Discount" name="subtitle">
+          <a-input v-model:value="formState.subtitle" />
+        </a-form-item>
+      </a-col>
+      <a-col :sm="24" :lg="12">
+        <a-form-item label="Titlu buton" name="buttonTitle">
+          <a-input v-model:value="formState.buttonTitle" />
+        </a-form-item>
+      </a-col>
+
+      <!-- Row 3: Description -->
+      <a-col :sm="24" :lg="24">
+        <a-form-item label="Descriere" name="description">
+          <a-textarea v-model:value="formState.description" />
+        </a-form-item>
+      </a-col>
+
+      <!-- Row 4: Category + Price -->
+      <a-col :sm="24" :lg="8">
+        <a-form-item label="Categorie" name="categoryId">
+          <a-select
+            v-model:value="formState.categoryId"
+            :disabled="Boolean(recordToUpdate?.id)"
+            :options="categoryOptions"
+            :loading="loading"
+          />
+        </a-form-item>
+      </a-col>
+      <a-col :sm="24" :lg="8">
+        <a-form-item label="Pret" name="price">
+          <a-input v-model:value="formState.price" />
+        </a-form-item>
+      </a-col>
+
+      <!-- Row 5: Form Type + Stripe Price ID -->
+      <a-col :sm="24" :lg="12">
+        <a-form-item label="Tip" name="form">
+          <a-select
+            v-model:value="formState.form"
+            :disabled="Boolean(recordToUpdate?.id)"
+            :options="subTypeOptions"
+          />
+        </a-form-item>
+      </a-col>
+      <a-col :sm="24" :lg="12">
+        <a-form-item label="stripePriceId (recurenta extrasa din stripe)" name="stripePriceId">
+          <a-input v-model:value="formState.stripePriceId" />
+        </a-form-item>
+      </a-col>
+
+      <!-- Info text about form types -->
+      <a-col :span="24">
+        <i style="margin-left: 10px; color: gray">
+          Abonament tip somaway (standard) - access la toate materialele <br />
+          Abonament tip summit - access doar la o categorie de categorie cursuri <br />
+          Abonament tip free - acces la o categorie de cursuri, fara a trece prin payment
+          <br /><br />
+        </i>
+      </a-col>
+
+      <!-- Row 6: Status + Duration + Bonus -->
+      <a-col :sm="24" :lg="12">
+        <a-form-item label="Status" name="status">
+          <a-select v-model:value="formState.status" :options="subTypeStatuses" />
+        </a-form-item>
+      </a-col>
+      <a-col :sm="24" :lg="6">
+        <a-form-item label="Durata (luni)" name="duration">
+          <a-input v-model:value="formState.duration" />
+        </a-form-item>
+      </a-col>
+      <a-col :sm="24" :lg="6">
+        <a-form-item label="Bonus (luni)" name="bonusMonths">
+          <a-input v-model:value="formState.bonusMonths" />
+        </a-form-item>
+      </a-col>
+
+      <!-- Row 7: MailerLite Group -->
+      <a-col :lg="24">
+        <a-form-item
+          label="Grup MailerLite (denumirea grupului dupa achizitia abonamentului)"
+          name="mailerLiteGroup"
+        >
+          <a-input v-model:value="formState.mailerLiteGroup" />
+        </a-form-item>
+      </a-col>
+
+      <!-- Row 8: isActive -->
+      <a-col :span="24">
+        <a-form-item label="Vizibil pe pagina de abonamente" name="isActive">
+          <a-radio-group v-model:value="formState.isActive">
+            <a-radio value="true">Disponibil</a-radio>
+            <a-radio value="false">Indisponibil</a-radio>
+          </a-radio-group>
+        </a-form-item>
+      </a-col>
+    </a-row>
+
+    <!-- Submit button -->
+    <a-form-item>
+      <a-button type="primary" html-type="submit" :icon="h(SaveOutlined)"> Salveaza </a-button>
+    </a-form-item>
+
+    <!-- Important warning text -->
+    <i>
+      O data creat un tip de abonament nu-si mai poate modifica categoria si tipul pentru a nu afecta userii
+      care au achizitionat deja tipul de abonament. Daca se doreste modificarea, se va crea un nou tip de
+      abonament iar cel vechi se va pastra inactiv pentru a nu pierde istoricul userilor care au cumparat in
+      trecut acest tip de abonament.
+      <br />
+    </i>
+  </a-form>
+</template>
+```
+
+**Notes:**
+- **12+ Fields**: title, subtitle, description, buttonTitle, productName, price, form, categoryId, status, stripePriceId, duration, bonusMonths, mailerLiteGroup, isActive
+- **Disabled Fields După Creare**: categoryId și form sunt disabled după creare (Boolean(recordToUpdate?.id))
+- **3 Form Types**: Somaway (1), Summit (2), Free (3) - cu explicații în-line
+- **3 Statuses**: Dezactivat (0), Normal (1), Campanie (2)
+- **Stripe Integration**: stripePriceId field pentru recurring payments
+- **MailerLite Integration**: mailerLiteGroup field (max 255 chars)
+- **Duration Fields**: duration (luni) + bonusMonths (luni bonus)
+- **isActive Radio**: Disponibil/Indisponibil (boolean convertit din string)
+
+**Recommendations:**
+1. **Conditional categoryId**: Fă categoryId required doar pentru form 2 și 3 (Summit și Free)
+2. **Price Validation**: Adaugă validation pentru price (numeric, min 0)
+3. **Duration Validation**: Adaugă validation pentru duration și bonusMonths (numeric, min 0)
+4. **Stripe Price ID Validation**: Adaugă format validation pentru stripePriceId (price_*)
+5. **Real-time Preview**: Adaugă preview card pentru a vizualiza cum arată subscription type pe pagina client
+6. **Category Filter**: Filtrează categories după type (doar categorii relevante pentru Summit)
+
+**Migration Complexity**: HIGH (complex form, 12+ fields, conditional logic, disabled fields)
+
+**Estimated Effort**: 2-3 zile (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 8: Subscription Type Types & Statuses (3 Forms + 3 Statuses)
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Subscription types au 2 enum-uri importante:
+1. **Form Types (3 types)**: 1=Somaway (standard), 2=Summit (category-based), 3=Free
+2. **Statuses (3 statuses)**: 0=Dezactivat, 1=Normal, 2=Campanie
+
+Fiecare form type are logică diferită de access și payment.
+
+**User Flow - Form Types:**
+1. **Form 1 (Somaway - Standard)**:
+   - User plătește și primește access la TOATE materialele (toate cursurile și categoriile)
+   - categoryId = optional/null
+   - Stripe recurring payment (stripePriceId)
+   - MailerLite group assignment după purchase
+
+2. **Form 2 (Summit - Category-based)**:
+   - User plătește și primește access doar la o CATEGORIE de cursuri
+   - categoryId = required (selectează categoria la care vrea access)
+   - Stripe recurring payment (stripePriceId)
+   - MailerLite group assignment după purchase
+
+3. **Form 3 (Free)**:
+   - User primește access GRATUIT la o categorie de cursuri
+   - categoryId = required
+   - NO payment flow (fără Stripe, fără invoice)
+   - MailerLite group assignment (optional)
+
+**User Flow - Statuses:**
+1. **Status 0 (Dezactivat)**:
+   - Subscription type nu este vizibil pe pagina de abonamente
+   - Nu poate fi achiziționat de useri
+   - Păstrat în sistem pentru istoricul userilor care l-au cumpărat în trecut
+
+2. **Status 1 (Normal)**:
+   - Subscription type activ, vizibil pe pagina de abonamente
+   - Disponibil pentru achiziție la preț normal
+
+3. **Status 2 (Campanie)**:
+   - Subscription type în campanie (probabil preț redus sau bonus months)
+   - Afișat cu marker special pe pagina de abonamente (ex: "OFERTĂ LIMITATĂ")
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/subscriptions/SubscriptionTypeForm/SubscriptionTypeForm.tsx:32-47 (options definitions)
+- Form type logic: Explained în-line în form (lines 244-252)
+
+**Current Implementation (React):**
+```typescript
+// Form type options
+const subTypeOptions = [
+  { value: '1', label: 'Abonament Somaway' },      // Form 1: Access la toate materialele
+  { value: '2', label: 'Tip summit' },              // Form 2: Access doar la o categorie
+  { value: '3', label: 'Tip Free' },                // Form 3: Access gratuit la o categorie
+];
+
+// Status options
+const subTypeStatuses = [
+  { value: '0', label: 'Dezactivat' },              // Status 0: Nu vizibil pe pagina de abonamente
+  { value: '1', label: 'Normal' },                  // Status 1: Activ, disponibil pentru achiziție
+  { value: '2', label: 'Campanie' },                // Status 2: Campanie (ofertă limitată)
+];
+
+// In-line explanation in form
+<i style={{ marginLeft: '10px', color: 'gray' }}>
+  Abonament tip somaway (standard) - access la toate materialele <br />
+  Abonament tip summit - access doar la o categorie de categorie cursuri <br />
+  Abonament tip free - acces la o categorie de cursuri, fara a trece prin payment
+  <br /><br />
+</i>
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+// Form type options (3 types)
+const subTypeOptions = [
+  {
+    value: '1',
+    label: 'Abonament Somaway',
+    description: 'Access la toate materialele (toate cursurile și categoriile)'
+  },
+  {
+    value: '2',
+    label: 'Tip Summit',
+    description: 'Access doar la o categorie de cursuri (category-based)'
+  },
+  {
+    value: '3',
+    label: 'Tip Free',
+    description: 'Access gratuit la o categorie de cursuri (fără payment flow)'
+  },
+]
+
+// Status options (3 statuses)
+const subTypeStatuses = [
+  {
+    value: '0',
+    label: 'Dezactivat',
+    description: 'Nu vizibil pe pagina de abonamente, păstrat pentru istoric'
+  },
+  {
+    value: '1',
+    label: 'Normal',
+    description: 'Activ și disponibil pentru achiziție la preț normal'
+  },
+  {
+    value: '2',
+    label: 'Campanie',
+    description: 'În campanie (ofertă limitată, probabil preț redus)'
+  },
+]
+
+// Conditional logic pentru categoryId based on form type
+const isCategoryRequired = computed(() => {
+  const formType = formState.form
+  return formType === '2' || formType === '3' // Summit sau Free
+})
+
+const isPaymentRequired = computed(() => {
+  const formType = formState.form
+  return formType !== '3' // Toate except Free
+})
+</script>
+
+<template>
+  <!-- Form Type Select -->
+  <a-col :sm="24" :lg="12">
+    <a-form-item label="Tip" name="form">
+      <a-select
+        v-model:value="formState.form"
+        :disabled="Boolean(recordToUpdate?.id)"
+        :options="subTypeOptions"
+      >
+        <template #option="{ value, label, description }">
+          <div>
+            <strong>{{ label }}</strong>
+            <div style="font-size: 12px; color: #888">{{ description }}</div>
+          </div>
+        </template>
+      </a-select>
+    </a-form-item>
+  </a-col>
+
+  <!-- Status Select -->
+  <a-col :sm="24" :lg="12">
+    <a-form-item label="Status" name="status">
+      <a-select v-model:value="formState.status" :options="subTypeStatuses">
+        <template #option="{ value, label, description }">
+          <div>
+            <strong>{{ label }}</strong>
+            <div style="font-size: 12px; color: #888">{{ description }}</div>
+          </div>
+        </template>
+      </a-select>
+    </a-form-item>
+  </a-col>
+
+  <!-- Info text about form types -->
+  <a-col :span="24">
+    <a-alert
+      type="info"
+      show-icon
+      style="margin-bottom: 16px"
+    >
+      <template #message>
+        <div>
+          <strong>Tipuri de abonamente:</strong><br />
+          • <strong>Somaway (Standard)</strong>: Access la toate materialele<br />
+          • <strong>Summit (Category-based)</strong>: Access doar la o categorie de cursuri<br />
+          • <strong>Free</strong>: Access gratuit la o categorie, fără payment flow
+        </div>
+      </template>
+    </a-alert>
+  </a-col>
+</template>
+```
+
+**SubscriptionTypeT Extended:**
+```typescript
+type SubscriptionTypeT = {
+  id: number;
+  form: number;                   // 1=Somaway, 2=Summit, 3=Free
+  status: number;                 // 0=Dezactivat, 1=Normal, 2=Campanie
+  title: string;
+  subtitle: string;               // Ex: "20% Discount" (pentru campanii)
+  description: string;
+  price: number;                  // Preț în RON (0 pentru Free)
+  productName: string;            // Vizibil în dashboard useri
+  buttonTitle: string;            // Text pe buton (ex: "Cumpără acum")
+  categoryId?: number;            // Required pentru form 2 și 3
+  courseId?: number;              // Optional (legacy?)
+  isActive: boolean;              // Vizibil pe pagina de abonamente
+  stripePriceId: string;          // Pentru form 1 și 2 (recurring payments)
+  duration: number;               // Durata în luni
+  bonusMonths?: number;           // Luni bonus (campanii)
+  mailerLiteGroup?: string;       // Grup MailerLite după purchase
+  category: Category;             // Relation
+  createdAt?: Date;
+  updatedAt?: Date;
+};
+```
+
+**Notes:**
+- **3 Form Types**: Somaway (1), Summit (2), Free (3) cu logici diferite de access
+- **3 Statuses**: Dezactivat (0), Normal (1), Campanie (2) pentru gestionare disponibilitate
+- **Conditional categoryId**: Required pentru Summit și Free, optional pentru Somaway
+- **No Payment for Free**: Form 3 (Free) nu are payment flow (price poate fi 0, stripePriceId nu este folosit)
+- **Campaign Logic**: Status 2 (Campanie) probabil afișează badge special pe frontend
+
+**Recommendations:**
+1. **Form Type Icons**: Adaugă icon-uri pentru fiecare form type (CrownOutlined pentru Somaway, TagsOutlined pentru Summit, GiftOutlined pentru Free)
+2. **Status Badges**: Afișează status ca badge colored în lista de subscription types
+3. **Price Validation**: Disable price field pentru Free (set automat la 0)
+4. **Category Dependency**: Hide categoryId field pentru Somaway (nu este folosit)
+5. **Campaign Features**: Adaugă câmpuri specifice campanii (startDate, endDate, discountPercentage)
+6. **Form Type Preview**: Afișează preview diferit în funcție de form type
+
+**Migration Complexity**: MEDIUM (enum logic, conditional validation)
+
+**Estimated Effort**: 1 zi (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 9: Category Assignment & Restrictions (Disabled After Creation)
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+După creare unui subscription type, câmpurile `categoryId` și `form` devin disabled
+pentru a PĂSTRA CONSISTENȚA ISTORICULUI utilizatorilor care au achizițional deja acest tip.
+
+**Important Business Rule**: Dacă se dorește modificarea categoriei sau form type-ului,
+se va crea UN NOU tip de abonament, iar cel vechi se va păstra INACTIV (isActive=false)
+pentru a nu pierde istoricul userilor care au cumpărat în trecut.
+
+**User Flow:**
+1. Admin creează un subscription type NOU:
+   - Toate câmpurile sunt editabile (categoryId, form, price, etc.)
+   - Selectează category pentru Summit sau Free (required)
+   - Selectează form type (Somaway/Summit/Free)
+
+2. După salvare și refresh:
+   - `categoryId` devine DISABLED (nu poate fi modificat)
+   - `form` devine DISABLED (nu poate fi modificat)
+   - Restul câmpurilor rămân editabile (title, price, duration, etc.)
+
+3. Dacă admin vrea să modifice category sau form type:
+   - **GREȘIT**: Modifică direct în form (nu este posibil - câmpurile sunt disabled)
+   - **CORECT**: Creează un NOU subscription type cu category/form dorit
+   - Setează cel vechi ca INACTIV (isActive=false)
+   - Păstrează istoric pentru userii care au cumpărat tipul vechi
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/subscriptions/SubscriptionTypeForm/SubscriptionTypeForm.tsx:206-240 (categoryId + form disabled logic)
+- Warning message: Lines 308-316 (explicație business rule)
+
+**Current Implementation (React):**
+```typescript
+// Category field (line 204)
+<Col sm={24} lg={8}>
+  {loading ? (
+    <Loader />
+  ) : (
+    <Form.Item<SubscriptionTypeT> label="Categorie" name="categoryId">
+      <Select
+        disabled={Boolean(recordToUpdate?.id)}  // DISABLED după creare
+        options={categoryOptions}
+      />
+    </Form.Item>
+  )}
+</Col>
+
+// Form type field (line 225)
+<Col sm={24} lg={12}>
+  <Form.Item<SubscriptionTypeT>
+    label="Tip"
+    name="form"
+    rules={[{ required: true, message: 'Tipul este obligatoriu!' }]}
+  >
+    <Select
+      disabled={Boolean(recordToUpdate?.id)}  // DISABLED după creare
+      options={subTypeOptions}
+    />
+  </Form.Item>
+</Col>
+
+// Warning message (line 308)
+<i>
+  O data creat un tip de abonament nu-si mai poate modifica categoria si tipul pentru a nu afecta
+  userii care au achizitionat deja tipul de abonament. Daca se doreste modificarea, se va crea un nou
+  tip de abonament iar cel vechi se va pastra inactiv pentru a nu pierde istoricul userilor care au
+  cumparat in trecut acest tip de abonament.
+  <br />
+</i>
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { computed } from 'vue'
+
+// Check if editing existing record (disable categoryId and form)
+const isEditMode = computed(() => Boolean(props.recordToUpdate?.id))
+</script>
+
+<template>
+  <!-- Category field -->
+  <a-col :sm="24" :lg="8">
+    <a-form-item label="Categorie" name="categoryId">
+      <a-select
+        v-model:value="formState.categoryId"
+        :disabled="isEditMode"  <!-- DISABLED după creare -->
+        :options="categoryOptions"
+        :loading="loading"
+        placeholder="Selectează categoria"
+      >
+        <template v-if="isEditMode" #suffixIcon>
+          <a-tooltip title="Nu poate fi modificat după creare pentru a păstra istoricul userilor">
+            <LockOutlined style="color: #999" />
+          </a-tooltip>
+        </template>
+      </a-select>
+    </a-form-item>
+  </a-col>
+
+  <!-- Form type field -->
+  <a-col :sm="24" :lg="12">
+    <a-form-item label="Tip" name="form">
+      <a-select
+        v-model:value="formState.form"
+        :disabled="isEditMode"  <!-- DISABLED după creare -->
+        :options="subTypeOptions"
+        placeholder="Selectează tipul abonamentului"
+      >
+        <template v-if="isEditMode" #suffixIcon>
+          <a-tooltip title="Nu poate fi modificat după creare pentru a păstra istoricul userilor">
+            <LockOutlined style="color: #999" />
+          </a-tooltip>
+        </template>
+      </a-select>
+    </a-form-item>
+  </a-col>
+
+  <!-- Warning alert (more visible than italic text) -->
+  <a-col :span="24">
+    <a-alert
+      type="warning"
+      show-icon
+      style="margin-bottom: 16px"
+    >
+      <template #message>
+        <strong>Restricție importantă:</strong>
+      </template>
+      <template #description>
+        O data creat un tip de abonament nu-si mai poate modifica <strong>categoria</strong> si
+        <strong>tipul</strong> pentru a nu afecta userii care au achizitionat deja tipul de abonament.
+        <br /><br />
+        Dacă se doreste modificarea, se va crea un <strong>NOU</strong> tip de abonament iar cel vechi
+        se va pastra <strong>INACTIV</strong> pentru a nu pierde istoricul userilor care au cumparat
+        in trecut acest tip de abonament.
+      </template>
+    </a-alert>
+  </a-col>
+</template>
+```
+
+**Notes:**
+- **Disabled Logic**: `Boolean(recordToUpdate?.id)` - dacă există ID, înseamnă edit mode
+- **2 Câmpuri Disabled**: categoryId și form (nu pot fi modificate după creare)
+- **Business Justification**: Păstrare consistență istoric pentru userii care au achizițional tipul
+- **Alternative**: Crează nou tip de abonament + setează cel vechi ca inactiv
+- **Warning Message**: Explicație clară despre business rule (visible în form)
+
+**Why This Restriction?**
+
+**Scenario WITHOUT restriction**:
+1. User1 cumpără "Summit - Categorie Marketing" (categoryId=5, form=2) în Ianuarie
+2. Admin modifică tipul: categoryId=7 (Business) în Februarie
+3. **PROBLEM**: User1 care a plătit pentru Marketing acum are access la Business (greșit!)
+4. **PROBLEM**: Istoricul user1 nu mai reflectă ce a cumpărat original
+
+**Scenario WITH restriction** (current implementation):
+1. User1 cumpără "Summit - Categorie Marketing" (id=10, categoryId=5, form=2) în Ianuarie
+2. Admin vrea să schimbe categoria:
+   - Creează NOU type: "Summit - Business" (id=15, categoryId=7, form=2)
+   - Setează tipul vechi INACTIV: "Summit - Marketing" (id=10, isActive=false)
+3. **CORRECT**: User1 păstrează access la Marketing (ceea ce a plătit)
+4. **CORRECT**: Noii useri pot cumpăra doar Business (tipul nou)
+5. **CORRECT**: Istoricul rămâne corect pentru toți userii
+
+**Recommendations:**
+1. **Visual Indicators**: Adaugă LockOutlined icon pentru câmpurile disabled
+2. **Tooltips**: Explicație la hover pe câmpurile disabled
+3. **Alert Warning**: Transformă italic text într-un Alert component (mai vizibil)
+4. **Duplicate Feature**: Adaugă buton "Duplicate & Modify" pentru workflow mai ușor:
+   - Copiază toate valorile din tipul existent
+   - Permite modificare category/form
+   - Auto-setează tipul vechi ca inactiv după salvare
+5. **Migration Guide**: Documentează proces pentru migrare tipuri existente
+6. **Audit Log**: Track când un tip devine inactiv și de ce (replaced by new type)
+
+**Migration Complexity**: LOW (simple disabled logic)
+
+**Estimated Effort**: 1-2 ore (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 10: MailerLite Integration (Group Assignment)
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+După achiziția unui abonament, user-ul este adăugat automat într-un grup MailerLite
+specificat în câmpul `mailerLiteGroup`. Acest grup este folosit pentru email marketing
+campaigns (newsletters, updates, oferte speciale).
+
+**User Flow:**
+1. Admin creează/editează subscription type
+2. Completează câmpul "Grup MailerLite" cu numele grupului (ex: "Premium Subscribers", "Summit Marketing")
+3. Salvează subscription type
+4. **Client-side flow** (după purchase):
+   - User cumpără subscription type
+   - Backend procesează payment (Stripe)
+   - Backend adaugă user în grup MailerLite (dacă `mailerLiteGroup` este setat)
+   - User primește email de confirmare de la MailerLite
+   - User este inclus în email campaigns pentru grupul respectiv
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/subscriptions/SubscriptionTypeForm/SubscriptionTypeForm.tsx:273-286 (mailerLiteGroup field)
+- Field name: `mailerLiteGroup` (string, max 255 chars)
+- Backend service: MailerLite Service (documented în JIRA_ADDITIONAL_SERVICES.txt)
+
+**Current Implementation (React):**
+```typescript
+<Col lg={24}>
+  <Form.Item<SubscriptionTypeT>
+    label="Grup MailerLite (denumirea grupului dupa achizitia abonamentului)"
+    name="mailerLiteGroup"
+    rules={[
+      {
+        max: 255,
+        message: 'Denumirea grupului nu poate depasi 255 de caractere',
+      },
+    ]}
+  >
+    <Input />
+  </Form.Item>
+</Col>
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref } from 'vue'
+import { InfoCircleOutlined } from '@ant-design/icons-vue'
+
+// Example groups (for autocomplete/suggestions)
+const suggestedMailerLiteGroups = [
+  'Premium Subscribers',
+  'Summit Marketing',
+  'Summit Business',
+  'Summit Tech',
+  'Free Trial Users',
+  'Annual Subscribers',
+  'Monthly Subscribers',
+]
+</script>
+
+<template>
+  <a-col :lg="24">
+    <a-form-item
+      label="Grup MailerLite (denumirea grupului dupa achizitia abonamentului)"
+      name="mailerLiteGroup"
+    >
+      <template #extra>
+        <span style="font-size: 12px; color: #666">
+          <InfoCircleOutlined style="margin-right: 4px" />
+          User-ul va fi adăugat automat în acest grup după achiziție.
+          Lasă gol dacă nu vrei să adaugi în MailerLite.
+        </span>
+      </template>
+
+      <a-auto-complete
+        v-model:value="formState.mailerLiteGroup"
+        :options="suggestedMailerLiteGroups.map(g => ({ value: g }))"
+        placeholder="Ex: Premium Subscribers"
+        :maxlength="255"
+      >
+        <template #option="{ value }">
+          <div>
+            <MailOutlined style="margin-right: 8px; color: #1890ff" />
+            {{ value }}
+          </div>
+        </template>
+      </a-auto-complete>
+    </a-form-item>
+  </a-col>
+</template>
+```
+
+**MailerLite Integration Details:**
+
+**Backend Flow** (NOT in admin, but for context):
+```typescript
+// In backend after successful payment
+if (subscriptionType.mailerLiteGroup) {
+  await mailerLiteService.addSubscriberToGroup(
+    user.email,
+    subscriptionType.mailerLiteGroup,
+    {
+      name: user.fullName,
+      fields: {
+        subscription_type: subscriptionType.title,
+        purchase_date: new Date().toISOString(),
+      }
+    }
+  );
+}
+```
+
+**MailerLite API Methods** (from JIRA_ADDITIONAL_SERVICES.txt):
+- `addSubscriberToGroup(email, groupName, metadata)` - Adaugă subscriber în grup
+- `removeSubscriberFromGroup(email, groupName)` - Șterge subscriber din grup
+- `updateSubscriber(email, fields)` - Update subscriber fields
+- `getGroups()` - Get all available groups (pentru autocomplete în admin)
+
+**Notes:**
+- **Optional Field**: Câmpul este optional (nu este required)
+- **Max Length**: 255 caractere (validation rule)
+- **No Validation for Group Existence**: Admin nu verifică dacă grupul există în MailerLite (backend va face asta)
+- **Case Sensitive**: Numele grupului este case-sensitive în MailerLite
+- **Auto-assignment**: User-ul este adăugat AUTOMAT după purchase (nu manual)
+
+**Use Cases:**
+
+**Use Case 1 - Premium Subscribers:**
+- Subscription Type: "Abonament Anual Premium"
+- mailerLiteGroup: "Premium Subscribers"
+- Result: Toți userii care cumpără abonament anual sunt adăugați în "Premium Subscribers" group
+- Email campaigns: Monthly newsletters, exclusive offers
+
+**Use Case 2 - Summit Category-specific:**
+- Subscription Type: "Summit - Marketing"
+- mailerLiteGroup: "Summit Marketing"
+- Result: Userii care cumpără access la categoria Marketing sunt adăugați în grupul specific
+- Email campaigns: Marketing tips, case studies, webinars
+
+**Use Case 3 - No MailerLite:**
+- Subscription Type: "Abonament Test"
+- mailerLiteGroup: "" (empty)
+- Result: User-ul NU este adăugat în MailerLite (doar în database pentru subscription tracking)
+
+**Recommendations:**
+1. **Autocomplete**: Fetch real groups de la MailerLite API pentru autocomplete (în loc de hardcoded suggestions)
+2. **Group Validation**: Validează că grupul există în MailerLite before saving
+3. **Preview**: Afișează preview cu câți useri sunt deja în grup
+4. **Bulk Management**: Adaugă feature pentru re-sync useri din subscriptions existente în MailerLite
+5. **Group Stats**: Afișează stats pentru fiecare grup (total subscribers, last sync date)
+6. **Template Selection**: Adaugă selector pentru email template folosit pentru welcome email
+
+**Migration Complexity**: LOW (simple text field, no complex logic în admin)
+
+**Estimated Effort**: 1-2 ore (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 11: Stripe Integration (stripePriceId for Recurring Payments)
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Pentru subscription types cu recurring payments (form 1=Somaway și form 2=Summit),
+câmpul `stripePriceId` specifică Stripe Price ID-ul folosit pentru crearea subscripțiilor recurente.
+
+**Important**: stripePriceId trebuie extras manual din Stripe Dashboard după crearea
+Product și Price în Stripe.
+
+**User Flow:**
+1. **În Stripe Dashboard** (manual setup):
+   - Admin creează Product în Stripe (ex: "Abonament Anual Premium")
+   - Setează preț recurring (ex: 499 RON/year sau 49 RON/month)
+   - Copiază Price ID generat (ex: "price_1MqIC2LeqDzV4xgNKZv8...")
+
+2. **În Admin Dashboard** (Somaway):
+   - Admin creează subscription type
+   - Paste stripePriceId în câmpul "stripePriceId (recurenta extrasa din stripe)"
+   - Salvează subscription type
+
+3. **Client-side flow** (după purchase):
+   - User selectează subscription type
+   - Frontend creează Stripe Checkout Session cu `stripePriceId`
+   - User completează payment în Stripe Checkout
+   - Stripe creează Subscription automat (recurring billing)
+   - Backend primește webhook de la Stripe (subscription.created, payment_intent.succeeded)
+   - Backend creează/updatează Subscription în database
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/subscriptions/SubscriptionTypeForm/SubscriptionTypeForm.tsx:237-241 (stripePriceId field)
+- Field name: `stripePriceId` (string, no max length)
+- Backend service: Stripe Service (documented în JIRA_STRIPE_SERVICE.txt)
+
+**Current Implementation (React):**
+```typescript
+<Col sm={24} lg={12}>
+  <Form.Item<SubscriptionTypeT>
+    label="stripePriceId (recurenta extrasa din stripe)"
+    name="stripePriceId"
+  >
+    <Input />
+  </Form.Item>
+</Col>
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { CopyOutlined, CheckCircleOutlined } from '@ant-design/icons-vue'
+import { message } from 'ant-design-vue'
+
+const copyPriceId = () => {
+  if (formState.stripePriceId) {
+    navigator.clipboard.writeText(formState.stripePriceId)
+    message.success('Stripe Price ID copied to clipboard')
+  }
+}
+
+// Validate Stripe Price ID format (starts with price_)
+const validateStripePriceId = async (_rule: any, value: string) => {
+  if (!value) return Promise.resolve() // Optional field
+
+  if (!value.startsWith('price_')) {
+    return Promise.reject('Stripe Price ID trebuie să înceapă cu "price_"')
+  }
+
+  return Promise.resolve()
+}
+</script>
+
+<template>
+  <a-col :sm="24" :lg="12">
+    <a-form-item
+      label="Stripe Price ID (recurență pentru billing automat)"
+      name="stripePriceId"
+      :rules="[{ validator: validateStripePriceId }]"
+    >
+      <template #extra>
+        <div style="font-size: 12px; color: #666">
+          <InfoCircleOutlined style="margin-right: 4px" />
+          Copiază Price ID din
+          <a
+            href="https://dashboard.stripe.com/prices"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Stripe Dashboard
+          </a>
+          (ex: price_1MqIC2LeqDzV4xgN...)
+        </div>
+      </template>
+
+      <a-input
+        v-model:value="formState.stripePriceId"
+        placeholder="price_..."
+      >
+        <template #suffix>
+          <a-tooltip v-if="formState.stripePriceId" title="Copy to clipboard">
+            <CopyOutlined
+              style="cursor: pointer; color: #1890ff"
+              @click="copyPriceId"
+            />
+          </a-tooltip>
+        </template>
+      </a-input>
+    </a-form-item>
+  </a-col>
+</template>
+```
+
+**Stripe Price ID Format:**
+```
+Format: price_[alphanumeric string]
+Example: price_1MqIC2LeqDzV4xgNKZv8z1Qw
+
+Stripe Product/Price Structure:
+- Product: "Abonament Anual Premium" (prod_ABC123)
+  - Price 1 (Monthly): price_1MqIC2... (49 RON/month)
+  - Price 2 (Yearly): price_1MqIC3... (499 RON/year)
+```
+
+**Stripe Integration Flow:**
+
+**Step 1 - Setup în Stripe Dashboard:**
+```
+1. Products → Create Product
+   - Name: "Abonament Anual Premium"
+   - Description: "Access la toate cursurile pentru 12 luni"
+2. Pricing:
+   - Type: Recurring
+   - Price: 499 RON
+   - Billing period: Yearly
+   - Currency: RON
+3. Copy Price ID: price_1MqIC2LeqDzV4xgNKZv8z1Qw
+```
+
+**Step 2 - Setup în Somaway Admin:**
+```
+1. Create Subscription Type:
+   - Title: "Abonament Anual Premium"
+   - Form: 1 (Somaway)
+   - Price: 499
+   - stripePriceId: price_1MqIC2LeqDzV4xgNKZv8z1Qw
+   - Duration: 12 months
+```
+
+**Step 3 - Client Purchase Flow:**
+```typescript
+// Frontend creates Stripe Checkout Session
+const session = await stripe.checkout.sessions.create({
+  mode: 'subscription',
+  line_items: [{
+    price: subscriptionType.stripePriceId, // price_1MqIC2...
+    quantity: 1,
+  }],
+  success_url: 'https://somaway.com/success',
+  cancel_url: 'https://somaway.com/cancel',
+});
+
+// User completes payment in Stripe Checkout
+// Stripe creates Subscription automatically
+// Stripe sends webhooks:
+// - customer.subscription.created
+// - invoice.payment_succeeded
+// - payment_intent.succeeded
+
+// Backend handles webhooks and creates Subscription in database
+```
+
+**Notes:**
+- **Optional Field**: stripePriceId este optional (nu toate subscription types au recurring payments)
+- **No Format Validation**: Admin nu validează format-ul (doar check că începe cu "price_")
+- **Manual Copy-Paste**: Admin trebuie să copieze manual din Stripe Dashboard (no API integration pentru listing Prices)
+- **No Verification**: Admin nu verifică că Price ID-ul există în Stripe (backend va face asta)
+- **Form 3 (Free)**: Nu necesită stripePriceId (nu există payment flow)
+
+**Recommendations:**
+1. **Format Validation**: Adaugă validation pentru format (must start with "price_")
+2. **Stripe API Integration**: Fetch real Prices de la Stripe API pentru autocomplete/select
+3. **Preview**: Afișează detalii despre Price (amount, currency, interval) după paste
+4. **Quick Link**: Adaugă link direct la Stripe Dashboard pentru create/manage Prices
+5. **Price Sync**: Adaugă buton "Sync from Stripe" pentru auto-populate price field based pe stripePriceId
+6. **Test Mode Warning**: Afișează warning dacă Price ID este test mode (pk_test_...)
+
+**Migration Complexity**: LOW (simple text field, format validation)
+
+**Estimated Effort**: 2-3 ore (1 developer, inclusiv Stripe API integration pentru validation)
+
+--------------------------------------------------------------------------------
+TASK 12: Statistics Cards (4 Cards with Real/Mock Data)
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Pagina Subscriptions afișează 4 stats cards în partea de sus (main area):
+1. **Abonamente prezente în platformă** (REAL DATA - subscriptionsData.length)
+2. **Cursuri completate** (MOCK DATA - hardcoded 5)
+3. **Cursuri în desfășurare** (MOCK DATA - hardcoded 3)
+4. **Conturi active** (REAL DATA - countUsers din AuthContext)
+
+**User Flow:**
+1. Admin navighează la /dashboards/subscriptions
+2. Sistemul încarcă subscriptions + subscription types
+3. Se calculează stats pentru fiecare card
+4. Se afișează 4 cards în row cu culori diferite (blue, green, teal, purple)
+
+**Cod sursă:**
+- File: admin/src/pages/dashboards/Subscriptions.tsx:169-208 (4 stats cards)
+- Component: LearningStatsCard (shared component)
+- Real data: subscriptionsData.length, countUsers (din AuthContext)
+- Mock data: 5 (completate), 3 (în desfășurare), 76/90/30/78 (progress values)
+
+**Current Implementation (React):**
+```typescript
+import { LearningStatsCard } from '../../components';
+import {
+  SafetyCertificateOutlined,
+  FileProtectOutlined,
+  FileSyncOutlined,
+  UsergroupAddOutlined,
+} from '@ant-design/icons';
+
+// In component JSX
+<Row {...stylesContext?.rowProps}>
+  {/* Card 1 - Total Subscriptions (REAL DATA) */}
+  <Col xs={24} sm={12} xl={6}>
+    <LearningStatsCard
+      title="Abonamente prezente în platformă"
+      value={subscriptionsData?.length}  // REAL DATA
+      icon={SafetyCertificateOutlined}
+      color="blue"
+      progress={76}  // MOCK PROGRESS
+      style={{ height: '100%' }}
+    />
+  </Col>
+
+  {/* Card 2 - Completed Courses (MOCK DATA) */}
+  <Col xs={24} sm={12} xl={6}>
+    <LearningStatsCard
+      title="Cursuri completate"
+      value={5}  // MOCK DATA
+      icon={FileProtectOutlined}
+      color="green"
+      progress={90}  // MOCK PROGRESS
+      style={{ height: '100%' }}
+    />
+  </Col>
+
+  {/* Card 3 - Ongoing Courses (MOCK DATA) */}
+  <Col xs={24} sm={12} xl={6}>
+    <LearningStatsCard
+      title="Cursuri în desfășurare"
+      value={3}  // MOCK DATA
+      icon={FileSyncOutlined}
+      color="teal"
+      progress={30}  // MOCK PROGRESS
+      style={{ height: '100%' }}
+    />
+  </Col>
+
+  {/* Card 4 - Active Accounts (REAL DATA) */}
+  <Col xs={24} sm={12} xl={6}>
+    <LearningStatsCard
+      title="Conturi active"
+      value={countUsers}  // REAL DATA from AuthContext
+      icon={UsergroupAddOutlined}
+      color="purple"
+      progress={78}  // MOCK PROGRESS
+      style={{ height: '100%' }}
+    />
+  </Col>
+</Row>
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useAuthStore } from '@/stores/auth'
+import LearningStatsCard from '@/components/LearningStatsCard.vue'
+import {
+  SafetyCertificateOutlined,
+  FileProtectOutlined,
+  FileSyncOutlined,
+  UsergroupAddOutlined,
+} from '@ant-design/icons-vue'
+
+const authStore = useAuthStore()
+
+// Stats calculations
+const totalSubscriptions = computed(() => subscriptionsData.value?.length || 0)
+const activeAccounts = computed(() => authStore.countUsers || 0)
+
+// Mock data (TODO: Replace with real API calls)
+const completedCourses = 5
+const ongoingCourses = 3
+
+// Progress calculations (TODO: Calculate based on real metrics)
+const subscriptionsProgress = computed(() => {
+  // Example: (totalSubscriptions / target) * 100
+  const target = 100
+  return Math.min((totalSubscriptions.value / target) * 100, 100)
+})
+
+const accountsProgress = computed(() => {
+  const target = 200
+  return Math.min((activeAccounts.value / target) * 100, 100)
+})
+</script>
+
+<template>
+  <a-row :gutter="[16, 16]">
+    <!-- Card 1 - Total Subscriptions (REAL DATA) -->
+    <a-col :xs="24" :sm="12" :xl="6">
+      <LearningStatsCard
+        title="Abonamente prezente în platformă"
+        :value="totalSubscriptions"
+        :icon="SafetyCertificateOutlined"
+        color="blue"
+        :progress="subscriptionsProgress"
+        :style="{ height: '100%' }"
+      />
+    </a-col>
+
+    <!-- Card 2 - Completed Courses (MOCK DATA) -->
+    <a-col :xs="24" :sm="12" :xl="6">
+      <LearningStatsCard
+        title="Cursuri completate"
+        :value="completedCourses"
+        :icon="FileProtectOutlined"
+        color="green"
+        :progress="90"
+        :style="{ height: '100%' }"
+      >
+        <template #extra>
+          <a-tag color="orange" style="margin-left: 8px">MOCK DATA</a-tag>
+        </template>
+      </LearningStatsCard>
+    </a-col>
+
+    <!-- Card 3 - Ongoing Courses (MOCK DATA) -->
+    <a-col :xs="24" :sm="12" :xl="6">
+      <LearningStatsCard
+        title="Cursuri în desfășurare"
+        :value="ongoingCourses"
+        :icon="FileSyncOutlined"
+        color="teal"
+        :progress="30"
+        :style="{ height: '100%' }"
+      >
+        <template #extra>
+          <a-tag color="orange" style="margin-left: 8px">MOCK DATA</a-tag>
+        </template>
+      </LearningStatsCard>
+    </a-col>
+
+    <!-- Card 4 - Active Accounts (REAL DATA) -->
+    <a-col :xs="24" :sm="12" :xl="6">
+      <LearningStatsCard
+        title="Conturi active"
+        :value="activeAccounts"
+        :icon="UsergroupAddOutlined"
+        color="purple"
+        :progress="accountsProgress"
+        :style="{ height: '100%' }"
+      />
+    </a-col>
+  </a-row>
+</template>
+```
+
+**LearningStatsCard Props:**
+```typescript
+type LearningStatsCardProps = {
+  title: string;           // Card title (ex: "Abonamente prezente în platformă")
+  value: number;           // Main value to display (ex: 42)
+  icon: Component;         // Ant Design Icon component
+  color: 'blue' | 'green' | 'teal' | 'purple' | string; // Card theme color
+  progress: number;        // Progress bar percentage (0-100)
+  style?: CSSProperties;   // Custom styles (ex: { height: '100%' })
+};
+```
+
+**Stats Card Breakdown:**
+
+**Card 1 - Total Subscriptions:**
+- **Data Source**: `subscriptionsData.length` (REAL - loaded de la API)
+- **Icon**: SafetyCertificateOutlined
+- **Color**: Blue
+- **Progress**: 76% (MOCK - ar trebui să fie calculated based on target)
+- **Formula**: `(totalSubscriptions / subscriptionTarget) * 100`
+
+**Card 2 - Completed Courses:**
+- **Data Source**: Hardcoded 5 (MOCK DATA)
+- **Icon**: FileProtectOutlined
+- **Color**: Green
+- **Progress**: 90% (MOCK)
+- **TODO**: Replace cu API call pentru count cursuri completate (Analytics module)
+
+**Card 3 - Ongoing Courses:**
+- **Data Source**: Hardcoded 3 (MOCK DATA)
+- **Icon**: FileSyncOutlined
+- **Color**: Teal
+- **Progress**: 30% (MOCK)
+- **TODO**: Replace cu API call pentru count cursuri în desfășurare (Analytics module)
+
+**Card 4 - Active Accounts:**
+- **Data Source**: `countUsers` din AuthContext (REAL DATA)
+- **Icon**: UsergroupAddOutlined
+- **Color**: Purple
+- **Progress**: 78% (MOCK - ar trebui să fie calculated based on target)
+- **Formula**: `(activeAccounts / accountsTarget) * 100`
+
+**Notes:**
+- **Mixed Data**: 2 cards cu REAL data, 2 cards cu MOCK data
+- **Progress Values**: Toate progress values sunt MOCK (ar trebui calculate based on targets)
+- **Responsive**: 4 cards în row pe desktop (xl=6), 2 cards pe tablet (sm=12), 1 card pe mobile (xs=24)
+- **Same Height**: Toate cards au `height: 100%` pentru aliniament uniform
+
+**Recommendations pentru REAL DATA:**
+
+**Card 2 - Completed Courses:**
+```typescript
+// API call pentru count cursuri completate
+const completedCourses = computed(async () => {
+  const response = await getCompletedCoursesCountApi(authStore.accessToken)
+  return response.data.count
+})
+```
+
+**Card 3 - Ongoing Courses:**
+```typescript
+// API call pentru count cursuri în desfășurare
+const ongoingCourses = computed(async () => {
+  const response = await getOngoingCoursesCountApi(authStore.accessToken)
+  return response.data.count
+})
+```
+
+**Progress Calculations:**
+```typescript
+// Set targets pentru fiecare metric
+const TARGETS = {
+  subscriptions: 100,
+  completedCourses: 10,
+  ongoingCourses: 5,
+  activeAccounts: 200,
+}
+
+// Calculate real progress
+const subscriptionsProgress = computed(() =>
+  Math.min((totalSubscriptions.value / TARGETS.subscriptions) * 100, 100)
+)
+
+const completedCoursesProgress = computed(() =>
+  Math.min((completedCourses.value / TARGETS.completedCourses) * 100, 100)
+)
+
+const ongoingCoursesProgress = computed(() =>
+  Math.min((ongoingCourses.value / TARGETS.ongoingCourses) * 100, 100)
+)
+
+const accountsProgress = computed(() =>
+  Math.min((activeAccounts.value / TARGETS.activeAccounts) * 100, 100)
+)
+```
+
+**Recommendations:**
+1. **Replace Mock Data**: Implement real API calls pentru cursuri completate și în desfășurare
+2. **Dynamic Progress**: Calculate progress based on configurable targets (nu hardcodate)
+3. **Tooltips**: Adaugă tooltips cu detalii (ex: "42 / 100 target")
+4. **Trend Indicators**: Adaugă arrows (up/down) pentru trend vs previous month
+5. **Click Actions**: Fă cards clickable → navigate la filtered view (ex: click "Abonamente" → table filtered by active subscriptions)
+6. **Loading States**: Adaugă skeleton loading pentru cards while data este în loading
+7. **Refresh**: Adaugă refresh button pentru re-fetch stats
+
+**Migration Complexity**: LOW (simple stat cards rendering)
+
+**Estimated Effort**: 1 zi (1 developer, inclusiv API integration pentru mock data replacement)
+
+================================================================================
+SUMMARY - SUBSCRIPTIONS MANAGEMENT MODULE (COMPLETE)
+================================================================================
+
+**Total Tasks**: 12 (ALL DOCUMENTED)
+
+**Tasks Breakdown**:
+1. ✅ Page Layout & Dual Component Structure (1-2 zile)
+2. ✅ Subscriptions Table with Expandable Rows (Read-Only) (1-2 zile)
+3. ✅ Subscription Status Management (6 Statuses) (1-2 ore)
+4. ✅ Payment & Invoice Details (Expandable rows) (1 zi)
+5. ✅ Invoice Download (SmartBill integration) (2-4 ore)
+6. ✅ Subscription Types Sidebar (List with CRUD) (1 zi)
+7. ✅ Subscription Type Form (Complex form with 12+ fields) (2-3 zile)
+8. ✅ Subscription Type Types & Statuses (3 forms + 3 statuses) (1 zi)
+9. ✅ Category Assignment & Restrictions (Disabled after creation) (1-2 ore)
+10. ✅ MailerLite Integration (Group assignment) (1-2 ore)
+11. ✅ Stripe Integration (stripePriceId for recurring payments) (2-3 ore)
+12. ✅ Statistics Cards (4 cards with real/mock data) (1 zi)
+
+**Total Estimated Effort**: 10-14 zile (1 developer)
+
+**Migration Priority**: HIGH (complex payment workflow, multiple integrations, business-critical)
+
+**Key Features**:
+- Dual component structure (main area + sidebar)
+- READ-ONLY subscriptions table (no create/edit - created from client frontend)
+- FULL CRUD subscription types (sidebar list)
+- Expandable rows cu payment/invoice nested tables
+- SmartBill invoice download (PDF)
+- 6 subscription statuses cu colored tags
+- 3 subscription forms (Somaway, Summit, Free) cu logici diferite
+- 3 subscription type statuses (Dezactivat, Normal, Campanie)
+- Category assignment cu restriction (disabled după creare)
+- MailerLite group auto-assignment după purchase
+- Stripe recurring payments integration (stripePriceId)
+- Complex form cu 12+ fields și validations
+- Stats cards (2 real data, 2 mock data)
+
+**Integrations**:
+- **SmartBill**: Invoice generation și PDF download (CUI: RO45702099, Series: BC)
+- **Stripe**: Recurring payments cu stripePriceId (Account: acct_1L14ojLeqDzV4xgN, Currency: RON)
+- **MailerLite**: Auto-assignment în groups după purchase (group name în subscription type)
+
+**Business Rules**:
+- **NO create/edit pentru subscriptions**: Subscripțiile sunt create din client frontend prin payment flow
+- **Disabled categoryId și form după creare**: Pentru a păstra consistența istoricului userilor
+- **Delete subscription cu warning**: Poate afecta istoricul userului (pierde access la conținut)
+- **Mock data în stats**: 2 din 4 stats cards au mock data (trebuie replace cu real API calls)
+
+**Migration Complexity**: VERY HIGH
+- Dual component structure cu separate state management
+- Complex expandable table cu 2 nested tables
+- SmartBill PDF download integration
+- Stripe recurring payments setup
+- MailerLite group assignment
+- Complex form cu 12+ fields, disabled logic, conditional validation
+- Business rules enforcement (category/form restrictions)
+
+**Recommendations pentru Implementation**:
+1. **Start cu Subscription Types CRUD** (sidebar component) - mai simplu decât main table
+2. **Implement Stats Cards** cu mock data first, replace cu real data later
+3. **Implement Subscriptions Table** (read-only) cu expandable rows
+4. **Add SmartBill Integration** pentru invoice download
+5. **Add Stripe Integration** pentru stripePriceId validation/preview
+6. **Add MailerLite Integration** pentru group autocomplete/validation
+7. **Testing**: Comprehensive testing pentru business rules (especially disabled fields)
+8. **Documentation**: Comprehensive admin guide pentru workflow (create subscription type, setup Stripe, setup MailerLite)
+
+**Files pentru Migration**:
+- [Subscriptions.tsx](admin/src/pages/dashboards/Subscriptions.tsx) - Main page layout
+- [SubscriptionsCard.tsx](admin/src/components/dashboard/subscriptions/SubscriptionsCard/SubscriptionsCard.tsx) - Table component
+- [SubscriptionTypes.tsx](admin/src/components/dashboard/subscriptions/SubscriptionTypes/SubscriptionTypes.tsx) - Sidebar list
+- [SubscriptionTypeForm.tsx](admin/src/components/dashboard/subscriptions/SubscriptionTypeForm/SubscriptionTypeForm.tsx) - Complex form
+- [subscriptions.ts](admin/src/types/subscriptions.ts) - Type definitions
+- [apiService.tsx](admin/src/utils/apiService.tsx) - API calls
+
+================================================================================
+END OF SUBSCRIPTIONS MANAGEMENT MODULE DOCUMENTATION
+================================================================================

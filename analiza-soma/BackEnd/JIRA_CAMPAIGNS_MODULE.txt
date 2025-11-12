@@ -1,0 +1,704 @@
+================================================================================
+STORY: Campaigns Module
+================================================================================
+
+Modulul Campaigns gestionează campaniile de marketing pentru vânzarea de abonamente. Fiecare campanie este asociată cu un tip de abonament (SubscriptionType) și poate avea destinatari specifici (users). Modulul este integrat cu MailerLite pentru email marketing automation. Campaniile pot avea timer (deadline) și counter (număr maxim de achiziții).
+
+Locație cod sursă: src/v1/Campaigns/
+
+Endpoints implementate: 7
+
+Services utilizate:
+- CampaignsRepository
+- UserService (pentru obținerea utilizatorilor destinatari)
+- MailerLiteService (pentru sincronizare email marketing)
+
+Dependencies:
+- AuthGuard('jwt') pe tot controller-ul
+- @Roles(UserRoles.ADMIN) pe tot controller-ul - TOATE endpoint-urile sunt ADMIN only
+- MailerLite integration pentru group management
+- Database transactions pentru operații critice
+
+Notes:
+- Toate endpoint-urile necesită rol ADMIN
+- Recipients este CSV string "123,456,789" (ar trebui array pentru consistență)
+- Integrare MailerLite: la create se creează group și se subscribe users, la delete se cleanup
+- Campanii pot avea deadline (endDate) și limit de achiziții (maxAcquisitions)
+- timerEnabled și counterEnabled controlează afișarea deadline-ului și contorului în UI
+- decreaseMaxAcquisitions există în service dar NU e expusă în controller
+
+
+================================================================================
+TASK 1: GET /v1/campaigns/user/all - Listă utilizatori pentru campanii
+================================================================================
+
+Business Logic:
+1. Primește parametri complexi de filtrare prin query (GetCampaignsDTO)
+2. Filtrează utilizatorii după:
+   - campaignTitle: utilizatorii care aparțin unei campanii specifice
+   - subTypeIds: utilizatorii care au abonamente de anumite tipuri
+   - hasActiveSub: utilizatorii cu/fără abonamente active
+   - fromEndDate/toEndDate: range de date pentru campanii
+3. Returnează lista de utilizatori cu subscription types
+4. Folosește UserService.getAllUsersForCampaigns() pentru interogare
+
+Cod sursă:
+- Controller: src/v1/Campaigns/Controller/campaigns.controller.ts:42-52
+- Service: UserService.getAllUsersForCampaigns() (în User Module)
+
+Request:
+GET /v1/campaigns/user/all?campaignTitle=Black%20Friday&hasActiveSub=true&page=1&limit=20
+Authorization: Bearer {jwt_token}
+
+Query Parameters:
+- campaignTitle (optional): Filtrare utilizatori după campanie
+- subTypeIds (optional): Array de subscription type IDs (CSV: "1,2,3" sau array)
+- hasActiveSub (optional): true/false - filtrare după status abonament activ
+- fromEndDate (optional): Data minimă pentru endDate campanie
+- toEndDate (optional): Data maximă pentru endDate campanie
+- page (optional): Număr pagină
+- limit (optional): Număr elemente per pagină
+
+Response Success (200):
+{
+  "users": [
+    {
+      "id": 123,
+      "email": "user@example.com",
+      "fullName": "John Doe",
+      "role": "CLIENT",
+      "subscriptions": [...],
+      "campaigns": [...],
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    }
+  ],
+  "count": 150,
+  "subTypes": [
+    {
+      "id": 1,
+      "title": "Premium Monthly",
+      "price": 49.99
+    }
+  ]
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.ADMIN) - Doar administratori
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- UserService.getAllUsersForCampaigns()
+
+Notes:
+- Endpoint complex pentru segmentare utilizatori pentru campanii marketing
+- subTypeIds acceptă atât CSV string cât și array (transform în GetCampaignsDTO)
+- hasActiveSub: string "true"/"false" transformat în boolean
+- Response include subscription types pentru referință
+
+
+================================================================================
+TASK 2: GET /v1/campaigns/with-subtype - Campaniile user-ului cu subscription types
+================================================================================
+
+Business Logic:
+1. Extrage user ID din JWT (authUser.id)
+2. Interogează campaniile asociate cu utilizatorul autentificat
+3. Include detaliile subscription types pentru fiecare campanie
+4. Returnează lista de campanii cu relații populate
+
+Cod sursă:
+- Controller: src/v1/Campaigns/Controller/campaigns.controller.ts:54-59
+- Service: src/v1/Campaigns/Service/campaigns.service.ts:40-44
+
+Request:
+GET /v1/campaigns/with-subtype
+Authorization: Bearer {jwt_token}
+
+Response Success (200):
+{
+  "campaigns": [
+    {
+      "id": 456,
+      "title": "Black Friday 2024",
+      "value": 50,
+      "subTypeId": 1,
+      "clientId": 123,
+      "endDate": "2024-11-30T23:59:59.000Z",
+      "maxAcquisitions": 100,
+      "timerEnabled": true,
+      "counterEnabled": true,
+      "createdAt": "2024-11-01T00:00:00.000Z",
+      "updatedAt": "2024-11-01T00:00:00.000Z",
+      "subType": {
+        "id": 1,
+        "title": "Premium Monthly",
+        "price": 49.99,
+        "discount": 50
+      }
+    }
+  ],
+  "count": 5
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.ADMIN) - Doar administratori
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- CampaignsRepository.getCampaignsWithSubTypes()
+
+Notes:
+- Returnează campaniile pentru user-ul ADMIN autentificat (nu pentru orice user)
+- Include subscription type details pentru UI (preț, discount)
+- Util pentru dashboard ADMIN pentru vizualizarea campaniilor proprii
+
+
+================================================================================
+TASK 3: GET /v1/campaigns/validate/:campaignTitle - Validare campanie pentru user
+================================================================================
+
+Business Logic:
+1. Primește campaignTitle din URL params și user ID din JWT
+2. Verifică dacă există o campanie cu titlul specificat asociată cu utilizatorul
+3. Dacă DA: returnează status "ok" - campania este validă
+4. Dacă NU: returnează status "error" - campania nu există sau nu este asociată cu user-ul
+
+Cod sursă:
+- Controller: src/v1/Campaigns/Controller/campaigns.controller.ts:61-67
+- Service: src/v1/Campaigns/Service/campaigns.service.ts:46-67
+
+Request:
+GET /v1/campaigns/validate/Black%20Friday%202024
+Authorization: Bearer {jwt_token}
+
+Path Parameters:
+- campaignTitle (required): Titlul campaniei de validat (URL encoded)
+
+Response Success (200) - campanie validă:
+{
+  "status": "ok",
+  "message": "Campania este valida pentru userul.123"
+}
+
+Response Success (200) - campanie invalidă:
+{
+  "status": "error",
+  "message": "Campania nu exista sau nu este valida pentru userul.123"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.ADMIN) - Doar administratori
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- CampaignsRepository.validateCampaign()
+
+Notes:
+- Endpoint folosit pentru verificarea eligibilității user-ului pentru o campanie
+- ⚠️ Returnează HTTP 200 chiar și pentru eroare (status: "error" în body)
+- ⚠️ User ID este inclus în mesaj - potențial data leak
+- Ar trebui să returneze HTTP 404 pentru campanie inexistentă
+
+
+================================================================================
+TASK 4: GET /v1/campaigns/all - Lista titlurilor campaniilor
+================================================================================
+
+Business Logic:
+1. Interogează toate campaniile din baza de date
+2. Extrage doar titlurile campaniilor (fără alte detalii)
+3. Returnează array simplu de string-uri cu titlurile
+4. Fără paginare (returnează toate titlurile)
+
+Cod sursă:
+- Controller: src/v1/Campaigns/Controller/campaigns.controller.ts:69-72
+- Service: src/v1/Campaigns/Service/campaigns.service.ts:28-32
+
+Request:
+GET /v1/campaigns/all
+Authorization: Bearer {jwt_token}
+
+Response Success (200):
+[
+  "Black Friday 2024",
+  "Cyber Monday 2024",
+  "Christmas Special",
+  "New Year Promo"
+]
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.ADMIN) - Doar administratori
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- CampaignsRepository.fetchAllCampaignsTitle()
+
+Notes:
+- Endpoint simplu pentru dropdown/autocomplete în UI
+- Fără paginare - poate deveni problemă dacă sunt sute de campanii
+- Returnează doar titluri, fără alte detalii
+- Useful pentru selecție rapidă în forms
+
+
+================================================================================
+TASK 5: POST /v1/campaigns - Creare campanii cu integrare MailerLite
+================================================================================
+
+Business Logic:
+1. Primește datele campaniei în body (CreateCampaignDto)
+2. Pornește o database transaction pentru consistență
+3. Creează campania în baza de date (poate fi bulk - multiple campaniile pentru multiple recipients)
+4. Dacă există recipients:
+   a. Parsează recipients CSV → array de user IDs
+   b. Obține detaliile utilizatorilor (email, fullName, phone)
+   c. Creează sau obține MailerLite group ID după title
+   d. Subscribe fiecare utilizator la MailerLite group
+5. Dacă orice pas eșuează, face rollback la transacție
+6. Returnează campaniile create
+
+Cod sursă:
+- Controller: src/v1/Campaigns/Controller/campaigns.controller.ts:74-77
+- Service: src/v1/Campaigns/Service/campaigns.service.ts:69-106
+
+Request:
+POST /v1/campaigns
+Authorization: Bearer {jwt_token}
+
+Body:
+{
+  "title": "Black Friday 2024",
+  "value": 50,
+  "subTypeId": 1,
+  "recipients": "123,456,789",
+  "endDate": "2024-11-30T23:59:59.000Z",
+  "maxAcquisitions": 100,
+  "timerEnabled": true,
+  "counterEnabled": true
+}
+
+Response Success (201):
+{
+  "campaigns": [
+    {
+      "id": 456,
+      "title": "Black Friday 2024",
+      "value": 50,
+      "subTypeId": 1,
+      "clientId": 123,
+      "endDate": "2024-11-30T23:59:59.000Z",
+      "maxAcquisitions": 100,
+      "timerEnabled": true,
+      "counterEnabled": true,
+      "createdAt": "2024-11-02T10:00:00.000Z",
+      "updatedAt": "2024-11-02T10:00:00.000Z"
+    },
+    {
+      "id": 457,
+      "title": "Black Friday 2024",
+      "value": 50,
+      "subTypeId": 1,
+      "clientId": 456,
+      "endDate": "2024-11-30T23:59:59.000Z",
+      "maxAcquisitions": 100,
+      "timerEnabled": true,
+      "counterEnabled": true,
+      "createdAt": "2024-11-02T10:00:00.000Z",
+      "updatedAt": "2024-11-02T10:00:00.000Z"
+    }
+  ],
+  "count": 2
+}
+
+Response Error (400):
+{
+  "statusCode": 400,
+  "message": ["title should not be empty", "subTypeId should not be empty"],
+  "error": "Bad Request"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Response Error (500):
+{
+  "statusCode": 500,
+  "message": "[createCampaigns] Transaction failed: ...",
+  "error": "Internal Server Error"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.ADMIN) - Doar administratori
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- CampaignsRepository.createCampaignsWithTransaction() - creare cu transacție
+- UserService.getUsersByIds() - obținere detalii utilizatori
+- MailerLiteService.retrieveOrCreateGroup() - creare/obținere MailerLite group
+- MailerLiteService.subscribeToMarketing() - subscribe utilizatori la group
+
+Validation:
+- title: NotEmpty, string
+- value: Optional, number (discount percentage sau alte valori)
+- subTypeId: Required, number (ID-ul subscription type)
+- recipients: Optional, string CSV "123,456,789" ⚠️ (ar trebui array)
+- endDate: Optional, Date (deadline campanie)
+- maxAcquisitions: Optional, number (limită achiziții)
+- timerEnabled: Required, boolean (afișare countdown în UI)
+- counterEnabled: Required, boolean (afișare contador achiziții în UI)
+
+Notes:
+- ⚠️ Creare BULK: un DTO creează multiple campaniile (câte una per recipient)
+- Database transaction asigură rollback dacă MailerLite eșuează
+- MailerLite group name = campaign title
+- recipients este CSV string, NU array - inconsistență cu alte module
+- ⚠️ Nu verifică dacă subTypeId există în baza de date
+- ⚠️ Nu verifică dacă recipients (user IDs) există în baza de date înainte de loop
+
+
+================================================================================
+TASK 6: PATCH /v1/campaigns - Actualizare campanie
+================================================================================
+
+Business Logic:
+1. Primește datele de actualizat în body (UpdateCampaignDto)
+2. Extrage clientId din JWT (suprascrie orice valoare din body)
+3. Actualizează campania în baza de date după ID
+4. ⚠️ Nu face update la MailerLite (doar database)
+5. Returnează campania actualizată
+
+Cod sursă:
+- Controller: src/v1/Campaigns/Controller/campaigns.controller.ts:79-86
+- Service: src/v1/Campaigns/Service/campaigns.service.ts:108-112
+
+Request:
+PATCH /v1/campaigns
+Authorization: Bearer {jwt_token}
+
+Body:
+{
+  "id": 456,
+  "title": "Black Friday Extended",
+  "value": 60,
+  "subTypeId": 1,
+  "endDate": "2024-12-05T23:59:59.000Z"
+}
+
+Response Success (200):
+{
+  "id": 456,
+  "title": "Black Friday Extended",
+  "value": 60,
+  "subTypeId": 1,
+  "clientId": 123,
+  "endDate": "2024-12-05T23:59:59.000Z",
+  "maxAcquisitions": 100,
+  "timerEnabled": true,
+  "counterEnabled": true,
+  "createdAt": "2024-11-02T10:00:00.000Z",
+  "updatedAt": "2024-11-02T14:30:00.000Z"
+}
+
+Response Error (400):
+{
+  "statusCode": 400,
+  "message": "Campaign not found"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.ADMIN) - Doar administratori
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- CampaignsRepository.updateCampaign()
+
+Validation:
+- id: Optional, number (obligatoriu de fapt pentru a identifica campania)
+- title: Required, string
+- value: Required, number
+- subTypeId: Required, number
+- clientId: Optional, number (IGNORAT - se ia din JWT)
+- endDate: Optional, Date
+- createdAt: Optional, Date
+- updatedAt: Optional, Date
+
+Notes:
+- ⚠️ UpdateCampaignDto extends PaginationDTO fără motiv (moștenire inutilă)
+- ⚠️ Nu face update la MailerLite group dacă title se schimbă
+- ⚠️ Nu verifică ownership - orice ADMIN poate modifica orice campanie
+- Ar trebui să sincronizeze cu MailerLite dacă title se schimbă
+
+
+================================================================================
+TASK 7: DELETE /v1/campaigns/:campaignsIds - Ștergere campanii cu cleanup MailerLite
+================================================================================
+
+Business Logic:
+1. Primește campaignsIds din URL params (CSV string "123,456,789")
+2. Parsează CSV → array de IDs
+3. Pornește o database transaction pentru consistență
+4. Obține detaliile campaniilor înainte de ștergere (title, clientId)
+5. Pentru fiecare campanie:
+   a. Obține sau creează MailerLite group ID după title
+   b. Obține detaliile user-ului (clientId)
+   c. Remove subscriber (user) din MailerLite group
+6. Șterge campaniile din baza de date (probabil HARD DELETE)
+7. Dacă orice pas eșuează, face rollback la transacție
+8. Returnează status ok
+
+Cod sursă:
+- Controller: src/v1/Campaigns/Controller/campaigns.controller.ts:88-93
+- Service: src/v1/Campaigns/Service/campaigns.service.ts:114-153
+
+Request:
+DELETE /v1/campaigns/456,457,458
+Authorization: Bearer {jwt_token}
+
+Path Parameters:
+- campaignsIds (required): CSV string de IDs "123,456,789"
+
+Response Success (200):
+{
+  "status": "ok",
+  "message": "Campaniile au fost sterse."
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Response Error (500):
+{
+  "statusCode": 500,
+  "message": "[deleteCampaigns] Transaction failed: ...",
+  "error": "Internal Server Error"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.ADMIN) - Doar administratori
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- CampaignsRepository.getCampaignsByIds() - obținere detalii pentru cleanup
+- MailerLiteService.retrieveOrCreateGroup() - obținere MailerLite group ID
+- UserService.getUser() - obținere detalii user pentru email
+- MailerLiteService.removeSubscriberFromGroup() - remove din MailerLite
+- CampaignsRepository.deleteCampaignsWithTransaction() - ștergere cu transacție
+
+Notes:
+- ⚠️ Bulk delete prin CSV în URL params (alternativă: array în body)
+- Database transaction asigură rollback dacă MailerLite cleanup eșuează
+- ⚠️ Probabil HARD DELETE - consideră soft delete pentru istoric
+- Cleanup MailerLite: remove utilizatori din groups înainte de ștergere
+- ⚠️ Dacă un utilizator are multiple campanii cu același title, va fi removed din group pentru toate
+
+
+================================================================================
+ADDITIONAL NOTES - SERVICE METHODS NOT EXPOSED
+================================================================================
+
+Metodă: getCampaign(campaignsId: number)
+Locație: src/v1/Campaigns/Service/campaigns.service.ts:34-38
+
+Business Logic:
+- Returnează o campanie specifică după ID
+- Include toate detaliile campaniei
+
+Utilizare:
+- Probabil folosită intern sau pentru debugging
+
+Recomandare pentru .NET:
+- Consideră expunerea ca endpoint: GET /v1/campaigns/:campaignId
+- Util pentru detalii campanie individuală
+
+
+Metodă: decreaseMaxAcquisitions(subTypeId: number)
+Locație: src/v1/Campaigns/Service/campaigns.service.ts:155-168
+
+Business Logic:
+- Decrementează maxAcquisitions pentru toate campaniile cu un anumit subTypeId
+- Folosește database transaction
+- Apelată probabil la achiziția unui abonament pentru a decrementa contorul
+
+Utilizare:
+- Folosită intern când un user cumpără un abonament din campanie
+
+Notes:
+- ⚠️ Nu verifică dacă maxAcquisitions > 0 înainte de decrement (risc de valori negative)
+- ⚠️ Nu există endpoint pentru increment/reset maxAcquisitions
+
+
+================================================================================
+SUMMARY - Campaigns Module
+================================================================================
+
+Total Endpoints: 7 (nu 4 cum era în inventar inițial!)
+
+ADMIN Only Endpoints (toate):
+- GET /v1/campaigns/user/all - Listă utilizatori pentru segmentare
+- GET /v1/campaigns/with-subtype - Campaniile ADMIN-ului cu subscription types
+- GET /v1/campaigns/validate/:campaignTitle - Validare campanie pentru user
+- GET /v1/campaigns/all - Lista titlurilor campaniilor
+- POST /v1/campaigns - Creare campanii cu MailerLite sync
+- PATCH /v1/campaigns - Update campanie (fără MailerLite sync)
+- DELETE /v1/campaigns/:campaignsIds - Ștergere cu MailerLite cleanup
+
+Concept:
+- Campanii de marketing pentru vânzarea de abonamente
+- Fiecare campanie are: title, value (discount), subTypeId, endDate, maxAcquisitions
+- timerEnabled/counterEnabled: control UI pentru deadline și contador achiziții
+- Integrare MailerLite pentru email marketing automation
+- Recipients (destinatari): users care primesc campania
+
+MailerLite Integration:
+- Create: creează MailerLite group + subscribe users
+- Delete: remove users din MailerLite group + cleanup
+- Update: NU sincronizează cu MailerLite (bug potential)
+
+Database Transactions:
+- POST: transaction pentru create + MailerLite sync
+- DELETE: transaction pentru MailerLite cleanup + delete
+
+Security Issues:
+1. GET /v1/campaigns/validate/:campaignTitle returnează HTTP 200 pentru erori (ar trebui 404)
+2. PATCH nu verifică ownership - orice ADMIN poate modifica orice campanie
+3. User ID în mesajele de răspuns - potențial data leak
+
+Bugs/Issues:
+1. recipients este CSV string "123,456,789" - ar trebui array pentru consistență
+2. UpdateCampaignDto extends PaginationDTO fără motiv (moștenire inutilă)
+3. PATCH nu sincronizează cu MailerLite dacă title se schimbă
+4. DELETE campaignsIds în URL params ca CSV - ar fi mai clar array în body
+5. decreaseMaxAcquisitions nu verifică maxAcquisitions > 0 (risc negative values)
+
+Missing Features:
+1. getCampaign(:campaignId) nu e expusă ca endpoint GET
+2. Nu există endpoint pentru increment/reset maxAcquisitions
+3. Nu există endpoint pentru statistici campanii (conversii, achiziții)
+4. Nu există endpoint pentru duplicare campanie
+5. Nu există soft delete (HARD DELETE cu risc de pierdere date)
+
+Missing Validations:
+1. POST nu verifică dacă subTypeId există
+2. POST nu verifică dacă recipients (user IDs) există
+3. PATCH nu verifică ownership (orice ADMIN modifică orice campanie)
+
+Recomandări pentru .NET:
+1. ⚠️ URGENT: Schimbă recipients de la CSV string la number[] array
+2. Implementează soft delete pentru campanii (IsDeleted flag)
+3. Adaugă validare existence pentru subTypeId și recipients la create
+4. Fixează PATCH pentru a sincroniza cu MailerLite dacă title se schimbă
+5. Expune getCampaign ca endpoint GET /v1/campaigns/:campaignId
+6. Adaugă verificare maxAcquisitions > 0 în decreaseMaxAcquisitions
+7. Consideră expunerea decreaseMaxAcquisitions ca endpoint POST /v1/campaigns/:campaignId/decrement (ADMIN only)
+8. Adaugă endpoint pentru statistici: GET /v1/campaigns/:campaignId/stats
+9. Returnează HTTP status codes corecte (404 pentru not found, nu 200 cu "error")
+10. Remove user ID din mesajele de eroare (data leak)
+11. Implementează MailerLite sync pentru PATCH când title se schimbă
+12. Consideră webhook de la MailerLite pentru bi-directional sync
+13. Adaugă indexing pe (title, subTypeId, endDate) pentru performanță
+14. Consideră rate limiting specific pentru POST (evită spam campanii)

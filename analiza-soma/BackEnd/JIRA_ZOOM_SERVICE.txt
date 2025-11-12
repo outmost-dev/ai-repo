@@ -1,0 +1,593 @@
+================================================================================
+JIRA STORY: ZOOM SERVICE (INTEGRATION SERVICE + API ENDPOINTS)
+================================================================================
+
+Story Title: Zoom Service Integration
+
+Story Type: Story (Service Layer + API Endpoints)
+
+Epic: Somaway Backend Migration to .NET
+
+Story Description:
+------------------
+Zoom Service integrează API-ul Zoom pentru webinar-uri și meeting-uri live.
+Serviciul gestionează OAuth authentication, signature generation pentru Zoom
+Meeting SDK, și listarea meeting-urilor/webinar-urilor programate cu filtrare
+bazată pe tipul de abonament al utilizatorului.
+
+Zoom este platformă globală pentru video conferencing și webinars, folosită
+pentru a livra cursuri live și sesiuni interactive către utilizatori.
+
+Locație cod sursă: server/src/v1/Zoom/
+
+Components:
+- ZoomAuthService: OAuth token management cu in-memory caching
+- ZoomController: 5 endpoints pentru Zoom integration
+
+Metode service: 3 core methods
+- getAccessToken() - OAuth Server-to-Server token
+- getCache() - check in-memory token cache
+- setCache() - store token in memory
+
+Endpoints: 5 (toate authenticated cu JWT)
+- GET /v1/zoom/create - create test meeting
+- GET /v1/zoom/opener - get access token for client
+- POST /v1/zoom/signature - generate JWT signature for Meeting SDK
+- GET /v1/zoom/meetings - list upcoming meetings (subscription-filtered)
+- GET /v1/zoom/webinars - list upcoming webinars
+
+Used by:
+- Frontend Zoom Meeting SDK (signature generation for client-side embed)
+- Frontend meetings/webinars listing pages
+- Course live sessions
+
+External Dependencies:
+- Zoom API v2 (https://api.zoom.us)
+- OAuth Server-to-Server App (Client ID + Secret)
+- Zoom Meeting SDK (frontend embedding)
+- jsrsasign library (JWT signature generation)
+
+Configuration:
+- Client ID: 52XnWb06TgCEBdm7hDGFEQ (hardcoded ⚠️)
+- Client Secret: rd7Ih8ZqneNHNf9hH1BbJVOaauz43PIe (hardcoded ⚠️)
+- Account ID: bND7Sp_TT5mV5RsZ5D3KJA (hardcoded ⚠️)
+- Meeting SDK Key: from environment ZOOM_MEETING_SDK_KEY_OR_CLIENT_ID
+- Client Secret: from environment ZOOM_CLIENT_SECRET
+- Webinars Enabled: from config app.zoom.enableWebinars
+
+Integration Flow:
+1. Admin schedules Zoom meeting/webinar (via Zoom Dashboard)
+2. User browses courses → sees live sessions
+3. Backend calls GET /v1/zoom/meetings → filters by subscription type
+4. User clicks "Join Live Session"
+5. Frontend requests POST /v1/zoom/signature
+6. Backend generates JWT signature (valid 2h)
+7. Frontend initializes Zoom Meeting SDK with signature
+8. User joins meeting via embedded Zoom player
+
+Notes:
+- ⚠️ OAuth credentials HARDCODED in service (security risk)
+- In-memory caching for access tokens (not Redis)
+- Subscription-based filtering for special meetings
+- Meeting ID 94484583631 is VIP (requires special subscription types 29-32)
+- Webinars feature toggle (can be disabled via config)
+
+================================================================================
+ZOOM AUTH SERVICE - METHODS
+================================================================================
+
+--------------------------------------------------------------------------------
+METHOD 1: getAccessToken() - OAuth Server-to-Server Authentication
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Obține un access token Zoom folosind OAuth Server-to-Server flow.
+Token-ul este folosit pentru apeluri către Zoom API (create meeting, list meetings, etc.).
+
+Flow:
+1. POST către https://zoom.us/oauth/token
+2. Query params:
+   - grant_type: 'account_credentials'
+   - account_id: this.accountId
+3. Headers:
+   - Authorization: Basic base64(clientId:clientSecret)
+4. Returnează access_token din response
+5. Token valid pentru 1h (Zoom default)
+
+Cod sursă:
+- Service: src/v1/Zoom/Services/zoomAuth.service.ts:16-34
+
+Method Signature:
+async getAccessToken(): Promise<string>
+
+Zoom API Call:
+POST https://zoom.us/oauth/token?grant_type=account_credentials&account_id=bND7Sp_TT5mV5RsZ5D3KJA
+Headers:
+  Authorization: Basic base64(clientId:clientSecret)
+  Content-Type: application/x-www-form-urlencoded
+
+Response:
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "expires_in": 3600,
+  "scope": "meeting:write meeting:read webinar:write webinar:read"
+}
+
+Dependencies:
+- HttpService (@nestjs/axios)
+
+Notes:
+- ⚠️ Credentials HARDCODED (clientId, clientSecret, accountId)
+- Token valid 1h (should cache)
+- No error handling if API fails
+- Used for all Zoom API calls
+
+Recommendations for .NET:
+- Store credentials in Azure Key Vault / AWS Secrets Manager
+- Use HttpClient with OAuth middleware
+- Cache access token in Redis with 50min TTL (expires in 1h)
+- Add retry logic with exponential backoff (Polly)
+- Add error handling for invalid credentials
+
+--------------------------------------------------------------------------------
+METHOD 2: getCache() - Check In-Memory Token Cache
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Verifică dacă există un access token cached în memorie și dacă nu a expirat.
+Reduce numărul de apeluri către Zoom OAuth endpoint.
+
+Flow:
+1. Verifică dacă this.cache există
+2. Verifică dacă cache.expiresAt > Date.now()
+3. Return cached token sau null dacă expirat
+
+Cod sursă:
+- Service: src/v1/Zoom/Services/zoomAuth.service.ts:36-41
+
+Method Signature:
+async getCache(_cacheKey): Promise<string | null>
+
+Notes:
+- _cacheKey parameter is UNUSED (prefixed with _)
+- In-memory cache (lost on server restart)
+- Single cache entry (not keyed by anything)
+
+Recommendations for .NET:
+- Use IMemoryCache or IDistributedCache (Redis)
+- Remove unused _cacheKey parameter
+- Add cache invalidation on demand
+
+--------------------------------------------------------------------------------
+METHOD 3: setCache() - Store Token in Memory
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Salvează access token în cache în memorie cu TTL.
+
+Flow:
+1. Primește value (token) și expiresIn (seconds)
+2. Setează this.cache cu token și expiresAt timestamp
+3. expiresAt = Date.now() + expiresIn * 1000
+
+Cod sursă:
+- Service: src/v1/Zoom/Services/zoomAuth.service.ts:43-52
+
+Method Signature:
+async setCache(_cacheKey: string, value: any, expiresIn: number): Promise<void>
+
+Notes:
+- _cacheKey parameter is UNUSED
+- In-memory storage (not persistent)
+- Single cache entry
+
+Recommendations for .NET:
+- Use IMemoryCache with MemoryCacheEntryOptions
+- Remove unused _cacheKey parameter
+- Or migrate to Redis for distributed caching
+
+================================================================================
+ZOOM CONTROLLER - ENDPOINTS
+================================================================================
+
+--------------------------------------------------------------------------------
+ENDPOINT 1: GET /v1/zoom/create - Create Test Meeting (DEV ONLY)
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+⚠️ TEST ENDPOINT - Creează un test meeting sau obține detalii user în Zoom.
+Endpoint-ul are cod comentat pentru creare meeting, actual apelează GET /users/me.
+
+Flow:
+1. Obține access token via zoomAuthService.getAccessToken()
+2. POST către https://api.zoom.us/v2/users/me (commented: /users/me/meetings)
+3. Returnează response de la Zoom
+
+Cod sursă:
+- Controller: src/v1/Zoom/Controller/zoom.controller.ts:34-60
+
+Request:
+GET /v1/zoom/create
+Headers:
+  Authorization: Bearer {jwt_token}
+
+Commented Payload (for meeting creation):
+{
+  "topic": "New Event",
+  "type": 2,
+  "start_time": "2024-10-28T15:00:00Z",
+  "duration": 60,
+  "timezone": "UTC"
+}
+
+Response:
+{
+  "id": "user@example.com",
+  "first_name": "John",
+  "last_name": "Doe",
+  "email": "user@example.com",
+  "type": 2,
+  ...
+}
+
+Authorization: Authenticated (JWT)
+Roles: Any authenticated user
+
+Dependencies:
+- ZoomAuthService.getAccessToken()
+- HttpService
+
+Notes:
+- ⚠️ TEST ENDPOINT - should NOT be in production
+- Actual endpoint calls GET /users/me (not create meeting)
+- Meeting creation code is commented out
+
+Recommendations for .NET:
+- REMOVE this endpoint in .NET migration
+- If meeting creation needed: create proper endpoint with validation
+- Add admin-only authorization
+
+--------------------------------------------------------------------------------
+ENDPOINT 2: GET /v1/zoom/opener - Get Access Token
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Returnează Zoom access token către client. ⚠️ SECURITY RISK - expune token
+către frontend care poate fi interceptat.
+
+Flow:
+1. TODO comment: check if user has subscription
+2. Obține access token via zoomAuthService.getAccessToken()
+3. Returnează token direct către client
+
+Cod sursă:
+- Controller: src/v1/Zoom/Controller/zoom.controller.ts:62-67
+
+Request:
+GET /v1/zoom/opener
+Headers:
+  Authorization: Bearer {jwt_token}
+
+Response:
+"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+Authorization: Authenticated (JWT)
+Roles: Any authenticated user
+
+Dependencies:
+- ZoomAuthService.getAccessToken()
+
+Notes:
+- ⚠️ SECURITY RISK - exposes server-to-server token to client
+- TODO: check subscription (not implemented)
+- Token can be used for unauthorized Zoom API calls
+
+Recommendations for .NET:
+- DO NOT migrate this endpoint as-is
+- Use Zoom Meeting SDK signature instead (POST /signature)
+- Never expose server-to-server OAuth token to client
+- If needed: implement proper OAuth PKCE flow for client-side tokens
+
+--------------------------------------------------------------------------------
+ENDPOINT 3: POST /v1/zoom/signature - Generate Meeting SDK Signature
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Generează un JWT signature pentru Zoom Meeting SDK. Frontend folosește acest
+signature pentru a inițializa Zoom Meeting SDK și a permite utilizatorului
+să se alăture unui meeting direct din browser (embedded player).
+
+Flow:
+1. Primește meetingNumber și role (participant/host) în request body
+2. Obține Zoom SDK Key și Secret din environment variables
+3. Generează JWT payload:
+   - sdkKey: ZOOM_MEETING_SDK_KEY_OR_CLIENT_ID
+   - appKey: same as sdkKey
+   - mn: meetingNumber
+   - role: user role (0 = participant, 1 = host)
+   - iat: issued at timestamp (now - 30 seconds)
+   - exp: expiration (iat + 2 hours)
+4. Sign JWT cu HS256 algorithm și secret
+5. Returnează JWT signature
+
+Cod sursă:
+- Controller: src/v1/Zoom/Controller/zoom.controller.ts:69-92
+
+Request:
+POST /v1/zoom/signature
+Headers:
+  Authorization: Bearer {jwt_token}
+Body:
+{
+  "meetingNumber": "123456789",
+  "role": "0"
+}
+
+Response:
+"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZGtLZXkiOiJYWFhYIiwiYXBwS2V5IjoiWFhYWCIsIm1uIjoiMTIzNDU2Nzg5Iiwicm9sZSI6IjAiLCJpYXQiOjE3MzA1Njc4NjAsImV4cCI6MTczMDU3NTA2MCwidG9rZW5FeHAiOjE3MzA1NzUwNjB9.xxxxxxxxxxxxx"
+
+Authorization: Authenticated (JWT)
+Roles: Any authenticated user
+
+Dependencies:
+- jsrsasign library (KJUR.jws.JWS.sign)
+- Environment variables (ZOOM_MEETING_SDK_KEY_OR_CLIENT_ID, ZOOM_CLIENT_SECRET)
+
+Notes:
+- ✅ CORRECT approach for Zoom Meeting SDK integration
+- JWT valid for 2 hours (120 minutes)
+- iat set to now - 30 seconds (clock skew tolerance)
+- role: "0" = participant, "1" = host
+- Used by frontend to initialize ZoomMtg.init() and ZoomMtg.join()
+
+Recommendations for .NET:
+- Use System.IdentityModel.Tokens.Jwt for JWT generation
+- Validate meetingNumber format before signing
+- Add rate limiting per user (prevent signature abuse)
+- Add subscription check (only allow users with active subscription)
+- Log signature generation for audit trail
+- Consider adding meeting validation (check meeting exists in Zoom)
+
+--------------------------------------------------------------------------------
+ENDPOINT 4: GET /v1/zoom/meetings - List Upcoming Meetings (Subscription Filtered)
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Returnează lista de meeting-uri Zoom programate, cu filtrare specială bazată pe
+tipul de abonament al utilizatorului. Meeting-ul VIP (ID 94484583631) este
+accesibil doar utilizatorilor cu abonamente speciale (types 29-32).
+
+Flow:
+1. Obține access token via zoomAuthService.getAccessToken()
+2. Parse subscriptionTypes din query param (comma-separated string)
+3. Verifică dacă utilizatorul are special subscription (types 29, 30, 31, 32)
+4. GET /users/me/meetings din Zoom API
+5. Pentru fiecare meeting:
+   - Skip meeting ID 94484583631 dacă user NU are special subscription
+   - GET /meetings/{id} pentru detalii (auto_recording setting)
+   - Adaugă recording setting la meeting object
+6. Filtrează meeting-ul VIP din listă dacă user NU are special subscription
+7. Returnează meetings array
+
+Cod sursă:
+- Controller: src/v1/Zoom/Controller/zoom.controller.ts:94-164
+
+Request:
+GET /v1/zoom/meetings?type=upcoming&subscriptionTypes=29,30
+Headers:
+  Authorization: Bearer {jwt_token}
+Query Params:
+  - type: string (upcoming, scheduled, previous_meetings)
+  - subscriptionTypes: string (comma-separated, e.g., "1,2,29")
+
+Response:
+{
+  "page_count": 1,
+  "page_number": 1,
+  "page_size": 30,
+  "total_records": 5,
+  "meetings": [
+    {
+      "uuid": "xxxx",
+      "id": 123456789,
+      "host_id": "xxxx",
+      "topic": "Course Live Session",
+      "type": 2,
+      "start_time": "2024-11-05T14:00:00Z",
+      "duration": 60,
+      "timezone": "Europe/Bucharest",
+      "join_url": "https://zoom.us/j/123456789",
+      "recording": "cloud"
+    },
+    ...
+  ]
+}
+
+Authorization: Authenticated (JWT)
+Roles: Any authenticated user
+
+Dependencies:
+- ZoomAuthService.getAccessToken()
+- HttpService
+
+Notes:
+- Special meeting ID 94484583631 is VIP-only
+- Special subscription types: [29, 30, 31, 32]
+- Fetches additional meeting details for each meeting (N+1 query problem)
+- Recording setting added from detailed meeting response
+
+Recommendations for .NET:
+- Cache Zoom meetings list (Redis, 5min TTL)
+- Optimize N+1 queries: batch fetch meeting details or use Zoom API fields parameter
+- Move VIP meeting ID to configuration (not hardcoded)
+- Move special subscription types to configuration or database
+- Add pagination support
+- Add error handling for individual meeting detail fetches (don't fail entire request)
+
+--------------------------------------------------------------------------------
+ENDPOINT 5: GET /v1/zoom/webinars - List Upcoming Webinars
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Returnează lista de webinar-uri Zoom programate. Feature poate fi disabled via
+config. Răspunsul este reformatat pentru a folosi "meetings" key (consistency
+cu /meetings endpoint).
+
+Flow:
+1. Verifică dacă webinars sunt enabled în config
+2. Dacă disabled: returnează array gol []
+3. Obține access token via zoomAuthService.getAccessToken()
+4. GET /users/me/webinars din Zoom API
+5. Redenumește key "webinars" → "meetings" în response
+6. Returnează response
+
+Cod sursă:
+- Controller: src/v1/Zoom/Controller/zoom.controller.ts:166-199
+
+Request:
+GET /v1/zoom/webinars?type=upcoming
+Headers:
+  Authorization: Bearer {jwt_token}
+Query Params:
+  - type: string (upcoming, scheduled)
+
+Response:
+{
+  "page_count": 1,
+  "page_number": 1,
+  "page_size": 30,
+  "total_records": 3,
+  "meetings": [
+    {
+      "uuid": "xxxx",
+      "id": 987654321,
+      "host_id": "xxxx",
+      "topic": "Monthly Webinar",
+      "type": 5,
+      "start_time": "2024-11-10T16:00:00Z",
+      "duration": 90,
+      "timezone": "Europe/Bucharest",
+      "join_url": "https://zoom.us/w/987654321"
+    },
+    ...
+  ]
+}
+
+Authorization: Authenticated (JWT)
+Roles: Any authenticated user
+
+Dependencies:
+- ZoomAuthService.getAccessToken()
+- HttpService
+- ConfigService (app.zoom.enableWebinars)
+
+Notes:
+- Feature toggle: can be disabled via config
+- Response key renamed from "webinars" to "meetings" for consistency
+- No subscription filtering (unlike /meetings endpoint)
+
+Recommendations for .NET:
+- Cache webinars list (Redis, 5min TTL)
+- Add pagination support
+- Consider unified endpoint: /v1/zoom/events?type=meeting|webinar
+- Add subscription-based filtering if needed
+- Add error handling for Zoom API failures
+
+================================================================================
+INTEGRATION FLOW: ZOOM LIVE SESSION
+================================================================================
+
+Complete Flow (Frontend + Backend):
+
+1. Admin schedules Zoom meeting
+   - Via Zoom Dashboard or Zoom API
+   - Meeting ID: 123456789
+   - Start time: 2024-11-05 14:00
+
+2. User browses courses
+   - Frontend calls GET /v1/zoom/meetings?type=upcoming&subscriptionTypes={userTypes}
+   - Backend filters meetings based on subscription
+   - Frontend displays upcoming live sessions
+
+3. User clicks "Join Live Session"
+   - Frontend needs to embed Zoom Meeting SDK
+   - Frontend calls POST /v1/zoom/signature with meetingNumber and role
+   - Backend generates JWT signature (valid 2h)
+   - Backend returns signature to frontend
+
+4. Frontend initializes Zoom Meeting SDK
+   - Load Zoom Meeting SDK script
+   - ZoomMtg.init({ sdkKey, signature })
+   - ZoomMtg.join({ meetingNumber, userName, signature })
+   - User joins meeting in embedded player
+
+5. User participates in live session
+   - Video/audio communication
+   - Screen sharing (if host enables)
+   - Chat (if enabled)
+
+6. Meeting ends
+   - Recording saved to Zoom Cloud (if enabled)
+   - Recording can be downloaded via Zoom API
+
+================================================================================
+END OF ZOOM SERVICE DOCUMENTATION
+================================================================================
+
+Summary:
+- Service Type: External API Integration (Zoom Video Conferencing)
+- Service Methods: 3 (getAccessToken, getCache, setCache)
+- Endpoints: 5 (1 test, 1 security risk, 3 production)
+- SDK: Zoom API v2 + Zoom Meeting SDK (frontend)
+- Authentication: OAuth Server-to-Server + JWT signatures
+
+Critical Business Logic:
+1. Subscription-based meeting access control
+2. VIP meeting filtering (ID 94484583631 for special subscriptions)
+3. JWT signature generation for Meeting SDK
+4. In-memory access token caching
+
+Integration Points:
+1. Frontend → POST /v1/zoom/signature → Zoom Meeting SDK
+2. Frontend → GET /v1/zoom/meetings → Live sessions listing
+3. Frontend → GET /v1/zoom/webinars → Webinar listings
+
+Issues Found:
+- ⚠️ OAuth credentials HARDCODED in service (security risk)
+- ⚠️ GET /v1/zoom/opener exposes server token to client (CRITICAL security risk)
+- ⚠️ GET /v1/zoom/create is test endpoint (should be removed)
+- ⚠️ In-memory caching (lost on restart, not distributed)
+- ⚠️ N+1 query problem in /meetings endpoint
+- ⚠️ VIP meeting ID hardcoded (should be configurable)
+- ⚠️ No subscription validation in /signature endpoint
+
+Recommendations for .NET:
+1. Store Zoom credentials in Azure Key Vault / AWS Secrets Manager
+2. REMOVE GET /v1/zoom/opener endpoint (security risk)
+3. REMOVE GET /v1/zoom/create endpoint (test only)
+4. Use IDistributedCache (Redis) for access token caching
+5. Add subscription validation before signature generation
+6. Optimize N+1 queries in /meetings endpoint
+7. Move VIP meeting ID and special subscription types to configuration
+8. Use System.IdentityModel.Tokens.Jwt for signature generation
+9. Add rate limiting per user for signature endpoint
+10. Add comprehensive error handling and logging
+11. Consider webhook integration for meeting lifecycle events
+12. Add meeting recording management endpoints
+
+Security Priorities:
+1. **CRITICAL**: Remove GET /v1/zoom/opener (exposes server token)
+2. **HIGH**: Move credentials from code to secure vault
+3. **MEDIUM**: Add subscription validation in /signature
+4. **LOW**: Add rate limiting for signature generation
+
+Ready for JIRA import! 🎯

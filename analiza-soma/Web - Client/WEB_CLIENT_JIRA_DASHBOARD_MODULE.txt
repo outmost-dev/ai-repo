@@ -1,0 +1,2849 @@
+================================================================================
+JIRA STORY: DASHBOARD MODULE - WEB CLIENT MIGRATION
+================================================================================
+
+Project: WEB (Somaway Web Client Migration to Nuxt 3)
+Story Type: Module Migration
+Priority: High
+Module: Dashboard / User Overview
+
+================================================================================
+STORY DESCRIPTION
+================================================================================
+
+Modulul Dashboard este pagina principală a utilizatorilor autentificați, afișând un overview complet al activității și abonamentelor.
+
+Acest modul include funcționalități pentru:
+- Afișare profil utilizator cu avatar și statistici
+- Upload imagine profil cu versioning
+- Listă abonamente active cu indicatori de status
+- Statistici activitate (cursuri accesate, timp petrecut, practici noi)
+- Calendar activități LIVE (Zoom meetings/webinars)
+- Listă materiale disponibile (cursuri și lecții)
+- Popup-uri marketing cu tracking dismissal în localStorage
+- Renewal automată abonamente la mount
+- Refresh analytics bazat pe versiune aplicație
+- Design responsive cu versiuni mobile/desktop separate
+
+Locație cod sursă (Next.js):
+- Page: web/src/pages/dashboard.tsx
+- Components: web/src/components/pages/dashboard/
+
+Tasks documentate: 6
+Componente principale: Dashboard Page, UserBoard, SubscriptionsList, OfferPopup, ConfirmationPopup, EnrollmentPopup
+
+Tech Stack Transition:
+- Next.js Pages Router → Nuxt 3 Pages Directory
+- React 18 → Vue 3 Composition API
+- Redux Toolkit → Pinia
+- React hooks → Vue Composables
+- localStorage tracking → Nuxt useLocalStorage or custom composable
+
+Dependencies:
+- API endpoints: GET /v1/subscription-types, POST /v1/users/upload-profile-picture
+- Redux stores: user, analytics, zoomAccess, subscriptions, global
+- Third-party: dayjs (isoWeek plugin), Ant Design (Avatar, Upload, Modal, Tag, Tooltip)
+- Shared components: AppLayout, PageHelmet, CustomButton, MaterialsWrapper, HomeOrar
+- Hooks: useAnalytics, useZoomAccess, useGetCampaigns
+
+Notes:
+- localStorage keys: "offer_dismissal_count" (max 6), "popup_dismissal_count" (max 3)
+- Analytics types: VIEW_COURSE, VIEW_LESSON, TIME_SPENT
+- Subscription status calculation: dayjs date comparison (before/after/between)
+- Image upload: FormData with version increment (picVersion + 1)
+- Responsive classes: mobile-only, desktop-only
+- FloatButton.BackTop pentru scroll-to-top
+- Hidden SubscriptionsContainer pentru data prefetch
+
+================================================================================
+TASK 1: DASHBOARD PAGE - MAIN USER LANDING PAGE
+================================================================================
+
+Title: Dashboard Page - User Overview with Stats and Materials
+
+Priority: High
+Complexity: Medium
+Estimated Time: 4h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+Pagina Dashboard este landing page-ul principal pentru utilizatorii autentificați, oferind un overview complet.
+
+Funcționalități:
+1. **User Profile Summary**: Afișare UserBoard cu avatar, nume, statistici
+2. **Subscriptions Display**: Listă abonamente active cu status
+3. **Calendar Integration**: Afișare HomeOrar dacă are access la Zoom
+4. **Materials List**: Afișare MaterialsWrapper pentru cursuri disponibile
+5. **Offer Popup**: Afișare OfferPopup dacă există campanii active
+6. **Subscription Renewal**: Check și renewal abonamente la mount
+7. **Analytics Refresh**: Fetch analytics bazat pe versiune aplicație
+8. **Scroll to Top**: FloatButton.BackTop pentru navigare
+9. **Hidden Prefetch**: SubscriptionsContainer hidden pentru data loading
+
+Flow:
+1. User navighează la /dashboard (requires CUSTOMER role)
+2. Mount → check subscriptions.length > 0
+3. Dacă subscriptions → call renewSubscriptions(dispatch, appVersion)
+4. Check appVersion != packageJson.version
+   - Dacă diferit → retrieveAnalytics() (toate tipurile)
+   - Dacă identic → retrieveAnalytics(TIME_SPENT) (doar time)
+5. Render UserBoard cu authUser și subscriptions
+6. Dacă zoomAccess.meetings sau webinars → render HomeOrar calendar
+7. Render MaterialsWrapper pentru courses list
+8. Render OfferPopup (auto-show dacă există campaigns)
+9. Hidden SubscriptionsContainer pentru prefetch data
+
+Business Rules:
+- Required role: CUSTOMER (authenticated users only)
+- Analytics refresh logic: full vs partial based on app version
+- Subscription renewal: automatic on mount if subscriptions exist
+- Calendar display: conditional on Zoom access (meetings OR webinars)
+- Materials filter: "simple" type (default filters)
+- Layout class: roleName + "-page profile-page"
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/pages/dashboard.tsx
+
+```typescript
+// Libraries
+import { Col, FloatButton, Row } from "antd/lib";
+import React, { useEffect } from "react";
+import { NextPage } from "next";
+import { useDispatch, useSelector } from "react-redux";
+import packageJson from "@/../package.json";
+
+// Local files
+import { PageHelmet } from "@/components/global/PageHelmet";
+import { AppLayout } from "@/layouts/AppLayout";
+import { UserRoles } from "@/@types/enums/user-role.enum";
+import { readableRoles } from "@/../../config/constants";
+import UserBoard from "@/components/pages/dashboard/UserBoard/UserBoard";
+import HomeOrar from "@/components/pages/home/Orar";
+import MaterialsWrapper from "@/components/pages/courses/MaterialsWrapper";
+import { renewSubscriptions } from "@/services/subscriptions.service";
+import useAnalytics from "@/services/analytics.service";
+import SubscriptionsContainer from "@/components/pages/subscriptions/SubscriptionsContainer";
+import { AnalyticsTypes } from "../../config/constants";
+import { useZoomAccess } from "@/hooks/use-zoom-access";
+import OfferPopup from "@/components/pages/dashboard/OfferPopup";
+
+const Dashboard: NextPage<any> = (): JSX.Element => {
+  const dispatch = useDispatch();
+  const authUser = useSelector((state: any) => state.user);
+  const zoomAccess = useSelector((state: any) => state.zoomAccess);
+  const { appVersion } = useSelector((state: any) => state.global);
+  const { retrieveAnalytics } = useAnalytics();
+  const roleName =
+    readableRoles[authUser?.role.toString() as keyof typeof readableRoles];
+
+  const { subscriptions } = useZoomAccess();
+
+  const subscriptionTypes = subscriptions?.map(
+    (s: { subTypeId: any }) => s.subTypeId,
+  );
+
+  useEffect(() => {
+    if (subscriptions?.length > 0) {
+      renewSubscriptions(dispatch, { appVersion: packageJson.version });
+    }
+  }, [subscriptions, dispatch]);
+
+  useEffect(() => {
+    if (appVersion != packageJson.version) {
+      retrieveAnalytics();
+    } else {
+      retrieveAnalytics(AnalyticsTypes.TIME_SPENT);
+    }
+  }, [appVersion]);
+
+  return (
+    <AppLayout
+      authority={UserRoles.CUSTOMER}
+      layoutClass={roleName + "-page profile-page"}
+    >
+      <PageHelmet title={`${authUser?.fullName} • Dashboard`} />
+      <FloatButton.BackTop />
+
+      <OfferPopup />
+
+      <div className="dashboard-wrapper">
+        <Row>
+          <Col xl={24} lg={24} md={24} sm={24} xs={24}>
+            <UserBoard
+              authUser={authUser}
+              subscriptions={subscriptions || []}
+            />
+          </Col>
+        </Row>
+
+        {(zoomAccess.meetings || zoomAccess.webinars) && (
+          <Row>
+            <Col xs={24} md={24} lg={24}>
+              <HomeOrar
+                title="Calendar de activități live"
+                access={zoomAccess}
+                subscriptionTypes={subscriptionTypes}
+              />
+            </Col>
+          </Row>
+        )}
+
+        <Row id="materials-list" className={"materials-list"}>
+          <MaterialsWrapper filterType="simple" />
+        </Row>
+        <div style={{ display: "none" }}>
+          <SubscriptionsContainer />
+        </div>
+      </div>
+    </AppLayout>
+  );
+};
+
+//Dashboard.getInitialProps = async () => aici vom lua datele initiale necesare InitialValues()
+export default Dashboard;
+```
+
+Key Patterns:
+- useSelector pentru multiple Redux stores (user, zoomAccess, global)
+- useZoomAccess custom hook pentru subscriptions
+- useAnalytics custom hook pentru analytics fetch
+- useEffect cu dependencies pentru auto-renewal
+- useEffect pentru conditional analytics refresh
+- readableRoles mapping pentru layout class
+- subscriptionTypes extracted din subscriptions array
+- Hidden SubscriptionsContainer pentru data prefetch
+- Conditional rendering pentru Zoom calendar
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+Location: web/pages/dashboard.vue
+
+```vue
+<template>
+  <AppLayout :authority="UserRoles.CUSTOMER" :layout-class="layoutClass">
+    <Head>
+      <Title>{{ authUser?.fullName }} • Dashboard | Somaway</Title>
+    </Head>
+
+    <AFloatButtonBackTop />
+
+    <OfferPopup />
+
+    <div class="dashboard-wrapper">
+      <ARow>
+        <ACol :xl="24" :lg="24" :md="24" :sm="24" :xs="24">
+          <UserBoard
+            :auth-user="authUser"
+            :subscriptions="subscriptions || []"
+          />
+        </ACol>
+      </ARow>
+
+      <ARow v-if="zoomAccess.meetings || zoomAccess.webinars">
+        <ACol :xs="24" :md="24" :lg="24">
+          <HomeOrar
+            title="Calendar de activități live"
+            :access="zoomAccess"
+            :subscription-types="subscriptionTypes"
+          />
+        </ACol>
+      </ARow>
+
+      <ARow id="materials-list" class="materials-list">
+        <MaterialsWrapper filter-type="simple" />
+      </ARow>
+
+      <!-- Hidden prefetch -->
+      <div style="display: none">
+        <SubscriptionsContainer />
+      </div>
+    </div>
+  </AppLayout>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted } from 'vue';
+import { storeToRefs } from 'pinia';
+import { UserRoles } from '@/@types/enums/user-role.enum';
+import { readableRoles, AnalyticsTypes } from '@/config/constants';
+import { useUserStore } from '@/stores/user';
+import { useSubscriptionStore } from '@/stores/subscription';
+import { useZoomAccessStore } from '@/stores/zoomAccess';
+import { useGlobalStore } from '@/stores/global';
+import { useAnalytics } from '@/composables/useAnalytics';
+import { useZoomAccess } from '@/composables/useZoomAccess';
+import { renewSubscriptions } from '@/services/subscriptions.service';
+import packageJson from '@/../package.json';
+
+const userStore = useUserStore();
+const subscriptionStore = useSubscriptionStore();
+const zoomAccessStore = useZoomAccessStore();
+const globalStore = useGlobalStore();
+
+const { user: authUser } = storeToRefs(userStore);
+const { zoomAccess } = storeToRefs(zoomAccessStore);
+const { appVersion } = storeToRefs(globalStore);
+
+const { subscriptions } = useZoomAccess();
+const { retrieveAnalytics } = useAnalytics();
+
+// Computed values
+const roleName = computed(() =>
+  readableRoles[authUser.value?.role.toString() as keyof typeof readableRoles]
+);
+
+const layoutClass = computed(() => `${roleName.value}-page profile-page`);
+
+const subscriptionTypes = computed(() =>
+  subscriptions.value?.map((s: { subTypeId: any }) => s.subTypeId) || []
+);
+
+// Subscription renewal on mount
+onMounted(async () => {
+  if (subscriptions.value?.length > 0) {
+    await renewSubscriptions(subscriptionStore, { appVersion: packageJson.version });
+  }
+
+  // Analytics refresh based on app version
+  if (appVersion.value !== packageJson.version) {
+    await retrieveAnalytics();
+  } else {
+    await retrieveAnalytics(AnalyticsTypes.TIME_SPENT);
+  }
+});
+</script>
+
+<style scoped lang="scss">
+.dashboard-wrapper {
+  padding: 2rem 0;
+
+  .materials-list {
+    margin-top: 2rem;
+  }
+}
+</style>
+```
+
+Vue 3 Patterns:
+- storeToRefs pentru reactive store access
+- useZoomAccess composable (replaces hook)
+- useAnalytics composable (replaces hook)
+- computed() pentru derived values (roleName, layoutClass, subscriptionTypes)
+- onMounted pentru side effects
+- await pentru async operations
+- No dispatch needed (Pinia stores have direct methods)
+
+================================================================================
+TASK 2: USER BOARD COMPONENT - USER PROFILE DISPLAY WITH STATS
+================================================================================
+
+Title: UserBoard Component - Profile, Avatar Upload, Statistics Display
+
+Priority: High
+Complexity: Medium
+Estimated Time: 3.5h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+Componenta UserBoard afișează profilul utilizatorului cu avatar, statistici și lista abonamente.
+
+Funcționalități:
+1. **User Avatar Display**: Afișare avatar cu versioning (picVersion)
+2. **Profile Upload**: Upload imagine profil cu FormData + versioning
+3. **User Info Display**: Nume, email, rol, data membrului (created at)
+4. **Statistics Cards**: Trei statistici - cursuri accesate, timp petrecut, practici noi
+5. **Subscriptions List**: Sub-component SubscriptionsList cu status indicators
+6. **Responsive Design**: Mobile vs desktop layout cu responsive classes
+
+Flow:
+1. Component primește authUser și subscriptions ca props
+2. Render avatar cu image URL din user.profilePicture + picVersion
+3. Render profil info (fullName, email, role, createdAt)
+4. Render tre stats cards dacă analytics sunt disponibile
+5. Stat 1: Cursuri Accesate (analitic COUNT din VIEW_COURSE)
+6. Stat 2: Timp Petrecut (analitic SUM din TIME_SPENT - în ore)
+7. Stat 3: Practici Noi (analitic COUNT din VIEW_LESSON)
+8. Upload avatar: click pe avatar → input file → FormData → POST
+9. After upload success → increment picVersion → refresh avatar URL
+10. Render SubscriptionsList cu subscriptions array
+
+Business Rules:
+- Image upload: FormData with field "file", append version increment
+- Avatar URL versioning: ?v={picVersion} query param
+- Responsive: desktop class="hidden-mobile", mobile class="mobile-only"
+- Stats calculation: din analytics array care vine din Redux
+- Upload success toast: "Poza de profil actualizată cu succes"
+- Error handling: "Eroare la upload poza. Încercați din nou"
+- Subscription display: ordered by endDate, color-coded status
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/components/pages/dashboard/UserBoard/UserBoard.tsx
+
+```typescript
+import React, { useState } from "react";
+import { Avatar, Upload, Button, message, Col, Row, Statistic, Tag } from "antd/lib";
+import { UploadOutlined } from "@ant-design/icons";
+import { useDispatch } from "react-redux";
+import dayjs from "dayjs";
+import { useAnalytics } from "@/services/analytics.service";
+import SubscriptionsList from "../SubscriptionsList";
+import { UserRoles } from "@/@types/enums/user-role.enum";
+import { UserService } from "@/services";
+import "./UserBoard.module.scss";
+
+interface UserBoardProps {
+  authUser: any;
+  subscriptions: any[];
+}
+
+const UserBoard: React.FC<UserBoardProps> = ({ authUser, subscriptions }) => {
+  const dispatch = useDispatch();
+  const [loading, setLoading] = useState(false);
+  const { analytics } = useAnalytics();
+
+  const handleAvatarUpload = async (file: File) => {
+    try {
+      setLoading(true);
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await UserService.uploadProfilePicture(
+        formData,
+        authUser.id,
+        {
+          picVersion: (authUser.picVersion || 0) + 1,
+        }
+      );
+
+      message.success("Poza de profil actualizată cu succes");
+      // Update user in Redux with new picVersion
+      dispatch({
+        type: "USER_UPDATE",
+        payload: { picVersion: (authUser.picVersion || 0) + 1 },
+      });
+    } catch (error) {
+      console.error("Avatar upload error:", error);
+      message.error("Eroare la upload poza. Încercați din nou");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getAnalyticsStat = (type: string) => {
+    if (!analytics) return 0;
+    const stat = analytics.find((a: any) => a.type === type);
+    if (type === "TIME_SPENT") {
+      return Math.round((stat?.value || 0) / 60); // Convert minutes to hours
+    }
+    return stat?.value || 0;
+  };
+
+  const createdDate = dayjs(authUser?.createdAt).format("DD MMMM YYYY");
+  const roleLabel =
+    authUser?.role === UserRoles.ADMIN
+      ? "Administrator"
+      : authUser?.role === UserRoles.CREATOR
+        ? "Creator"
+        : "Client";
+
+  return (
+    <div className="user-board">
+      <Row gutter={[24, 24]}>
+        {/* Profile Section */}
+        <Col xs={24} md={8} lg={6}>
+          <div className="profile-card">
+            <div className="avatar-container">
+              <Avatar
+                size={120}
+                src={`${authUser?.profilePicture}?v=${authUser?.picVersion || 0}`}
+                alt={authUser?.fullName}
+              />
+              <Upload
+                beforeUpload={(file: File) => {
+                  handleAvatarUpload(file);
+                  return false;
+                }}
+                accept="image/*"
+                showUploadList={false}
+              >
+                <Button
+                  type="primary"
+                  icon={<UploadOutlined />}
+                  loading={loading}
+                  className="upload-btn"
+                >
+                  Schimbă poza
+                </Button>
+              </Upload>
+            </div>
+
+            <h3>{authUser?.fullName}</h3>
+            <p className="email">{authUser?.email}</p>
+            <Tag color="blue">{roleLabel}</Tag>
+            <p className="join-date">Membru din {createdDate}</p>
+          </div>
+        </Col>
+
+        {/* Statistics Section */}
+        <Col xs={24} md={16} lg={18}>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} sm={12} lg={8}>
+              <Statistic
+                title="Cursuri Accesate"
+                value={getAnalyticsStat("VIEW_COURSE")}
+                prefix="📚"
+              />
+            </Col>
+            <Col xs={24} sm={12} lg={8}>
+              <Statistic
+                title="Timp Petrecut"
+                value={getAnalyticsStat("TIME_SPENT")}
+                suffix="h"
+                prefix="⏱️"
+              />
+            </Col>
+            <Col xs={24} sm={12} lg={8}>
+              <Statistic
+                title="Practici Noi"
+                value={getAnalyticsStat("VIEW_LESSON")}
+                prefix="✏️"
+              />
+            </Col>
+          </Row>
+        </Col>
+      </Row>
+
+      {/* Subscriptions List */}
+      <Row gutter={[24, 24]} style={{ marginTop: "2rem" }}>
+        <Col xs={24}>
+          <SubscriptionsList subscriptions={subscriptions} />
+        </Col>
+      </Row>
+    </div>
+  );
+};
+
+export default UserBoard;
+```
+
+Key Patterns:
+- useState pentru loading state pe upload
+- useDispatch pentru Redux update after upload
+- useAnalytics custom hook pentru analytics data
+- handleAvatarUpload with FormData preparation
+- getAnalyticsStat helper pentru stats calculation
+- Avatar URL versioning cu query parameter
+- Upload component with beforeUpload handler
+- Responsive grid layout (xs/sm/md/lg/xl)
+- Tag și Statistic din Ant Design
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+Location: web/components/UserBoard.vue
+
+```vue
+<template>
+  <div class="user-board">
+    <ARow :gutter="[24, 24]">
+      <!-- Profile Section -->
+      <ACol :xs="24" :md="8" :lg="6">
+        <div class="profile-card">
+          <div class="avatar-container">
+            <AAvatar
+              :size="120"
+              :src="`${authUser?.profilePicture}?v=${authUser?.picVersion || 0}`"
+              :alt="authUser?.fullName"
+            />
+            <AUpload
+              :before-upload="handleAvatarUpload"
+              accept="image/*"
+              :show-upload-list="false"
+            >
+              <AButton
+                type="primary"
+                :loading="loading"
+                class="upload-btn"
+              >
+                <UploadOutlined />
+                Schimbă poza
+              </AButton>
+            </AUpload>
+          </div>
+
+          <h3>{{ authUser?.fullName }}</h3>
+          <p class="email">{{ authUser?.email }}</p>
+          <ATag color="blue">{{ roleLabel }}</ATag>
+          <p class="join-date">Membru din {{ createdDate }}</p>
+        </div>
+      </ACol>
+
+      <!-- Statistics Section -->
+      <ACol :xs="24" :md="16" :lg="18">
+        <ARow :gutter="[16, 16]">
+          <ACol :xs="24" :sm="12" :lg="8">
+            <AStatistic
+              title="Cursuri Accesate"
+              :value="getAnalyticsStat('VIEW_COURSE')"
+              prefix="📚"
+            />
+          </ACol>
+          <ACol :xs="24" :sm="12" :lg="8">
+            <AStatistic
+              title="Timp Petrecut"
+              :value="getAnalyticsStat('TIME_SPENT')"
+              suffix="h"
+              prefix="⏱️"
+            />
+          </ACol>
+          <ACol :xs="24" :sm="12" :lg="8">
+            <AStatistic
+              title="Practici Noi"
+              :value="getAnalyticsStat('VIEW_LESSON')"
+              prefix="✏️"
+            />
+          </ACol>
+        </ARow>
+      </ACol>
+    </ARow>
+
+    <!-- Subscriptions List -->
+    <ARow :gutter="[24, 24]" style="margin-top: 2rem">
+      <ACol :xs="24">
+        <SubscriptionsList :subscriptions="subscriptions" />
+      </ACol>
+    </ARow>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed } from 'vue';
+import { message } from 'ant-design-vue';
+import { UploadOutlined } from '@ant-design/icons-vue';
+import dayjs from 'dayjs';
+import { UserRoles } from '@/@types/enums/user-role.enum';
+import { useUserStore } from '@/stores/user';
+import { useAnalytics } from '@/composables/useAnalytics';
+import { UserService } from '@/services';
+
+interface Props {
+  authUser: any;
+  subscriptions: any[];
+}
+
+const props = defineProps<Props>();
+
+const userStore = useUserStore();
+const { analytics } = useAnalytics();
+const loading = ref(false);
+
+const handleAvatarUpload = async (file: File) => {
+  try {
+    loading.value = true;
+    const formData = new FormData();
+    formData.append('file', file);
+
+    await UserService.uploadProfilePicture(
+      formData,
+      props.authUser.id,
+      {
+        picVersion: (props.authUser.picVersion || 0) + 1,
+      }
+    );
+
+    message.success('Poza de profil actualizată cu succes');
+
+    // Update user store with new picVersion
+    await userStore.updateUser({
+      picVersion: (props.authUser.picVersion || 0) + 1,
+    });
+
+    return false;
+  } catch (error) {
+    console.error('Avatar upload error:', error);
+    message.error('Eroare la upload poza. Încercați din nou');
+    return false;
+  } finally {
+    loading.value = false;
+  }
+};
+
+const getAnalyticsStat = (type: string): number => {
+  if (!analytics.value) return 0;
+  const stat = analytics.value.find((a: any) => a.type === type);
+  if (type === 'TIME_SPENT') {
+    return Math.round((stat?.value || 0) / 60); // Convert minutes to hours
+  }
+  return stat?.value || 0;
+};
+
+const createdDate = computed(() =>
+  dayjs(props.authUser?.createdAt).format('DD MMMM YYYY')
+);
+
+const roleLabel = computed(() => {
+  switch (props.authUser?.role) {
+    case UserRoles.ADMIN:
+      return 'Administrator';
+    case UserRoles.CREATOR:
+      return 'Creator';
+    default:
+      return 'Client';
+  }
+});
+</script>
+
+<style scoped lang="scss">
+.user-board {
+  .profile-card {
+    padding: 2rem;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    text-align: center;
+
+    .avatar-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-bottom: 1rem;
+
+      .upload-btn {
+        margin-top: 1rem;
+      }
+    }
+
+    h3 {
+      margin: 1rem 0 0.5rem;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+
+    .email {
+      color: #666;
+      margin-bottom: 0.5rem;
+    }
+
+    .join-date {
+      color: #999;
+      font-size: 0.875rem;
+      margin-top: 1rem;
+    }
+  }
+}
+</style>
+```
+
+Vue 3 Patterns:
+- ref() za loading state
+- computed() za createdDate i roleLabel
+- Props interface za type safety
+- defineProps<Props>() za typed props
+- async/await za handleAvatarUpload
+- message API (same as React)
+- useUserStore().updateUser() instead of dispatch
+- Template conditional rendering (:if, v-for)
+- Prop binding sa :src, :value attributes
+
+Migration Notes:
+1. Redux dispatch → Pinia store.updateUser()
+2. useAnalytics hook → composable (similar pattern)
+3. Avatar versioning stays the same (?v=)
+4. Upload component almost identical (beforeUpload handler)
+5. Responsive grid (Ant Design Vue compatibility)
+6. Statistics calculation logic unchanged
+7. FormData handling identical
+
+--------------------------------------------------------------------------------
+API REQUEST/RESPONSE
+--------------------------------------------------------------------------------
+
+**Endpoint**: POST /v1/users/upload-profile-picture/:userId
+
+**Request**:
+- Method: POST
+- Content-Type: multipart/form-data
+- Body: FormData with "file" field (image)
+- Query Params: picVersion (integer - version number)
+- Headers: Authorization: Bearer {token}
+
+Example:
+```javascript
+const formData = new FormData();
+formData.append('file', imageFile);
+await axios.post(
+  `/v1/users/upload-profile-picture/${userId}?picVersion=${newVersion}`,
+  formData,
+  {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    }
+  }
+);
+```
+
+**Response (Success - 200)**:
+```json
+{
+  "statusCode": 200,
+  "message": "Profile picture updated successfully",
+  "data": {
+    "id": "uuid",
+    "fullName": "John Doe",
+    "email": "john@example.com",
+    "profilePicture": "https://...image-url",
+    "picVersion": 2
+  }
+}
+```
+
+**Response (Error - 400/500)**:
+```json
+{
+  "statusCode": 400,
+  "message": "Invalid file type. Only JPEG and PNG allowed",
+  "error": "BadRequest"
+}
+```
+
+--------------------------------------------------------------------------------
+DEPENDENCIES (CURRENT vs TARGET)
+--------------------------------------------------------------------------------
+
+**Current (React)**:
+- avatar: Ant Design Avatar (antd)
+- upload: Ant Design Upload (antd)
+- button: Ant Design Button (antd)
+- message: Ant Design message (antd)
+- grid: Ant Design Row/Col (antd)
+- statistics: Ant Design Statistic (antd)
+- tag: Ant Design Tag (antd)
+- icons: UploadOutlined (@ant-design/icons)
+- state management: Redux useDispatch/useSelector
+- http: axios (UserService)
+- date: dayjs
+- custom hooks: useAnalytics
+
+**Target (Vue 3)**:
+- avatar: ant-design-vue Avatar
+- upload: ant-design-vue Upload
+- button: ant-design-vue Button
+- message: ant-design-vue message
+- grid: ant-design-vue Row/Col
+- statistics: ant-design-vue Statistic
+- tag: ant-design-vue Tag
+- icons: @ant-design/icons-vue (UploadOutlined)
+- state management: Pinia useUserStore/useAnalyticsStore
+- http: axios (UserService - identical)
+- date: dayjs (identical)
+- composables: useAnalytics
+
+Import changes:
+```typescript
+// React
+import { Avatar, Upload, Button, message, Col, Row, Statistic, Tag } from "antd/lib";
+import { UploadOutlined } from "@ant-design/icons";
+import { useDispatch } from "react-redux";
+
+// Vue 3
+import { UploadOutlined } from '@ant-design/icons-vue';
+import { useUserStore } from '@/stores/user';
+import { useAnalytics } from '@/composables/useAnalytics';
+```
+
+--------------------------------------------------------------------------------
+AUTHORIZATION
+--------------------------------------------------------------------------------
+
+- Required role: CUSTOMER (user must be authenticated)
+- Token type: Access Token (JWT)
+- Scope: User can only upload their own profile picture
+- Upload validation: Image file (JPEG/PNG) max 5MB
+- Rate limit: 10 uploads per hour per user
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+1. **Avatar Versioning Strategy**:
+   - Prevents browser caching of old profile pictures
+   - Query param ?v={picVersion} appended to image URL
+   - picVersion incremented with each successful upload
+   - Essential for showing updated avatar immediately in UI
+
+2. **Upload FormData Preparation**:
+   - File must be appended as "file" field (backend expects this name)
+   - Optional: can include metadata (picVersion sent as query param)
+   - Must be FormData object, NOT JSON
+   - Content-Type auto-set by browser (don't set manually)
+
+3. **Statistics Calculation**:
+   - Analytics data comes from Redux/Pinia store (populated elsewhere)
+   - Three main metrics: VIEW_COURSE, TIME_SPENT, VIEW_LESSON
+   - TIME_SPENT is in minutes from backend, converted to hours in UI
+   - If analytics missing, display 0 (graceful fallback)
+
+4. **Error Handling Strategy**:
+   - Network errors: message.error("Eroare la upload...")
+   - Validation errors: handled by backend, displayed to user
+   - Loading state: prevent multiple uploads simultaneously
+   - Success feedback: message.success with confirmation
+
+5. **Responsive Design**:
+   - Desktop: avatar (left 6 cols) + stats (right 18 cols)
+   - Tablet: avatar (8 cols) + stats (16 cols)
+   - Mobile: avatar (24 cols), stats below (24 cols)
+   - Classes: hidden-mobile for desktop-only, mobile-only for mobile
+   - Breakpoints: xs=0, sm=576, md=768, lg=992, xl=1200
+
+6. **Subscription List Integration**:
+   - SubscriptionsList is child component (Task 3)
+   - Receives subscriptions array as prop
+   - Displayed below statistics section
+   - Handles its own status calculation and styling
+
+7. **Redux to Pinia Migration**:
+   - useDispatch() → useUserStore() from Pinia
+   - dispatch({type: 'USER_UPDATE'}) → store.updateUser(payload)
+   - getState() via storeToRefs(useUserStore())
+   - Pinia has less boilerplate, more TypeScript-friendly
+
+8. **Dayjs Date Formatting**:
+   - Used for "Membru din" date display
+   - Format: "DD MMMM YYYY" (e.g., "15 November 2023")
+   - Locale-aware (respects dayjs().locale() setting)
+   - No timezone issues (dates are already formatted on backend)
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+1. **Image Optimization**:
+   - Implement client-side image compression before upload (canvas/sharp)
+   - Validate file size (max 5MB) before sending to server
+   - Show file size warning in upload component
+   - Consider crop/preview dialog before final upload
+
+2. **Upload UX Improvement**:
+   - Add progress bar (AUpload :custom prop can show progress)
+   - Show image preview before upload confirmation
+   - Implement drag-drop area for file selection
+   - Add undo option to revert to previous version
+
+3. **Performance Optimization**:
+   - Cache analytics data to avoid re-fetch on every mount
+   - Lazy-load SubscriptionsList if not needed immediately
+   - Use pagination if subscriptions list becomes large
+   - Consider virtual scrolling for many subscriptions
+
+4. **Accessibility Enhancement**:
+   - Add aria-labels to avatar and upload button
+   - Use semantic HTML (section, article tags)
+   - Ensure color contrast meets WCAG AA standards
+   - Add keyboard navigation for form controls
+
+5. **Error Recovery**:
+   - Implement retry logic for failed uploads (exponential backoff)
+   - Show last successful upload date/time
+   - Provide fallback avatar if image load fails
+   - Log upload errors to Sentry for debugging
+
+6. **Type Safety**:
+   - Create UserBoard.types.ts with interfaces
+   - Define AnalyticsData interface
+   - Use strict null checks
+   - Validate props with Zod/Valibot
+
+7. **Testing Strategy**:
+   - Unit tests: getAnalyticsStat helper function
+   - Component tests: avatar upload flow (mount → select file → upload → success)
+   - Snapshot tests: profile card layout
+   - E2E tests: upload and verify picVersion increment
+
+8. **Monitoring**:
+   - Track upload success rate (Sentry metrics)
+   - Monitor upload duration (performance metrics)
+   - Alert on high error rates
+   - Log user profile update events
+
+================================================================================
+TASK 3: SUBSCRIPTIONS LIST COMPONENT - SUBSCRIPTION STATUS DISPLAY
+================================================================================
+
+Title: SubscriptionsList Component - Display with Status Indicators
+
+Priority: High
+Complexity: Low
+Estimated Time: 2.5h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+Componenta SubscriptionsList afișează lista abonamentelor active ale utilizatorului cu status indicators.
+
+Funcționalități:
+1. **Subscriptions Display**: Afișare tabel cu abonamente
+2. **Status Calculation**: Calcul status (ACTIVE/INACTIVE/FUTURE) pe bază de date
+3. **Status Indicators**: Color-coded tags pentru fiecare status
+4. **Date Formatting**: Afișare date în format human-readable
+5. **Course Name Display**: Afișare nume curs pentru fiecare abonament
+6. **Empty State**: Afișare mesaj dacă nu sunt abonamente
+7. **Responsive Table**: Design responsive cu scroll pe mobile
+
+Status Calculation Logic:
+- TODAY = dayjs().startOf('day')
+- startDate = dayjs(subscription.startDate)
+- endDate = dayjs(subscription.endDate)
+- If TODAY < startDate → FUTURE (blue)
+- If TODAY >= startDate AND TODAY <= endDate → ACTIVE (green)
+- If TODAY > endDate → INACTIVE (red)
+
+Flow:
+1. Component primește subscriptions array ca prop
+2. If subscriptions.length === 0 → render empty state
+3. For each subscription:
+   - Extract course name, startDate, endDate
+   - Calculate status (ACTIVE/INACTIVE/FUTURE)
+   - Render row cu status color-coded
+4. Order subscriptions by endDate descending
+5. Responsive: scroll table pe mobile, normal pe desktop
+
+Business Rules:
+- Empty state message: "Nu aveți abonamente active"
+- Table columns: Curs, Data Inceput, Data Expirare, Status
+- Status labels: "Activ", "Inactiv", "Viitor"
+- Status colors: green=active, red=inactive, blue=future
+- Date format: DD MMMM YYYY
+- Sort order: endDate descending (active first)
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/components/pages/dashboard/SubscriptionsList/SubscriptionsList.tsx
+
+```typescript
+import React from "react";
+import { Table, Tag, Empty } from "antd/lib";
+import dayjs from "dayjs";
+
+interface SubscriptionsListProps {
+  subscriptions: any[];
+}
+
+const SubscriptionsList: React.FC<SubscriptionsListProps> = ({
+  subscriptions,
+}) => {
+  const getSubscriptionStatus = (startDate: string, endDate: string) => {
+    const today = dayjs().startOf("day");
+    const start = dayjs(startDate).startOf("day");
+    const end = dayjs(endDate).startOf("day");
+
+    if (today.isBefore(start)) {
+      return { status: "FUTURE", label: "Viitor", color: "blue" };
+    } else if (today.isAfter(end)) {
+      return { status: "INACTIVE", label: "Inactiv", color: "red" };
+    } else {
+      return { status: "ACTIVE", label: "Activ", color: "green" };
+    }
+  };
+
+  const sortedSubscriptions = [...subscriptions].sort(
+    (a, b) =>
+      dayjs(b.endDate).valueOf() - dayjs(a.endDate).valueOf()
+  );
+
+  const columns = [
+    {
+      title: "Curs",
+      dataIndex: ["course", "name"],
+      key: "courseName",
+      width: "40%",
+    },
+    {
+      title: "Data Inceput",
+      dataIndex: "startDate",
+      key: "startDate",
+      width: "20%",
+      render: (date: string) => dayjs(date).format("DD MMMM YYYY"),
+    },
+    {
+      title: "Data Expirare",
+      dataIndex: "endDate",
+      key: "endDate",
+      width: "20%",
+      render: (date: string) => dayjs(date).format("DD MMMM YYYY"),
+    },
+    {
+      title: "Status",
+      key: "status",
+      width: "20%",
+      render: (_: any, record: any) => {
+        const { label, color } = getSubscriptionStatus(
+          record.startDate,
+          record.endDate
+        );
+        return <Tag color={color}>{label}</Tag>;
+      },
+    },
+  ];
+
+  if (subscriptions.length === 0) {
+    return <Empty description="Nu aveți abonamente active" />;
+  }
+
+  return (
+    <Table
+      columns={columns}
+      dataSource={sortedSubscriptions}
+      rowKey="id"
+      pagination={false}
+      size="small"
+      scroll={{ x: 600 }}
+    />
+  );
+};
+
+export default SubscriptionsList;
+```
+
+Key Patterns:
+- Table component from Ant Design
+- dayjs pentru date operations și formatting
+- getSubscriptionStatus helper function
+- Sort subscriptions by endDate descending
+- Render function pentru custom column rendering (dates + status tag)
+- Empty state component
+- Responsive scroll prop
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+Location: web/components/SubscriptionsList.vue
+
+```vue
+<template>
+  <div class="subscriptions-list">
+    <h3>Abonamentele Mele</h3>
+
+    <AEmpty
+      v-if="subscriptions.length === 0"
+      description="Nu aveți abonamente active"
+    />
+
+    <ATable
+      v-else
+      :columns="columns"
+      :data-source="sortedSubscriptions"
+      row-key="id"
+      :pagination="false"
+      size="small"
+      :scroll="{ x: 600 }"
+    >
+      <template #bodyCell="{ column, record }">
+        <!-- Course Name Column -->
+        <template v-if="column.key === 'courseName'">
+          {{ record.course?.name }}
+        </template>
+
+        <!-- Start Date Column -->
+        <template v-if="column.key === 'startDate'">
+          {{ dayjs(record.startDate).format('DD MMMM YYYY') }}
+        </template>
+
+        <!-- End Date Column -->
+        <template v-if="column.key === 'endDate'">
+          {{ dayjs(record.endDate).format('DD MMMM YYYY') }}
+        </template>
+
+        <!-- Status Column -->
+        <template v-if="column.key === 'status'">
+          <ATag :color="getSubscriptionStatus(record.startDate, record.endDate).color">
+            {{ getSubscriptionStatus(record.startDate, record.endDate).label }}
+          </ATag>
+        </template>
+      </template>
+    </ATable>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+import dayjs from 'dayjs';
+
+interface Subscription {
+  id: string;
+  course: {
+    id: string;
+    name: string;
+  };
+  startDate: string;
+  endDate: string;
+}
+
+interface Props {
+  subscriptions: Subscription[];
+}
+
+const props = defineProps<Props>();
+
+const columns = [
+  {
+    title: 'Curs',
+    dataIndex: ['course', 'name'],
+    key: 'courseName',
+    width: '40%',
+  },
+  {
+    title: 'Data Inceput',
+    dataIndex: 'startDate',
+    key: 'startDate',
+    width: '20%',
+  },
+  {
+    title: 'Data Expirare',
+    dataIndex: 'endDate',
+    key: 'endDate',
+    width: '20%',
+  },
+  {
+    title: 'Status',
+    key: 'status',
+    width: '20%',
+  },
+];
+
+const getSubscriptionStatus = (startDate: string, endDate: string) => {
+  const today = dayjs().startOf('day');
+  const start = dayjs(startDate).startOf('day');
+  const end = dayjs(endDate).startOf('day');
+
+  if (today.isBefore(start)) {
+    return { status: 'FUTURE', label: 'Viitor', color: 'blue' };
+  } else if (today.isAfter(end)) {
+    return { status: 'INACTIVE', label: 'Inactiv', color: 'red' };
+  } else {
+    return { status: 'ACTIVE', label: 'Activ', color: 'green' };
+  }
+};
+
+const sortedSubscriptions = computed(() =>
+  [...props.subscriptions].sort(
+    (a, b) => dayjs(b.endDate).valueOf() - dayjs(a.endDate).valueOf()
+  )
+);
+</script>
+
+<style scoped lang="scss">
+.subscriptions-list {
+  margin-top: 2rem;
+
+  h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+  }
+}
+</style>
+```
+
+Vue 3 Patterns:
+- Template #bodyCell slot pentru custom column rendering
+- computed() za sortedSubscriptions
+- v-if conditionals for empty state
+- Template v-if pentru column-specific rendering
+- Props interface za type safety
+- dayjs same pattern (identical to React)
+
+Migration Notes:
+1. Ant Design Table → ant-design-vue Table
+2. Column render functions → #bodyCell slot
+3. React.FC → Vue SFC cu <script setup>
+4. Props interface instead of React PropTypes
+5. Sorting logic identical
+6. Date formatting identical (dayjs)
+
+--------------------------------------------------------------------------------
+API REQUEST/RESPONSE
+--------------------------------------------------------------------------------
+
+**Data Source**: Subscription data comes from Redux/Pinia store (already fetched)
+
+**Structure**:
+```typescript
+interface Subscription {
+  id: string;
+  userId: string;
+  course: {
+    id: string;
+    name: string;
+    description: string;
+  };
+  subTypeId: string;
+  startDate: string;     // ISO format: "2023-11-15T00:00:00Z"
+  endDate: string;       // ISO format: "2024-11-15T00:00:00Z"
+  status: string;        // "ACTIVE", "INACTIVE", "FUTURE"
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+Note: Status field comes from backend, but component recalculates for accuracy
+based on current date vs subscription dates.
+
+--------------------------------------------------------------------------------
+DEPENDENCIES (CURRENT vs TARGET)
+--------------------------------------------------------------------------------
+
+**Current (React)**:
+- table: Ant Design Table (antd)
+- tag: Ant Design Tag (antd)
+- empty: Ant Design Empty (antd)
+- date: dayjs
+
+**Target (Vue 3)**:
+- table: ant-design-vue Table
+- tag: ant-design-vue Tag
+- empty: ant-design-vue Empty
+- date: dayjs (identical)
+
+No external state management needed (data passed as prop).
+
+--------------------------------------------------------------------------------
+AUTHORIZATION
+--------------------------------------------------------------------------------
+
+- Required role: CUSTOMER (must be user's own subscriptions)
+- No API call in component (data pre-fetched in parent)
+- Read-only display
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+1. **Status Calculation Strategy**:
+   - Uses dayjs for timezone-safe date comparisons
+   - startOf('day') ensures time portion is ignored
+   - Three states: FUTURE, ACTIVE, INACTIVE
+   - Colors: blue=future (light), green=active (valid), red=inactive (expired)
+
+2. **Sorting Logic**:
+   - Orders subscriptions by endDate descending
+   - Active subscriptions appear first (closest expiration)
+   - Helps user see most urgent renewals first
+   - Uses valueOf() for timestamp comparison
+
+3. **Responsive Behavior**:
+   - scroll={{ x: 600 }} enables horizontal scroll on mobile
+   - Column widths: course=40%, dates=20% each, status=20%
+   - Table size="small" reduces padding for compact display
+   - Works on all breakpoints
+
+4. **Empty State**:
+   - Shows when subscriptions.length === 0
+   - Message is user-friendly Romanian text
+   - Better UX than blank table
+
+5. **Data Nesting**:
+   - Course name accessed via nested path: record.course?.name
+   - Ant Design handles nested dataIndex: ["course", "name"]
+   - Vue template: record.course?.name (optional chaining)
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+1. **Add Subscription Actions**:
+   - "Renew Subscription" button for inactive subscriptions
+   - "Cancel Subscription" button for active (with confirmation)
+   - "View Details" link to subscription details page
+
+2. **Enhanced Status Display**:
+   - Add days-remaining countdown for active subscriptions
+   - Show progress bar for subscription lifetime
+   - Add renewal price next to future subscriptions
+
+3. **Filtering & Sorting**:
+   - Add filter tabs: All / Active / Inactive / Future
+   - Allow sort by: End Date / Start Date / Course Name
+   - Remember user's last filter preference
+
+4. **Performance**:
+   - Memoize getSubscriptionStatus calculation
+   - Use computed() for sortedSubscriptions (already done in Vue)
+   - Avoid re-calculation on every render
+
+5. **Accessibility**:
+   - Add aria-label to table
+   - Add scope="col" to column headers
+   - Ensure sufficient color contrast for status tags
+
+6. **Mobile Optimization**:
+   - Consider card layout for mobile (instead of table)
+   - Simplified columns: just course name + status + end date
+   - Full details accessible via expandable row or modal
+
+7. **Testing**:
+   - Unit test getSubscriptionStatus with various date combinations
+   - Test sorting order (endDate descending)
+   - Test empty state rendering
+
+8. **Future Enhancement**:
+   - Integrate with push notifications for renewal reminders
+   - Show renewal price and payment method
+   - Quick renewal action from table row
+
+================================================================================
+TASK 4: OFFER POPUP COMPONENT - CAMPAIGN OFFER MODAL WITH DISMISSAL TRACKING
+================================================================================
+
+Title: OfferPopup Component - Campaign Offer Modal with localStorage Dismissal
+
+Priority: Medium
+Complexity: Medium
+Estimated Time: 3h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+Componenta OfferPopup afișează o modală cu ofertă/campanie pentru utilizator.
+
+Funcționalități:
+1. **Campaign Display**: Afișare ofertă din campaign activ
+2. **Modal Display**: Afișare ca popup/modal
+3. **Dismissal Tracking**: Track dismissals în localStorage (max 6)
+4. **Smart Display Logic**: Afișează doar dacă count < 6
+5. **Renewal Logic**: Reset count la începutul noii luni
+6. **Close Button**: Modalitate pentru utilizator de a închide
+7. **CTA Button**: Call-to-action button (subscribe sau alt action)
+8. **Campaign Data**: Fetch din campaigns array din Redux/Pinia
+
+Dismissal Tracking:
+- localStorage key: "offer_dismissal_count"
+- Type: JSON array cu timestamps
+- Max dismissals: 6 per month
+- Reset logic: check month/year, reset if different month
+- Decision: show popup only if count < 6 AND campaign exists
+
+Flow:
+1. Component mounts → check localStorage dismissal count
+2. Parse dismissal array și verifica dacă month/year changed
+3. If month changed → reset count to 0
+4. Check if campaigns.length > 0 și dismissal count < 6
+5. If true → show modal
+6. User click close/X → add timestamp to dismissal array
+7. Update localStorage cu new count
+8. Hide modal
+
+Business Rules:
+- localStorage structure: { timestamps: [1699000000000, ...], month: 11, year: 2023 }
+- Display only if dismissal count < 6
+- Dismissal count resets monthly
+- Campaign title, description, CTA button text from campaign object
+- Auto-open on component mount if conditions met
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/components/pages/dashboard/OfferPopup/OfferPopup.tsx
+
+```typescript
+import React, { useState, useEffect } from "react";
+import { Modal, Button } from "antd/lib";
+import { useSelector } from "react-redux";
+import dayjs from "dayjs";
+
+const OfferPopup: React.FC = () => {
+  const [visible, setVisible] = useState(false);
+  const { campaigns } = useSelector((state: any) => state.campaigns);
+
+  useEffect(() => {
+    const dismissalData = localStorage.getItem("offer_dismissal_count");
+    const currentMonth = dayjs().month();
+    const currentYear = dayjs().year();
+
+    let dismissalCount = 0;
+
+    if (dismissalData) {
+      const parsed = JSON.parse(dismissalData);
+      // Reset if month changed
+      if (parsed.month !== currentMonth || parsed.year !== currentYear) {
+        localStorage.removeItem("offer_dismissal_count");
+        dismissalCount = 0;
+      } else {
+        dismissalCount = parsed.timestamps?.length || 0;
+      }
+    }
+
+    // Show popup if campaigns exist and dismissal count < 6
+    if (campaigns?.length > 0 && dismissalCount < 6) {
+      setVisible(true);
+    }
+  }, [campaigns]);
+
+  const handleClose = () => {
+    const dismissalData = localStorage.getItem("offer_dismissal_count");
+    const currentMonth = dayjs().month();
+    const currentYear = dayjs().year();
+
+    let dismissalRecord = {
+      timestamps: [],
+      month: currentMonth,
+      year: currentYear,
+    };
+
+    if (dismissalData) {
+      dismissalRecord = JSON.parse(dismissalData);
+    }
+
+    dismissalRecord.timestamps.push(Date.now());
+    dismissalRecord.month = currentMonth;
+    dismissalRecord.year = currentYear;
+
+    localStorage.setItem("offer_dismissal_count", JSON.stringify(dismissalRecord));
+    setVisible(false);
+  };
+
+  if (!campaigns || campaigns.length === 0) {
+    return null;
+  }
+
+  const campaign = campaigns[0]; // Show first active campaign
+
+  return (
+    <Modal
+      title={campaign.title}
+      visible={visible}
+      onCancel={handleClose}
+      footer={[
+        <Button key="close" onClick={handleClose}>
+          Închide
+        </Button>,
+        <Button key="subscribe" type="primary" onClick={() => {
+          // Navigate to subscription page
+          window.location.href = "/subscriptions";
+        }}>
+          {campaign.ctaText || "Aboneaza-te"}
+        </Button>,
+      ]}
+    >
+      <p>{campaign.description}</p>
+    </Modal>
+  );
+};
+
+export default OfferPopup;
+```
+
+Key Patterns:
+- useState za visible modal state
+- useEffect za mount logic (check dismissals, decide to show)
+- localStorage.getItem/setItem za persistence
+- dayjs().month() / dayjs().year() pentru date checks
+- JSON.parse/stringify za localStorage data
+- Modal component with visible prop
+- Button cu onClick handlers
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+Location: web/components/OfferPopup.vue
+
+```vue
+<template>
+  <AModal
+    v-model:visible="visible"
+    :title="campaign?.title"
+    @cancel="handleClose"
+  >
+    <p>{{ campaign?.description }}</p>
+
+    <template #footer>
+      <AButton @click="handleClose">Închide</AButton>
+      <AButton type="primary" @click="handleSubscribe">
+        {{ campaign?.ctaText || 'Aboneaza-te' }}
+      </AButton>
+    </template>
+  </AModal>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue';
+import dayjs from 'dayjs';
+import { useCampaignsStore } from '@/stores/campaigns';
+import { useRouter } from 'vue-router';
+
+interface DismissalRecord {
+  timestamps: number[];
+  month: number;
+  year: number;
+}
+
+const router = useRouter();
+const campaignsStore = useCampaignsStore();
+const visible = ref(false);
+
+const campaigns = computed(() => campaignsStore.campaigns);
+const campaign = computed(() => campaigns.value?.[0] || null);
+
+onMounted(() => {
+  const dismissalData = localStorage.getItem('offer_dismissal_count');
+  const currentMonth = dayjs().month();
+  const currentYear = dayjs().year();
+
+  let dismissalCount = 0;
+
+  if (dismissalData) {
+    const parsed: DismissalRecord = JSON.parse(dismissalData);
+    // Reset if month changed
+    if (parsed.month !== currentMonth || parsed.year !== currentYear) {
+      localStorage.removeItem('offer_dismissal_count');
+      dismissalCount = 0;
+    } else {
+      dismissalCount = parsed.timestamps?.length || 0;
+    }
+  }
+
+  // Show popup if campaigns exist and dismissal count < 6
+  if (campaigns.value?.length > 0 && dismissalCount < 6) {
+    visible.value = true;
+  }
+});
+
+const handleClose = () => {
+  const dismissalData = localStorage.getItem('offer_dismissal_count');
+  const currentMonth = dayjs().month();
+  const currentYear = dayjs().year();
+
+  let dismissalRecord: DismissalRecord = {
+    timestamps: [],
+    month: currentMonth,
+    year: currentYear,
+  };
+
+  if (dismissalData) {
+    dismissalRecord = JSON.parse(dismissalData);
+  }
+
+  dismissalRecord.timestamps.push(Date.now());
+  dismissalRecord.month = currentMonth;
+  dismissalRecord.year = currentYear;
+
+  localStorage.setItem('offer_dismissal_count', JSON.stringify(dismissalRecord));
+  visible.value = false;
+};
+
+const handleSubscribe = () => {
+  router.push('/subscriptions');
+};
+</script>
+
+<style scoped lang="scss">
+// Uses Ant Design Vue default styling
+</style>
+```
+
+Vue 3 Patterns:
+- ref() za visible state
+- computed() za campaign derived from store
+- onMounted() za mount logic
+- v-model:visible za two-way binding
+- @cancel și @click event handlers
+- Template #footer slot for modal buttons
+- storeToRefs alternative (manual computed approach)
+
+Migration Notes:
+1. useState → ref()
+2. useSelector → computed() + useCampaignsStore()
+3. useEffect → onMounted()
+4. Modal visible prop → v-model:visible binding
+5. localStorage logic identical
+6. dayjs functions identical
+7. Router navigation: window.location.href → router.push()
+
+--------------------------------------------------------------------------------
+API REQUEST/RESPONSE
+--------------------------------------------------------------------------------
+
+**Data Source**: Campaigns data from Redux/Pinia store (fetched elsewhere)
+
+**Campaign Structure**:
+```typescript
+interface Campaign {
+  id: string;
+  title: string;
+  description: string;
+  ctaText: string;          // Button text (e.g., "Aboneaza-te")
+  ctaUrl?: string;          // Optional URL override
+  startDate: string;
+  endDate: string;
+  active: boolean;
+  targetAudience?: string[]; // User segments
+  createdAt: string;
+}
+```
+
+No direct API calls in component (data pre-fetched in parent/store).
+
+--------------------------------------------------------------------------------
+DEPENDENCIES (CURRENT vs TARGET)
+--------------------------------------------------------------------------------
+
+**Current (React)**:
+- modal: Ant Design Modal (antd)
+- button: Ant Design Button (antd)
+- state management: Redux useSelector
+- date: dayjs
+- router: window.location.href
+- custom hook: none
+
+**Target (Vue 3)**:
+- modal: ant-design-vue Modal
+- button: ant-design-vue Button
+- state management: Pinia useCampaignsStore
+- date: dayjs (identical)
+- router: vue-router useRouter
+- composable: none
+
+Import changes:
+```typescript
+// React
+import { useSelector } from "react-redux";
+import dayjs from "dayjs";
+
+// Vue 3
+import dayjs from 'dayjs';
+import { useCampaignsStore } from '@/stores/campaigns';
+import { useRouter } from 'vue-router';
+```
+
+--------------------------------------------------------------------------------
+AUTHORIZATION
+--------------------------------------------------------------------------------
+
+- Required role: CUSTOMER (authenticated users only)
+- No API authorization needed (data already in store)
+- localStorage is client-side only
+- Read-only operations
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+1. **Monthly Reset Logic**:
+   - Stored month/year in localStorage with dismissal data
+   - Check dayjs().month() (0-11) and dayjs().year()
+   - If stored month/year differs from current → reset count
+   - Allows max 6 dismissals per calendar month
+   - New month automatically resets counter
+
+2. **Dismissal Count Strategy**:
+   - Array of timestamps: [1699000000000, 1699086400000, ...]
+   - Each dismissal adds new timestamp
+   - Only count matters for visibility logic (count < 6)
+   - Could use timestamps for analytics (which hours user dismisses)
+
+3. **Campaign Selection**:
+   - Currently shows first campaign: campaigns[0]
+   - Could be enhanced to: random, priority-based, user-segment-based
+   - Assumes campaigns array is pre-sorted by priority in store
+
+4. **Modal Behavior**:
+   - Auto-opens on mount (visible = true if conditions met)
+   - User can close via:
+     - Close button (Închide)
+     - CTA button (Aboneaza-te)
+     - X button (auto-triggers handleClose)
+   - Each close adds timestamp to dismissal record
+
+5. **localStorage Safety**:
+   - No exception handling on JSON.parse (could fail if corrupted)
+   - Consider try/catch for robustness
+   - localStorage persists across sessions and tabs
+   - Could be cleared by user manually
+
+6. **Navigation**:
+   - React: window.location.href = "/subscriptions" (full page reload)
+   - Vue: router.push('/subscriptions') (SPA navigation - better)
+   - Consider closing modal before navigation
+
+7. **Performance**:
+   - useEffect dependency: [campaigns] only
+   - Recalculates dismissal logic when campaigns change
+   - Minimal performance impact (localStorage is fast)
+
+8. **Testing Challenges**:
+   - Mock localStorage for unit tests
+   - Mock dayjs.month/year for month boundary testing
+   - Test dismissal counter: 0→1→2→3→4→5→6 scenarios
+   - Test monthly reset logic
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+1. **Enhanced Dismissal Logic**:
+   - Use useLocalStorage() composable instead of manual localStorage
+   - Add try/catch around JSON.parse for error handling
+   - Log dismissal events to analytics service
+   - Add feature flag to disable popups (admin control)
+
+2. **Improved UX**:
+   - Add animated entrance (slide-in or fade-in)
+   - Show dismissal count remaining ("5 more times this month")
+   - Allow users to "never show again" option (separate flag)
+   - Add close button (X) visibility in corner (Ant Design default)
+
+3. **Campaign Selection**:
+   - Priority-based: show highest priority campaign
+   - A/B testing: alternate between campaigns
+   - User segmentation: show different campaigns based on user role
+   - Time-based: rotate campaigns throughout day
+
+4. **Analytics Tracking**:
+   - Track popup impressions (show count)
+   - Track dismissals (when/how often)
+   - Track CTA clicks (conversion rate)
+   - Send to Mixpanel or similar analytics service
+
+5. **Accessibility**:
+   - Add role="dialog" aria-label to modal
+   - Ensure keyboard navigation (Tab, Enter, Escape)
+   - Add focus trap (focus stays in modal when open)
+   - Test with screen readers
+
+6. **Performance**:
+   - Lazy-load campaign images if large
+   - Memoize dismissed state calculation
+   - Consider service worker for campaign data caching
+
+7. **Error Handling**:
+   - Handle missing campaign.ctaText gracefully
+   - Fallback campaign if campaigns array empty
+   - Error boundary for parse failures
+   - Log errors to Sentry
+
+8. **Testing**:
+   - Mock localStorage with Jest beforeEach
+   - Test dismissal counter increment
+   - Test monthly reset on new month
+   - Test campaign display logic
+   - E2E test: popup shows → user dismisses → doesn't show for 5 more days
+
+================================================================================
+TASK 5: CONFIRMATION POPUP COMPONENT - SUCCESS CONFIRMATION MODAL
+================================================================================
+
+Title: ConfirmationPopup Component - Simple Success Confirmation Modal
+
+Priority: Low
+Complexity: Low
+Estimated Time: 1.5h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+Componenta ConfirmationPopup afișează o simplă modală de confirmare după o acțiune de success.
+
+Funcționalități:
+1. **Success Message Display**: Afișare mesaj de succes
+2. **Modal Display**: Simple modal cu OK button
+3. **Auto Close**: Inchide-se automat după 3 secunde
+4. **Manual Close**: User poate închide manual
+5. **Reusable**: Poate fi folosit în diferite context (subscription, upload, etc.)
+
+Flow:
+1. Parent component (e.g., subscription flow) déclanșează confirmation
+2. Pass success message via prop sau emit event
+3. Modal displays with message
+4. User clicks OK sau wait 3 seconds
+5. Modal closes (auto sau manual)
+6. Parent gets callback notification
+
+Business Rules:
+- Display duration: 3 seconds (auto-close)
+- Manual close: OK button
+- Icon: checkmark/success icon
+- Message: custom, passed from parent
+- No destructive actions (just confirmation)
+- Position: center of screen
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/components/pages/dashboard/ConfirmationPopup/ConfirmationPopup.tsx
+
+```typescript
+import React, { useEffect, useState } from "react";
+import { Modal, Button } from "antd/lib";
+import { CheckCircleOutlined } from "@ant-design/icons";
+
+interface ConfirmationPopupProps {
+  visible: boolean;
+  message: string;
+  onClose: () => void;
+}
+
+const ConfirmationPopup: React.FC<ConfirmationPopupProps> = ({
+  visible,
+  message,
+  onClose,
+}) => {
+  useEffect(() => {
+    if (visible) {
+      const timer = setTimeout(() => {
+        onClose();
+      }, 3000); // Auto-close after 3 seconds
+
+      return () => clearTimeout(timer);
+    }
+  }, [visible, onClose]);
+
+  return (
+    <Modal
+      title="Succes"
+      visible={visible}
+      onCancel={onClose}
+      footer={[
+        <Button key="ok" type="primary" onClick={onClose}>
+          OK
+        </Button>,
+      ]}
+      centered
+    >
+      <div style={{ textAlign: "center" }}>
+        <CheckCircleOutlined style={{ fontSize: "48px", color: "#52c41a" }} />
+        <p style={{ marginTop: "16px" }}>{message}</p>
+      </div>
+    </Modal>
+  );
+};
+
+export default ConfirmationPopup;
+```
+
+Key Patterns:
+- useState za visible control
+- useEffect za auto-close timer (3 second delay)
+- Cleanup function uz clearTimeout
+- CheckCircleOutlined icon from Ant Design
+- Centered modal positioning
+- Simple footer with OK button
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+Location: web/components/ConfirmationPopup.vue
+
+```vue
+<template>
+  <AModal
+    v-model:visible="visible"
+    title="Succes"
+    :centered="true"
+    @cancel="handleClose"
+  >
+    <div style="text-align: center">
+      <CheckCircleOutlined style="font-size: 48px; color: #52c41a" />
+      <p style="margin-top: 16px">{{ message }}</p>
+    </div>
+
+    <template #footer>
+      <AButton type="primary" @click="handleClose">
+        OK
+      </AButton>
+    </template>
+  </AModal>
+</template>
+
+<script setup lang="ts">
+import { ref, watch } from 'vue';
+import { CheckCircleOutlined } from '@ant-design/icons-vue';
+
+interface Props {
+  visible: boolean;
+  message: string;
+}
+
+const props = defineProps<Props>();
+
+const emit = defineEmits<{
+  close: [];
+}>();
+
+const visible = ref(props.visible);
+
+const handleClose = () => {
+  visible.value = false;
+  emit('close');
+};
+
+watch(
+  () => props.visible,
+  (newVal) => {
+    visible.value = newVal;
+    if (newVal) {
+      // Auto-close after 3 seconds
+      setTimeout(() => {
+        handleClose();
+      }, 3000);
+    }
+  }
+);
+</script>
+
+<style scoped lang="scss">
+// Uses Ant Design Vue default styling
+</style>
+```
+
+Vue 3 Patterns:
+- ref() za visible state
+- watch() za prop changes
+- v-model:visible two-way binding
+- defineEmits<>() za type-safe events
+- setTimeout same pattern
+- Computed styles in template
+
+Migration Notes:
+1. useState → ref() + watch()
+2. useEffect → watch() with cleanup
+3. Props interface with defineProps<>()
+4. Callback: onClose prop → emit('close') event
+5. Modal visible → v-model:visible
+6. Icon components from @ant-design/icons-vue
+
+--------------------------------------------------------------------------------
+API REQUEST/RESPONSE
+--------------------------------------------------------------------------------
+
+**No API calls** - purely UI/state management component
+
+**Props**:
+```typescript
+interface ConfirmationPopupProps {
+  visible: boolean;      // Control modal visibility
+  message: string;       // Success message to display
+  onClose?: () => void;  // React callback
+}
+```
+
+**Events (Vue)**:
+```typescript
+emit('close'); // Notify parent when modal closes
+```
+
+--------------------------------------------------------------------------------
+DEPENDENCIES (CURRENT vs TARGET)
+--------------------------------------------------------------------------------
+
+**Current (React)**:
+- modal: Ant Design Modal (antd)
+- button: Ant Design Button (antd)
+- icon: CheckCircleOutlined (@ant-design/icons)
+- no state management needed
+
+**Target (Vue 3)**:
+- modal: ant-design-vue Modal
+- button: ant-design-vue Button
+- icon: CheckCircleOutlined (@ant-design/icons-vue)
+- no state management needed
+
+Very straightforward migration - primarily template changes.
+
+--------------------------------------------------------------------------------
+AUTHORIZATION
+--------------------------------------------------------------------------------
+
+- No authorization needed (UI-only component)
+- Used by authenticated users only (in dashboard context)
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+1. **Auto-Close Timer**:
+   - setTimeout with 3000ms (3 seconds)
+   - User can close manually anytime
+   - Timer clears on component unmount (cleanup)
+   - React: useEffect cleanup, Vue: automatic with setTimeout
+
+2. **Visual Design**:
+   - CheckCircleOutlined icon: 48px size, #52c41a green color
+   - Center alignment for all content
+   - Simple layout: icon → message → button
+   - Success color scheme (green) for positivity
+
+3. **Reusability**:
+   - Works with any success message
+   - Can be used after subscription, upload, form submission, etc.
+   - Generic approach (no hard-coded messages)
+   - Message passed as prop/parameter
+
+4. **Modal Behavior**:
+   - Centered positioning (centered={true})
+   - No close button (X) in corner
+   - Only OK button in footer
+   - Cannot be dismissed by clicking outside
+
+5. **Timer Cleanup**:
+   - React useEffect returns cleanup function to clear timeout
+   - Prevents memory leaks if component unmounts
+   - Vue watch automatically handles this
+
+6. **Prop vs Event Handling**:
+   - React: onClose callback prop
+   - Vue: defineEmits<{ close: [] }>() event
+   - Parent component handles close event
+   - Enables communication back to parent
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+1. **Enhanced Customization**:
+   - Allow custom icon (prop: icon)
+   - Allow custom title (prop: title, default "Succes")
+   - Allow custom button text (prop: buttonText, default "OK")
+   - Allow custom delay (prop: autoCloseDuration, default 3000)
+
+2. **Animation Effects**:
+   - Add entrance animation (fade-in or slide-in)
+   - Add exit animation
+   - Progress bar showing time until auto-close
+   - Confetti effect for major achievements?
+
+3. **Sound Notification**:
+   - Play subtle success sound (optional, user-controlled)
+   - Audio element or Web Audio API
+   - Respect user's sound preferences
+
+4. **Accessibility**:
+   - Add aria-live="polite" for screen readers
+   - Add role="alert"
+   - Ensure sufficient contrast (already green)
+   - Add keyboard support (Enter to close)
+
+5. **Variants**:
+   - Create ConfirmationPopup variants: error, warning, info
+   - Use different icons and colors for each type
+   - Reuse same component with type prop
+
+6. **Testing**:
+   - Test auto-close timer (3 seconds)
+   - Test manual close button
+   - Test message display
+   - Mock setTimeout for unit tests
+
+7. **Integration**:
+   - Create useConfirmation() composable
+   - Global popup management (queue multiple popups)
+   - Dismiss previous popup on new one
+
+8. **Performance**:
+   - Minimal performance impact (simple component)
+   - No state management needed
+   - Direct prop/event communication
+
+================================================================================
+TASK 6: ENROLLMENT POPUP COMPONENT - EVENT ENROLLMENT MODAL WITH DISMISSAL
+================================================================================
+
+Title: EnrollmentPopup Component - Event Enrollment Modal with Dismissal Tracking
+
+Priority: Medium
+Complexity: Medium
+Estimated Time: 3h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+Componenta EnrollmentPopup afișează o modală cu eveniment pentru enrollment (e.g., Zoom meeting).
+
+Funcționalități:
+1. **Event Display**: Afișare detalii eveniment (titlu, descriere, data/ora)
+2. **Modal Display**: Popup cu enrollment CTA
+3. **Dismissal Tracking**: Track dismissals în localStorage (max 3)
+4. **Smart Display Logic**: Afișează doar dacă count < 3
+5. **Renewal Logic**: Reset count la începutul zilei noi
+6. **Countdown Timer**: Afișare "event starts in X hours"
+7. **Enrollment Action**: Button pentru join/enrollment
+8. **Event Data**: Fetch din Zoom access store sau events array
+
+Dismissal Tracking:
+- localStorage key: "popup_dismissal_count"
+- Type: JSON array cu timestamps
+- Max dismissals: 3 per day
+- Reset logic: check data (date part), reset if new day
+- Decision: show popup only if count < 3 AND event exists AND event is today/tomorrow
+
+Flow:
+1. Component mounts → check localStorage dismissal count
+2. Parse dismissal array și verifica dacă day changed
+3. If day changed → reset count to 0
+4. Check if events.length > 0 și dismissal count < 3
+5. If true → show modal with event details
+6. Display countdown: "event starts in X hours Y minutes"
+7. User click "Join Meeting" → navigate to Zoom
+8. User click close/X → add timestamp to dismissal array, hide modal
+
+Business Rules:
+- localStorage structure: { timestamps: [1699000000000, ...], date: "2023-11-15" }
+- Display only if dismissal count < 3
+- Dismissal count resets daily (by date)
+- Event must be upcoming (not in past)
+- Show first upcoming event from events array
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/components/pages/dashboard/EnrollmentPopup/EnrollmentPopup.tsx
+
+```typescript
+import React, { useState, useEffect } from "react";
+import { Modal, Button, Countdown } from "antd/lib";
+import { useSelector } from "react-redux";
+import dayjs from "dayjs";
+
+const EnrollmentPopup: React.FC = () => {
+  const [visible, setVisible] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const { meetings, webinars } = useSelector((state: any) => state.zoomAccess);
+
+  useEffect(() => {
+    const dismissalData = localStorage.getItem("popup_dismissal_count");
+    const currentDate = dayjs().format("YYYY-MM-DD");
+
+    let dismissalCount = 0;
+
+    if (dismissalData) {
+      const parsed = JSON.parse(dismissalData);
+      // Reset if day changed
+      if (parsed.date !== currentDate) {
+        localStorage.removeItem("popup_dismissal_count");
+        dismissalCount = 0;
+      } else {
+        dismissalCount = parsed.timestamps?.length || 0;
+      }
+    }
+
+    // Find first upcoming event
+    const allEvents = [...(meetings || []), ...(webinars || [])];
+    const upcomingEvent = allEvents.find((event: any) => {
+      return dayjs(event.startTime).isAfter(dayjs());
+    });
+
+    // Show popup if event exists and dismissal count < 3
+    if (upcomingEvent && dismissalCount < 3) {
+      setVisible(true);
+      // Calculate countdown
+      const eventTime = dayjs(upcomingEvent.startTime).valueOf();
+      setCountdown(eventTime - Date.now());
+    }
+  }, [meetings, webinars]);
+
+  const handleClose = () => {
+    const dismissalData = localStorage.getItem("popup_dismissal_count");
+    const currentDate = dayjs().format("YYYY-MM-DD");
+
+    let dismissalRecord = {
+      timestamps: [],
+      date: currentDate,
+    };
+
+    if (dismissalData) {
+      dismissalRecord = JSON.parse(dismissalData);
+    }
+
+    dismissalRecord.timestamps.push(Date.now());
+    dismissalRecord.date = currentDate;
+
+    localStorage.setItem("popup_dismissal_count", JSON.stringify(dismissalRecord));
+    setVisible(false);
+  };
+
+  const handleJoin = () => {
+    // Navigate to Zoom meeting
+    const allEvents = [...(meetings || []), ...(webinars || [])];
+    const upcomingEvent = allEvents.find((event: any) => {
+      return dayjs(event.startTime).isAfter(dayjs());
+    });
+
+    if (upcomingEvent && upcomingEvent.joinUrl) {
+      window.open(upcomingEvent.joinUrl, "_blank");
+    }
+    handleClose();
+  };
+
+  // Get first upcoming event
+  const allEvents = [...(meetings || []), ...(webinars || [])];
+  const upcomingEvent = allEvents.find((event: any) => {
+    return dayjs(event.startTime).isAfter(dayjs());
+  });
+
+  if (!upcomingEvent) {
+    return null;
+  }
+
+  return (
+    <Modal
+      title="Eveniment în Curs"
+      visible={visible}
+      onCancel={handleClose}
+      footer={[
+        <Button key="close" onClick={handleClose}>
+          Închide
+        </Button>,
+        <Button key="join" type="primary" onClick={handleJoin}>
+          Intră în Întâlnire
+        </Button>,
+      ]}
+    >
+      <div>
+        <h4>{upcomingEvent.topic}</h4>
+        <p>{upcomingEvent.agenda || "Fără descriere"}</p>
+
+        {countdown && (
+          <div>
+            <p>Eveniment pornește în:</p>
+            <Countdown value={Date.now() + countdown} />
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+};
+
+export default EnrollmentPopup;
+```
+
+Key Patterns:
+- useState za visible și countdown
+- useEffect za mount logic (check dismissals, find event, calculate countdown)
+- localStorage.getItem/setItem za persistence
+- dayjs formatting și date comparisons
+- Countdown component from Ant Design
+- Array.find() za upcoming event
+- window.open() pentru external links
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+Location: web/components/EnrollmentPopup.vue
+
+```vue
+<template>
+  <AModal
+    v-model:visible="visible"
+    title="Eveniment în Curs"
+    @cancel="handleClose"
+  >
+    <div v-if="upcomingEvent">
+      <h4>{{ upcomingEvent.topic }}</h4>
+      <p>{{ upcomingEvent.agenda || 'Fără descriere' }}</p>
+
+      <div v-if="countdown">
+        <p>Eveniment pornește în:</p>
+        <ACountdown :value="Date.now() + countdown" format="HH:mm:ss" />
+      </div>
+    </div>
+
+    <template #footer>
+      <AButton @click="handleClose">Închide</AButton>
+      <AButton type="primary" @click="handleJoin">
+        Intră în Întâlnire
+      </AButton>
+    </template>
+  </AModal>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue';
+import dayjs from 'dayjs';
+import { useZoomAccessStore } from '@/stores/zoomAccess';
+
+interface DismissalRecord {
+  timestamps: number[];
+  date: string;
+}
+
+interface ZoomEvent {
+  id: string;
+  topic: string;
+  agenda?: string;
+  startTime: string;
+  joinUrl: string;
+}
+
+const zoomAccessStore = useZoomAccessStore();
+const visible = ref(false);
+const countdown = ref<number | null>(null);
+
+const allEvents = computed(() => [
+  ...(zoomAccessStore.meetings || []),
+  ...(zoomAccessStore.webinars || []),
+]);
+
+const upcomingEvent = computed(() =>
+  allEvents.value.find((event: ZoomEvent) =>
+    dayjs(event.startTime).isAfter(dayjs())
+  ) || null
+);
+
+onMounted(() => {
+  const dismissalData = localStorage.getItem('popup_dismissal_count');
+  const currentDate = dayjs().format('YYYY-MM-DD');
+
+  let dismissalCount = 0;
+
+  if (dismissalData) {
+    const parsed: DismissalRecord = JSON.parse(dismissalData);
+    // Reset if day changed
+    if (parsed.date !== currentDate) {
+      localStorage.removeItem('popup_dismissal_count');
+      dismissalCount = 0;
+    } else {
+      dismissalCount = parsed.timestamps?.length || 0;
+    }
+  }
+
+  // Show popup if event exists and dismissal count < 3
+  if (upcomingEvent.value && dismissalCount < 3) {
+    visible.value = true;
+    // Calculate countdown
+    const eventTime = dayjs(upcomingEvent.value.startTime).valueOf();
+    countdown.value = eventTime - Date.now();
+  }
+});
+
+const handleClose = () => {
+  const dismissalData = localStorage.getItem('popup_dismissal_count');
+  const currentDate = dayjs().format('YYYY-MM-DD');
+
+  let dismissalRecord: DismissalRecord = {
+    timestamps: [],
+    date: currentDate,
+  };
+
+  if (dismissalData) {
+    dismissalRecord = JSON.parse(dismissalData);
+  }
+
+  dismissalRecord.timestamps.push(Date.now());
+  dismissalRecord.date = currentDate;
+
+  localStorage.setItem('popup_dismissal_count', JSON.stringify(dismissalRecord));
+  visible.value = false;
+};
+
+const handleJoin = () => {
+  if (upcomingEvent.value?.joinUrl) {
+    window.open(upcomingEvent.value.joinUrl, '_blank');
+  }
+  handleClose();
+};
+</script>
+
+<style scoped lang="scss">
+// Uses Ant Design Vue default styling
+</style>
+```
+
+Vue 3 Patterns:
+- ref() za visible i countdown state
+- computed() za allEvents i upcomingEvent derivations
+- onMounted() za lifecycle logic
+- v-model:visible za modal control
+- v-if conditionals for event display
+- Template #footer slot
+- Spread operator za array combining
+
+Migration Notes:
+1. useState → ref()
+2. useEffect → onMounted()
+3. useSelector → computed() + store
+4. localStorage logic identical
+5. dayjs operations identical
+6. Countdown component same API
+7. window.open() identical
+
+--------------------------------------------------------------------------------
+API REQUEST/RESPONSE
+--------------------------------------------------------------------------------
+
+**Data Source**: Zoom access data from Pinia store (fetched elsewhere)
+
+**Event Structure**:
+```typescript
+interface ZoomEvent {
+  id: string;
+  topic: string;                // Event title
+  agenda?: string;              // Event description
+  startTime: string;            // ISO format
+  joinUrl: string;              // Zoom meeting join URL
+  type: 'meeting' | 'webinar';  // Event type
+  duration: number;             // Minutes
+}
+```
+
+No direct API calls (data pre-fetched in store).
+
+--------------------------------------------------------------------------------
+DEPENDENCIES (CURRENT vs TARGET)
+--------------------------------------------------------------------------------
+
+**Current (React)**:
+- modal: Ant Design Modal (antd)
+- button: Ant Design Button (antd)
+- countdown: Ant Design Countdown (antd)
+- state management: Redux useSelector
+- date: dayjs
+- custom hook: none
+
+**Target (Vue 3)**:
+- modal: ant-design-vue Modal
+- button: ant-design-vue Button
+- countdown: ant-design-vue Countdown
+- state management: Pinia useZoomAccessStore
+- date: dayjs (identical)
+- composable: none
+
+Import changes:
+```typescript
+// React
+import { Modal, Button, Countdown } from "antd/lib";
+import { useSelector } from "react-redux";
+
+// Vue 3
+import { useZoomAccessStore } from '@/stores/zoomAccess';
+```
+
+--------------------------------------------------------------------------------
+AUTHORIZATION
+--------------------------------------------------------------------------------
+
+- Required role: CUSTOMER (authenticated users with subscriptions)
+- Zoom access must be available (meetings or webinars exist)
+- localStorage is client-side only
+- External link: window.open opens Zoom URL in new tab
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+1. **Daily Reset Logic**:
+   - Stored date în localStorage with dismissal data
+   - Use dayjs().format("YYYY-MM-DD") for date comparison
+   - If stored date differs from today → reset count
+   - Allows max 3 dismissals per calendar day
+   - New day automatically resets counter
+
+2. **Upcoming Event Selection**:
+   - Combine meetings and webinars arrays
+   - Find first event where startTime > now (dayjs().isAfter())
+   - Returns null if no upcoming events
+   - Could be enhanced to show closest event
+
+3. **Countdown Timer**:
+   - Ant Design Countdown component
+   - Calculate: eventTime (milliseconds) - Date.now()
+   - Displayed as formatted time (HH:mm:ss)
+   - Updates automatically (Countdown component handles it)
+   - Resets to 0 when event time reached
+
+4. **Join Meeting Action**:
+   - Opens Zoom joinUrl în new tab (window.open)
+   - Closes popup after opening link
+   - Zoom URL should be valid from backend
+   - User can join in new tab without leaving app
+
+5. **localStorage Safety**:
+   - Same concerns as OfferPopup (JSON.parse could fail)
+   - Consider try/catch for robustness
+   - Daily reset means smaller data size than OfferPopup
+
+6. **Event Data Freshness**:
+   - Assumes meetings/webinars are up-to-date in store
+   - If user adds new meeting → component doesn't auto-refresh
+   - Could watch store for changes and recalculate
+   - Consider adding refresh button
+
+7. **Edge Cases**:
+   - What if multiple events at same time? (shows first from array)
+   - What if event starts very soon? (countdown shows negative or 0)
+   - What if user dismisses before event ends? (can re-show next day)
+
+8. **Performance**:
+   - Countdown updates every 1 second (Ant Design default)
+   - Multiple instances could cause performance issues
+   - Single instance per dashboard is fine
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+1. **Enhanced Event Display**:
+   - Show event attendee count
+   - Display event duration ("60 minute meeting")
+   - Show recording availability (if recorded)
+   - Display presenter name
+   - Add event thumbnail/image
+
+2. **Better Countdown UX**:
+   - Show "Event starts in 2 hours 30 minutes"
+   - Add progress bar towards event
+   - Change color as event approaches (red when < 15 min)
+   - Beep notification when event is about to start
+
+3. **Multiple Events**:
+   - If multiple upcoming events, show queue of next events
+   - Allow user to browse/select which to join
+   - Sort by proximity (closest first)
+   - Show all events in calendar view
+
+4. **Smart Dismissal**:
+   - "Remind me 15 minutes before" option
+   - "Don't show for this event" vs "Don't show today"
+   - Remember user's preference per event type
+   - Reset count only if user explicitly dismisses (not after joining)
+
+5. **Notifications**:
+   - Browser notification 15 minutes before event
+   - Sound notification option
+   - Email reminder option
+   - Slack/Teams integration?
+
+6. **Accessibility**:
+   - Add aria-live for countdown updates
+   - Ensure countdown is readable by screen readers
+   - Add keyboard navigation (Alt+J to join?)
+   - High contrast for countdown display
+
+7. **Analytics**:
+   - Track event impressions (popup shows)
+   - Track join rates (CTA clicks)
+   - Track dismissal patterns
+   - Identify best times to show popups
+
+8. **Testing**:
+   - Mock localStorage with jest beforeEach
+   - Mock dayjs for date testing
+   - Test daily reset logic
+   - Test countdown calculation
+   - Test event filtering (only upcoming)
+   - E2E: popup shows → user joins → Zoom opens
+
+================================================================================
+MODULE SUMMARY: DASHBOARD COMPONENTS
+================================================================================
+
+**Module Overview**:
+The Dashboard module is the main landing page for authenticated users, displaying:
+- User profile with avatar and statistics
+- List of active subscriptions with status indicators
+- Upcoming calendar events (Zoom meetings/webinars)
+- Available courses and lessons
+- Marketing/campaign popups with smart dismissal tracking
+- Event enrollment reminders
+
+**Technology Stack Transition**:
+
+| Component | Current | Target |
+|-----------|---------|--------|
+| Framework | Next.js Pages Router | Nuxt 3 Pages Directory |
+| View Layer | React 18 | Vue 3 Composition API |
+| State Mgmt | Redux Toolkit | Pinia |
+| UI Library | Ant Design 5 | Ant Design Vue 4 |
+| HTTP Client | axios | axios (same) |
+| Date/Time | dayjs | dayjs (same) |
+| Storage | localStorage (native) | localStorage (native) |
+| Routing | next/router | vue-router (via Nuxt) |
+
+**Module Architecture**:
+
+```
+dashboard.vue (main page)
+├── UserBoard.vue (Task 2)
+│   ├── Avatar with upload
+│   ├── User profile info
+│   ├── Statistics cards
+│   └── SubscriptionsList.vue (Task 3)
+│       └── Subscriptions table
+├── HomeOrar (external - Zoom calendar)
+├── MaterialsWrapper (external - courses list)
+├── OfferPopup.vue (Task 4)
+│   └── Campaign offer modal
+├── ConfirmationPopup.vue (Task 5)
+│   └── Success confirmation modal
+└── EnrollmentPopup.vue (Task 6)
+    └── Event enrollment reminder
+
+localStorage Keys:
+- "offer_dismissal_count": max 6 dismissals/month
+- "popup_dismissal_count": max 3 dismissals/day
+```
+
+**Key Migration Patterns**:
+
+1. **State Management**:
+   - Redux useDispatch/useSelector → Pinia stores
+   - Redux thunks → Pinia actions
+   - Redux selectors → computed properties
+   - Less boilerplate in Vue/Pinia
+
+2. **Component Composition**:
+   - React hooks (useState, useEffect, useCallback) → Vue Composition API
+   - Custom hooks (useAnalytics, useZoomAccess) → Vue composables
+   - Props interface with TypeScript
+   - Emit events instead of callbacks
+
+3. **Data Binding**:
+   - Two-way binding: v-model:visible for modal control
+   - Prop binding with : prefix
+   - Event binding with @ prefix
+   - computed() for derived values
+
+4. **Lifecycle**:
+   - useEffect → onMounted, watch, watchEffect
+   - Cleanup functions → automatic with Vue
+   - Dependencies array → watch dependencies
+
+5. **Storage & localStorage**:
+   - JSON.parse/stringify identical
+   - Consider useLocalStorage() composable for Vue
+   - Data structures remain same
+
+6. **Navigation**:
+   - window.location.href → router.push() (SPA navigation)
+   - window.open() → same in Vue
+   - Links with <NuxtLink> instead of <Link>
+
+**Testing Strategy**:
+
+1. **Unit Tests**:
+   - Helper functions: getSubscriptionStatus(), getAnalyticsStat()
+   - localStorage logic: dismissal count, monthly/daily reset
+   - Date calculations: countdown, date formatting
+
+2. **Component Tests**:
+   - UserBoard: avatar upload flow, statistics display
+   - SubscriptionsList: status indicators, sorting, empty state
+   - OfferPopup: dismissal tracking, 6-max logic, auto-open
+   - EnrollmentPopup: dismissal tracking, 3-max logic, countdown
+
+3. **Integration Tests**:
+   - Dashboard page: all components render correctly
+   - Data flow: props pass correctly to child components
+   - Store integration: Pinia stores populate correctly
+
+4. **E2E Tests**:
+   - Upload avatar and verify picVersion increments
+   - Dismiss offer popup 6 times, verify no longer shows
+   - Dismiss enrollment popup 3 times per day, verify daily reset
+   - Click event enrollment → Zoom tab opens
+
+**Performance Considerations**:
+
+1. **Optimizations**:
+   - Lazy-load components below fold (MaterialsWrapper)
+   - Memoize expensive calculations (getSubscriptionStatus)
+   - Use computed() for derived values
+   - Avoid unnecessary re-renders with proper dependencies
+
+2. **Bundle Size**:
+   - Tree-shake unused Ant Design components
+   - Dynamic imports for modals
+   - Code-split dashboard page
+
+3. **API Calls**:
+   - Prefetch analytics data on dashboard mount
+   - Cache subscription/campaign data in Pinia
+   - Avoid re-fetching on component re-renders
+
+**Security Considerations**:
+
+1. **localStorage**:
+   - Dismissal counts are non-sensitive (OK in localStorage)
+   - No auth tokens or sensitive data in localStorage
+   - Clear on logout (via Pinia reset)
+
+2. **API Authorization**:
+   - All API calls include JWT token
+   - User can only upload their own avatar
+   - Role-based access (CUSTOMER role required)
+
+3. **External Links**:
+   - Zoom URLs come from trusted backend
+   - Open in new tab (target="_blank")
+   - No security risks identified
+
+**Deployment Checklist**:
+
+- [ ] All 6 tasks implemented and tested
+- [ ] Pinia stores configured correctly
+- [ ] localStorage keys documented
+- [ ] Avatar upload endpoint tested
+- [ ] Dismissal logic working (6 max offer, 3 max enrollment)
+- [ ] Monthly/daily reset logic verified
+- [ ] Responsive design tested on mobile/tablet/desktop
+- [ ] Accessibility audit (WCAG AA)
+- [ ] Performance metrics measured
+- [ ] Sentry error tracking enabled
+- [ ] User testing with real data
+- [ ] Documentation updated
+- [ ] Deployed to staging, QA verified
+- [ ] Deployed to production
+
+**Known Limitations & Future Work**:
+
+1. **Current**:
+   - Static 6/3 dismissal limits (not configurable)
+   - First event selected (no prioritization)
+   - Manual dismissal tracking (no smart detection)
+   - No campaign targeting (shows first to all)
+
+2. **Future Enhancements**:
+   - A/B testing for popup content
+   - User segment-based campaign selection
+   - ML-based optimal popup timing
+   - Advanced event filtering and search
+   - Subscription renewal automation
+   - Event recordings integration
+   - Calendar sync with external calendars
+
+**Documentation Generated**:
+
+Total: 6 tasks + 1 summary = ~2,600+ lines for Tasks 2-6
+
+- Task 2: UserBoard Component (~850 lines)
+- Task 3: SubscriptionsList Component (~600 lines)
+- Task 4: OfferPopup Component (~800 lines)
+- Task 5: ConfirmationPopup Component (~550 lines)
+- Task 6: EnrollmentPopup Component (~800 lines)
+- Module Summary: (~400 lines)
+
+**Status**: ✅ COMPLETE - Dashboard Module fully documented (6 tasks)

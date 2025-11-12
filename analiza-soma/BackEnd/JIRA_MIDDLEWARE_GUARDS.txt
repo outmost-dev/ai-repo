@@ -1,0 +1,1770 @@
+================================================================================
+JIRA STORY: MIDDLEWARE & GUARDS (INFRASTRUCTURE)
+================================================================================
+
+Story Title: Middleware, Guards & Security Infrastructure
+
+Story Type: Infrastructure Component
+
+Epic: Somaway Backend Migration to .NET
+
+Story Description:
+------------------
+Infrastructure components pentru security, authentication, rate limiting, și
+file upload. Include middleware-uri pentru token blacklist și multipart uploads,
+guards pentru role-based authorization, și 4 JWT strategies pentru diferite
+tipuri de autentificare (access, refresh, email validation, subscription validation).
+
+Locație cod sursă:
+- Middleware: server/src/shared/Middleware/
+- Guards: server/src/shared/Guards/
+- JWT Strategies: server/src/v1/Auth/Strategies/
+- App Configuration: server/src/main.ts, server/src/app.module.ts
+
+Components implemented:
+- 2 Middleware (FileUploadMiddleware, BlacklistMiddleware)
+- 1 Guard (RolesGuard)
+- 4 JWT Strategies (AccessToken, RefreshToken, EmailValidation, SubscriptionValidation)
+- Rate Limiting (global + endpoint-specific)
+- CORS Configuration
+- Security Headers
+
+Used by: All protected endpoints across the application
+
+External Dependencies:
+- Passport.js (JWT authentication)
+- @nestjs/throttler (rate limiting)
+- Busboy (multipart file upload)
+- Redis (token blacklist)
+- Fastify (HTTP server)
+
+Notes:
+- Fastify used instead of Express (ASP.NET Core doesn't need adapter)
+- JWT token blacklist stored in Redis for logout functionality
+- 4 different JWT token types with separate secrets and expiration times
+- File upload limit: 300MB (configurable in fastify-multipart)
+- Body limit: 10MB (configurable in Fastify adapter)
+- Rate limiting: 20,000 requests/60s globally (exceptions per endpoint)
+
+================================================================================
+COMPONENTS OVERVIEW
+================================================================================
+
+1. MIDDLEWARE (2 components)
+   - FileUploadMiddleware: Multipart/form-data parsing with Busboy (300MB limit)
+   - BlacklistMiddleware: Redis-based token blacklist for logout
+
+2. GUARDS (1 component)
+   - RolesGuard: Role-based authorization using @Role decorator
+
+3. JWT STRATEGIES (4 strategies)
+   - AccessTokenStrategy: Standard access token (Bearer, 8h expiration)
+   - RefreshTokenStrategy: Token refresh (Bearer, 30d expiration)
+   - ValidationEmailStrategy: Email confirmation (query param, 90d expiration)
+   - ValidationSubscriptionStrategy: Subscription-based access validation
+
+4. RATE LIMITING (Throttler)
+   - Global: 20,000 requests / 60 seconds
+   - Endpoint-specific overrides (e.g., admin-signin: 2,000 req/60s)
+
+5. CORS CONFIGURATION
+   - Allowed origins: localhost, dev.somaway.ro, www.somaway.ro, admin.somaway.ro
+   - Credentials: true (cookies allowed)
+
+6. SECURITY & INFRASTRUCTURE
+   - Fastify HTTP server (instead of Express)
+   - Compression (fastify-compress)
+   - Cookie parser (fastify-cookie)
+   - Sentry error tracking (production only)
+   - Winston logging with Sentry integration
+   - Swagger documentation (dev only)
+
+================================================================================
+TASKS (11 COMPONENTS)
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 1: FileUploadMiddleware - Multipart File Upload Parsing
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Middleware pentru procesare multipart/form-data requests cu Busboy. Parsare
+fișiere uploaded (imagini, videoclipuri) și form fields, cu buffer în memorie.
+Folosit pentru upload imagini profiluri, course thumbnails, și videoclipuri (300MB).
+
+Flow:
+1. Detectează dacă request are Content-Type: multipart/form-data
+2. Dacă DA:
+   - Inițializează Busboy cu headers din request
+   - Parsare fișiere: citește file chunks în array de buffers
+   - Parsare fields: extrage form fields normale
+   - La finish: concatenează buffers și atașează la req.body
+3. Dacă NU: skip middleware (next())
+
+Cod sursă:
+- Middleware: src/shared/Middleware/file.middleware.ts
+
+Implementation:
+@Injectable()
+export class FileUploadMiddleware implements NestMiddleware {
+  use(req, _res: Response, next: NextFunction) {
+    if (req.headers['content-type']?.includes('multipart/form-data')) {
+      const busboy = Busboy({ headers: req.headers });
+      req.body = {};
+
+      busboy.on('file', (fieldName, file) => {
+        const fileData: Buffer[] = [];
+        file.on('data', (data) => fileData.push(data));
+        file.on('end', () => {
+          req.body[fieldName] = Buffer.concat(fileData);
+        });
+      });
+
+      busboy.on('field', (fieldName, val) => {
+        req.body[fieldName] = val;
+      });
+
+      busboy.on('finish', () => next());
+
+      req.pipe(busboy);
+    } else {
+      next();
+    }
+  }
+}
+
+Configuration:
+- Max file size: 300MB (configured in main.ts fastify-multipart)
+- Body limit: 10MB (configured in Fastify adapter)
+
+fastifyAdapter.register(fastifyMultipart, {
+  limits: {
+    fileSize: 300 * 1024 * 1024, // 300MB limit
+  },
+});
+
+Used By:
+- POST /v1/course/upload-image (course thumbnails)
+- POST /v1/course/upload-video (Vimeo video upload)
+- POST /v1/user/avatar (profile image)
+- POST /v1/user/upload-avatar (alternative upload endpoint)
+
+Notes:
+- ⚠️ Files loaded into memory (Buffer) - can cause OOM for large files
+- ⚠️ No file type validation in middleware (done in controller)
+- ⚠️ No virus scanning or malware detection
+- Busboy is stream-based parser (better than multer for large files)
+- File buffers concatenated at end (memory-intensive)
+
+Error Handling:
+- No explicit error handling in middleware
+- Errors propagated to NestJS exception filter
+- Busboy errors: malformed multipart data
+
+Recommendations for .NET:
+- Use ASP.NET Core built-in IFormFile (no custom middleware needed)
+- Configure max request body size in Kestrel:
+  builder.WebHost.ConfigureKestrel(options => {
+    options.Limits.MaxRequestBodySize = 300 * 1024 * 1024; // 300MB
+  });
+- Use streaming for large files (avoid loading entire file in memory):
+  using var stream = formFile.OpenReadStream();
+  await vimeoService.UploadVideoStreamAsync(stream, fileName);
+- Add file type validation with content-type sniffing (not just extension)
+- Add virus scanning for uploaded files (ClamAV integration)
+- Consider Azure Blob Storage direct upload (SAS tokens) to avoid server bandwidth
+- Add upload progress reporting via SignalR
+
+Example .NET:
+[HttpPost("upload-video")]
+[RequestSizeLimit(300 * 1024 * 1024)] // 300MB
+public async Task<IActionResult> UploadVideo(IFormFile file) {
+    if (file == null || file.Length == 0)
+        return BadRequest("No file uploaded");
+
+    // Validate file type
+    var allowedTypes = new[] { "video/mp4", "video/quicktime" };
+    if (!allowedTypes.Contains(file.ContentType))
+        return BadRequest("Invalid file type");
+
+    // Stream upload to Vimeo (avoid memory buffer)
+    using var stream = file.OpenReadStream();
+    var videoUri = await _vimeoService.UploadVideoStreamAsync(stream, file.FileName);
+
+    return Ok(new { videoUri });
+}
+
+--------------------------------------------------------------------------------
+TASK 2: BlacklistMiddleware - Redis Token Blacklist
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Middleware pentru verificare dacă JWT access token a fost invalidat (logout).
+Token-urile blacklisted sunt stocate în Redis cu TTL = token expiration.
+Dacă token găsit în Redis → UnauthorizedException (forțează re-login).
+
+Flow:
+1. Extrage Bearer token din Authorization header
+2. Verifică dacă token există în Redis blacklist
+3. Dacă DA: throw UnauthorizedException (token invalidated)
+4. Dacă NU: next() (allow request)
+
+Cod sursă:
+- Middleware: src/shared/Middleware/blacklist.middleware.ts
+
+Implementation:
+@Injectable()
+export class BlacklistMiddleware implements NestMiddleware {
+  constructor(private readonly redisService: RedisService) {}
+
+  async use(@Request() req, @Response() _res, next: () => void) {
+    if (req.headers.authorization) {
+      const token = req.headers.authorization.split(' ')[1];
+      const isTokenDead = await this.redisService.getData(token);
+      if (isTokenDead !== null) {
+        throw new UnauthorizedException();
+      }
+    } else {
+      throw new UnauthorizedException();
+    }
+    next();
+  }
+}
+
+Redis Operations:
+- Store blacklisted token: redisService.setData(token, 'blacklisted', ttl)
+- Check blacklist: redisService.getData(token)
+- TTL = token expiration time (8 hours for access tokens)
+
+Used By:
+- Endpoints that require token blacklist check (e.g., sensitive operations)
+- NOT used globally (only on specific routes)
+- Alternative: use short-lived access tokens + refresh token rotation
+
+Notes:
+- ⚠️ Requires Authorization header (throws error if missing)
+- ⚠️ No graceful handling of Redis connection errors
+- Token stored as key in Redis with value "blacklisted"
+- TTL should match token expiration (automatic cleanup)
+- Alternative: use JWT jti claim with persistent blacklist table
+
+Error Handling:
+- Missing Authorization header → UnauthorizedException
+- Token found in blacklist → UnauthorizedException
+- Redis errors: propagated to exception filter (500 error)
+
+Recommendations for .NET:
+- Use ASP.NET Core middleware pipeline:
+  public class TokenBlacklistMiddleware {
+    private readonly IDistributedCache _cache;
+
+    public async Task InvokeAsync(HttpContext context, RequestDelegate next) {
+      var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
+      if (authHeader?.StartsWith("Bearer ") == true) {
+        var token = authHeader.Substring("Bearer ".Length).Trim();
+        var isBlacklisted = await _cache.GetStringAsync($"blacklist:{token}");
+        if (isBlacklisted != null) {
+          context.Response.StatusCode = 401;
+          await context.Response.WriteAsJsonAsync(new { error = "Token has been revoked" });
+          return;
+        }
+      }
+      await next(context);
+    }
+  }
+- Register in Program.cs:
+  app.UseMiddleware<TokenBlacklistMiddleware>();
+- Use IDistributedCache (Redis via StackExchange.Redis)
+- Add graceful Redis error handling (fallback to allow if Redis down)
+- Consider database-backed blacklist for critical security requirements
+- Alternative: short-lived access tokens (5-15 min) + refresh token rotation
+- Add token revocation endpoint: POST /api/v1/auth/revoke
+
+Example Token Revocation:
+[HttpPost("logout")]
+[Authorize]
+public async Task<IActionResult> Logout() {
+    var token = HttpContext.Request.Headers["Authorization"].FirstOrDefault()?.Substring("Bearer ".Length);
+    if (token != null) {
+        var tokenExpiration = GetTokenExpiration(token);
+        var ttl = tokenExpiration - DateTime.UtcNow;
+        if (ttl > TimeSpan.Zero) {
+            await _cache.SetStringAsync(
+                $"blacklist:{token}",
+                "revoked",
+                new DistributedCacheEntryOptions {
+                    AbsoluteExpiration = tokenExpiration
+                }
+            );
+        }
+    }
+    return NoContent();
+}
+
+--------------------------------------------------------------------------------
+TASK 3: RolesGuard - Role-Based Authorization
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Guard pentru verificare role-based authorization. Folosit cu @Role decorator
+pentru a restricționa endpoint-uri la anumite roluri (ADMIN, CLIENT, CREATOR).
+Extrage role din JWT payload și compară cu role cerut de endpoint.
+
+Flow:
+1. Extrage @Role decorator metadata din handler
+2. Dacă @Role nu există → allow (no restriction)
+3. Dacă @Role există:
+   - Extrage JWT token din Authorization header
+   - Decode JWT și extrage claim "role"
+   - Compară role din token cu role din decorator
+   - Dacă match: return true (allow)
+   - Dacă no match: return false (403 Forbidden)
+
+Cod sursă:
+- Guard: src/shared/Guards/roles.guard.ts
+
+Implementation:
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private readonly reflector: Reflector) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const role = this.reflector.get<string>('role', context.getHandler());
+    if (role === undefined) return true;
+
+    const request = await context.switchToHttp().getRequest();
+
+    const UserRolesFromJwt = await jwtManipulationService.decodeJwtToken(
+      request.headers.authorization,
+      'role',
+    );
+
+    return UserRolesFromJwt === role;
+  }
+}
+
+Usage with @Role Decorator:
+@Role('ADMIN')
+@Get('admin-only')
+async adminOnlyEndpoint() {
+  // Only users with role=ADMIN can access
+}
+
+Roles Enum (from previous documentation):
+export enum UserRoles {
+  ADMIN = 'ADMIN',
+  CLIENT = 'CLIENT',
+  CREATOR = 'CREATOR',
+  USER = 'USER'
+}
+
+Used By:
+- Admin endpoints (course management, user management)
+- Creator-specific endpoints (content creation)
+- Most endpoints use AuthGuard('jwt') + RolesGuard combo
+
+Notes:
+- ⚠️ Uses jwtManipulationService.decodeJwtToken (decode without verification!)
+- ⚠️ JWT already verified by AccessTokenStrategy (guard trusts token)
+- ⚠️ No support for multiple roles (e.g., @Roles(['ADMIN', 'CREATOR']))
+- ⚠️ Returns false (403) if role mismatch (should be more explicit error message)
+- Guard registered globally in app.module.ts (APP_GUARD)
+
+Error Handling:
+- Missing @Role decorator → allow (no restriction)
+- Role mismatch → 403 Forbidden
+- Missing Authorization header → caught by AuthGuard (401)
+
+Recommendations for .NET:
+- Use ASP.NET Core built-in [Authorize(Roles = "ADMIN")] attribute
+- No custom guard needed (built into framework)
+- Support multiple roles: [Authorize(Roles = "ADMIN,CREATOR")]
+- Support policy-based authorization for complex scenarios:
+  builder.Services.AddAuthorization(options => {
+    options.AddPolicy("AdminOrCreator", policy =>
+      policy.RequireRole("ADMIN", "CREATOR"));
+  });
+- Use claims-based authorization for fine-grained permissions:
+  [Authorize(Policy = "CanManageCourses")]
+- Add custom authorization handler for complex rules:
+  public class CourseOwnerHandler : AuthorizationHandler<OperationAuthorizationRequirement, Course> {
+    protected override Task HandleRequirementAsync(
+      AuthorizationHandlerContext context,
+      OperationAuthorizationRequirement requirement,
+      Course resource) {
+      if (context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value == resource.AuthorId.ToString()) {
+        context.Succeed(requirement);
+      }
+      return Task.CompletedTask;
+    }
+  }
+
+Example .NET Authorization:
+// Simple role-based
+[Authorize(Roles = "ADMIN")]
+[HttpGet("admin-only")]
+public IActionResult AdminOnly() => Ok("Admin access granted");
+
+// Policy-based
+[Authorize(Policy = "CanManageCourses")]
+[HttpPut("courses/{id}")]
+public async Task<IActionResult> UpdateCourse(int id, CourseDto dto) { ... }
+
+// Custom authorization handler
+[Authorize]
+[HttpDelete("courses/{id}")]
+public async Task<IActionResult> DeleteCourse(int id) {
+  var course = await _db.Courses.FindAsync(id);
+  var authResult = await _authService.AuthorizeAsync(User, course, "CanDelete");
+  if (!authResult.Succeeded) return Forbid();
+
+  _db.Courses.Remove(course);
+  await _db.SaveChangesAsync();
+  return NoContent();
+}
+
+--------------------------------------------------------------------------------
+TASK 4: AccessTokenStrategy - Standard JWT Authentication
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Passport strategy pentru validare JWT access tokens (Bearer token standard).
+Token extracte din Authorization header, verificat cu secret, și payload validat.
+User lookup din database pentru verificare account exists și isActive.
+
+Flow:
+1. Extracte Bearer token din Authorization header
+2. Verifică signature cu SECRET_FOR_ACCESS_TOKEN
+3. Decode JWT payload (id, email, role, type)
+4. Verifică payload.type === TokenTypes.ACCESS_TOKEN
+5. Fetch user din database (by payload.id)
+6. Verifică user exists și isActive
+7. Return user object (attached to request.user)
+
+Cod sursă:
+- Strategy: src/v1/Auth/Strategies/access-token.strategy.ts
+
+Implementation:
+@Injectable()
+export class AccessTokenStrategy extends PassportStrategy(Strategy) {
+  constructor(
+    readonly configService: ConfigService,
+    @Inject(UserService) private userService: UserService,
+  ) {
+    super({
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      secretOrKey: process.env.SECRET_FOR_ACCESS_TOKEN || configService.get('auth.jwt.accessToken.secret'),
+    });
+  }
+
+  async validate(payload: JwtPayload): Promise<User> {
+    if (payload.type != TokenTypes.ACCESS_TOKEN)
+      throw new UnauthorizedException();
+
+    const user = await this.userService.getUser(payload.id);
+    if (!user) throw new UnauthorizedException();
+    if (!user.isActive) throw new BadRequestException('Account is not active');
+
+    return user;
+  }
+}
+
+JWT Payload Structure:
+interface JwtPayload {
+  id: number;
+  email: string;
+  role: UserRoles;
+  type: TokenTypes;
+  iat: number;  // issued at (Unix timestamp)
+  exp: number;  // expiration (Unix timestamp)
+}
+
+Token Configuration:
+- Secret: SECRET_FOR_ACCESS_TOKEN (from env)
+- Expiration: 8 hours (configured in auth.service.ts)
+- Extraction: Authorization: Bearer {token}
+
+Used By:
+- All protected endpoints with @UseGuards(AuthGuard('jwt'))
+- Default strategy (no name specified)
+
+Notes:
+- Token type validation (prevents refresh token usage as access token)
+- User lookup on every request (consider caching for performance)
+- isActive check (disabled accounts blocked)
+- User object attached to request.user (available in controllers)
+
+Error Handling:
+- Invalid signature → UnauthorizedException (Passport.js)
+- Expired token → UnauthorizedException (Passport.js)
+- Wrong token type → UnauthorizedException (custom validation)
+- User not found → UnauthorizedException
+- Account inactive → BadRequestException("Account is not active")
+
+Recommendations for .NET:
+- Use ASP.NET Core JWT Bearer authentication (built-in)
+- Configure in Program.cs:
+  builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options => {
+      options.TokenValidationParameters = new TokenValidationParameters {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = builder.Configuration["Jwt:Issuer"],
+        ValidAudience = builder.Configuration["Jwt:Audience"],
+        IssuerSigningKey = new SymmetricSecurityKey(
+          Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Secret"])
+        )
+      };
+
+      // Custom validation for token type and user status
+      options.Events = new JwtBearerEvents {
+        OnTokenValidated = async context => {
+          var userId = int.Parse(context.Principal.FindFirst(ClaimTypes.NameIdentifier).Value);
+          var userService = context.HttpContext.RequestServices.GetRequiredService<IUserService>();
+          var user = await userService.GetUserByIdAsync(userId);
+
+          if (user == null || !user.IsActive) {
+            context.Fail("User not found or inactive");
+          }
+        }
+      };
+    });
+- Add caching for user lookups (reduce DB queries):
+  var cacheKey = $"user:{userId}";
+  var user = await _cache.GetOrCreateAsync(cacheKey, async entry => {
+    entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
+    return await _db.Users.FindAsync(userId);
+  });
+- Add token type claim validation:
+  ValidateTokenType = (token) => {
+    var typeClaim = token.Claims.FirstOrDefault(c => c.Type == "token_type")?.Value;
+    return typeClaim == "access_token";
+  }
+
+Example Token Generation (.NET):
+public string GenerateAccessToken(User user) {
+  var claims = new[] {
+    new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+    new Claim(ClaimTypes.Email, user.Email),
+    new Claim(ClaimTypes.Role, user.Role),
+    new Claim("token_type", "access_token")
+  };
+
+  var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Secret"]));
+  var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+  var token = new JwtSecurityToken(
+    issuer: _configuration["Jwt:Issuer"],
+    audience: _configuration["Jwt:Audience"],
+    claims: claims,
+    expires: DateTime.UtcNow.AddHours(8),
+    signingCredentials: creds
+  );
+
+  return new JwtSecurityTokenHandler().WriteToken(token);
+}
+
+--------------------------------------------------------------------------------
+TASK 5: RefreshTokenStrategy - Token Refresh Authentication
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Passport strategy pentru validare JWT refresh tokens. Similar cu AccessTokenStrategy
+dar cu secret diferit și expiration mai lung (30 zile). Folosit pentru endpoint
+POST /v1/auth/refresh-token pentru generare access token nou fără re-login.
+
+Flow:
+1. Extracte Bearer token din Authorization header
+2. Verifică signature cu SECRET_FOR_REFRESH_TOKEN
+3. Decode JWT payload (id, email, role, type)
+4. Verifică payload.type === TokenTypes.REFRESH_TOKEN
+5. Fetch user din database (by payload.id)
+6. Verifică user exists și isActive
+7. Return user object (controller generates new access token)
+
+Cod sursă:
+- Strategy: src/v1/Auth/Strategies/refresh-token.strategy.ts
+
+Implementation:
+@Injectable()
+export class RefreshTokenStrategy extends PassportStrategy(Strategy, 'refresh-token') {
+  constructor(
+    readonly configService: ConfigService,
+    @Inject(UserService) private userService: UserService,
+  ) {
+    super({
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      secretOrKey: process.env.SECRET_FOR_REFRESH_TOKEN || configService.get('auth.jwt.refreshToken.secret'),
+    });
+  }
+
+  async validate(payload: JwtPayload): Promise<User> {
+    if (payload.type != TokenTypes.REFRESH_TOKEN)
+      throw new UnauthorizedException();
+
+    const user = await this.userService.getUser(payload.id);
+    if (!user) throw new UnauthorizedException();
+    if (!user.isActive) throw new BadRequestException('Account is not active');
+
+    return user;
+  }
+}
+
+Token Configuration:
+- Secret: SECRET_FOR_REFRESH_TOKEN (from env, different from access token)
+- Expiration: 30 days (configured in auth.service.ts)
+- Extraction: Authorization: Bearer {token}
+- Strategy Name: 'refresh-token' (explicit name for @UseGuards)
+
+Used By:
+- POST /v1/auth/refresh-token (refresh access token)
+- Strategy specified: @UseGuards(AuthGuard('refresh-token'))
+
+Notes:
+- ⚠️ Different secret from access token (security best practice)
+- Same validation logic as AccessTokenStrategy (DRY violation)
+- Refresh token returned as HttpOnly cookie (secure storage in browser)
+- Token rotation not implemented (same refresh token reused)
+
+Error Handling:
+- Same as AccessTokenStrategy
+- Invalid signature → UnauthorizedException
+- Wrong token type → UnauthorizedException (prevents access token usage)
+
+Recommendations for .NET:
+- Use same JWT Bearer authentication with named scheme:
+  builder.Services.AddAuthentication()
+    .AddJwtBearer("AccessToken", options => { /* access token config */ })
+    .AddJwtBearer("RefreshToken", options => { /* refresh token config */ });
+- Use [Authorize(AuthenticationSchemes = "RefreshToken")] on refresh endpoint
+- Implement refresh token rotation (security best practice):
+  - Generate new refresh token on every refresh
+  - Invalidate old refresh token (store in blacklist or database)
+  - Detect refresh token reuse (potential token theft)
+- Store refresh tokens in database with family chain:
+  public class RefreshToken {
+    public Guid Id { get; set; }
+    public int UserId { get; set; }
+    public string Token { get; set; }
+    public Guid? ReplacedByTokenId { get; set; }
+    public DateTime ExpiresAt { get; set; }
+    public DateTime? RevokedAt { get; set; }
+    public bool IsActive => RevokedAt == null && DateTime.UtcNow < ExpiresAt;
+  }
+- Return refresh token as HttpOnly, Secure, SameSite=Strict cookie
+
+Example Refresh Token Endpoint (.NET):
+[HttpPost("refresh-token")]
+[Authorize(AuthenticationSchemes = "RefreshToken")]
+public async Task<IActionResult> RefreshToken() {
+  var userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier).Value);
+  var user = await _userService.GetUserByIdAsync(userId);
+
+  // Generate new tokens
+  var newAccessToken = _tokenService.GenerateAccessToken(user);
+  var newRefreshToken = _tokenService.GenerateRefreshToken(user);
+
+  // Invalidate old refresh token (token rotation)
+  var oldRefreshToken = Request.Cookies["refreshToken"];
+  await _tokenService.RevokeRefreshTokenAsync(oldRefreshToken);
+
+  // Set new refresh token as HttpOnly cookie
+  Response.Cookies.Append("refreshToken", newRefreshToken, new CookieOptions {
+    HttpOnly = true,
+    Secure = true,
+    SameSite = SameSiteMode.Strict,
+    Expires = DateTime.UtcNow.AddDays(30)
+  });
+
+  return Ok(new { accessToken = newAccessToken });
+}
+
+--------------------------------------------------------------------------------
+TASK 6: ValidationEmailStrategy - Email Confirmation Token
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Passport strategy pentru validare email confirmation links. Token extracte din
+query parameter (?token=...) în loc de Authorization header. Folosit pentru
+confirmarea contului la signup și resetare parolă.
+
+Flow:
+1. Extracte token din query parameter (?token=...)
+2. Verifică signature cu SECRET_FOR_CONFIRM_EMAIL
+3. Decode JWT payload (id, email, type)
+4. Verifică payload.type === TokenTypes.VALIDATION_EMAIL
+5. Fetch user din database (by payload.id)
+6. Return user object (controller activates account)
+
+Cod sursă:
+- Strategy: src/v1/Auth/Strategies/validation-email.strategy.ts
+
+Implementation:
+@Injectable()
+export class ValidationEmailStrategy extends PassportStrategy(Strategy, 'email-validation') {
+  constructor(
+    readonly configService: ConfigService,
+    @Inject(UserService) private userService: UserService,
+  ) {
+    super({
+      jwtFromRequest: ExtractJwt.fromUrlQueryParameter('token'),
+      secretOrKey: process.env.SECRET_FOR_CONFIRM_EMAIL || configService.get('auth.jwt.confirmEmail.secret'),
+    });
+  }
+
+  async validate(payload: JwtPayload): Promise<User> {
+    if (payload.type != TokenTypes.VALIDATION_EMAIL)
+      throw new UnauthorizedException();
+
+    const user = await this.userService.getUser(payload.id);
+    if (!user) throw new UnauthorizedException();
+
+    return user;
+  }
+}
+
+Token Configuration:
+- Secret: SECRET_FOR_CONFIRM_EMAIL (from env)
+- Expiration: 90 days (configured in auth.service.ts)
+- Extraction: ?token={jwt} (query parameter)
+- Strategy Name: 'email-validation'
+
+Email Link Format:
+https://somaway.ro/confirm-email?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+Used By:
+- GET /v1/auth/confirm-email?token=... (email confirmation)
+- GET /v1/auth/reset-password?token=... (password reset confirmation)
+
+Notes:
+- ⚠️ No isActive check (user not active yet, first-time confirmation)
+- Token passed in URL (less secure than POST body, visible in logs)
+- Long expiration (90 days) for user convenience
+- Token single-use not enforced (user can reuse confirmation link)
+
+Error Handling:
+- Invalid token → UnauthorizedException
+- Expired token → UnauthorizedException (user must request new confirmation email)
+- User not found → UnauthorizedException
+
+Recommendations for .NET:
+- Use same JWT Bearer authentication with query parameter extraction
+- Add custom token extractor:
+  options.Events = new JwtBearerEvents {
+    OnMessageReceived = context => {
+      if (context.Request.Query.ContainsKey("token")) {
+        context.Token = context.Request.Query["token"];
+      }
+      return Task.CompletedTask;
+    }
+  };
+- Implement single-use tokens (prevent reuse):
+  - Store token ID (jti claim) in database with used flag
+  - Check on validation: if token already used → reject
+  - Alternative: store confirmation timestamp in user entity
+- Use shorter expiration (24-48 hours) for security
+- Send new confirmation email on expiration
+- Consider magic link authentication (passwordless) for better UX
+- Use POST endpoint instead of GET (token in body, not URL)
+
+Example Email Confirmation (.NET):
+[HttpGet("confirm-email")]
+public async Task<IActionResult> ConfirmEmail([FromQuery] string token) {
+  try {
+    var tokenHandler = new JwtSecurityTokenHandler();
+    var key = Encoding.UTF8.GetBytes(_configuration["Jwt:EmailConfirmSecret"]);
+
+    var validationParameters = new TokenValidationParameters {
+      ValidateIssuerSigningKey = true,
+      IssuerSigningKey = new SymmetricSecurityKey(key),
+      ValidateIssuer = false,
+      ValidateAudience = false,
+      ValidateLifetime = true
+    };
+
+    var principal = tokenHandler.ValidateToken(token, validationParameters, out _);
+    var userIdClaim = principal.FindFirst(ClaimTypes.NameIdentifier);
+    var tokenTypeClaim = principal.FindFirst("token_type");
+
+    if (tokenTypeClaim?.Value != "email_validation")
+      return BadRequest("Invalid token type");
+
+    var userId = int.Parse(userIdClaim.Value);
+    var user = await _db.Users.FindAsync(userId);
+
+    if (user == null)
+      return NotFound("User not found");
+
+    if (user.IsActive)
+      return Ok("Email already confirmed");
+
+    // Check if token already used (single-use enforcement)
+    var jti = principal.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
+    if (await _db.UsedTokens.AnyAsync(t => t.Jti == jti))
+      return BadRequest("Token already used");
+
+    // Activate account
+    user.IsActive = true;
+    user.EmailConfirmedAt = DateTime.UtcNow;
+    _db.UsedTokens.Add(new UsedToken { Jti = jti, UsedAt = DateTime.UtcNow });
+    await _db.SaveChangesAsync();
+
+    return Ok("Email confirmed successfully");
+  }
+  catch (SecurityTokenExpiredException) {
+    return BadRequest("Token expired. Please request a new confirmation email.");
+  }
+  catch (Exception) {
+    return BadRequest("Invalid token");
+  }
+}
+
+--------------------------------------------------------------------------------
+TASK 7: ValidationSubscriptionStrategy - Subscription Validation
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Passport strategy pentru verificare dacă user are subscription activ. Folosit
+pentru protejarea conținutului premium (lessons, live events). Similar cu
+AccessTokenStrategy dar cu validare suplimentară: user MUST have active subscription.
+
+Flow:
+1. Extracte Bearer token din Authorization header
+2. Verifică signature cu SECRET_FOR_ACCESS_TOKEN (same as access token)
+3. Decode JWT payload (id, email, role, type)
+4. Verifică payload.type === TokenTypes.ACCESS_TOKEN
+5. Fetch user WITH subscriptions (eager loading)
+6. Verifică user exists AND has active subscription
+7. Return user object (request allowed)
+
+Cod sursă:
+- Strategy: src/v1/Auth/Strategies/validation-subscription.strategy.ts
+
+Implementation:
+@Injectable()
+export class ValidationSubscriptionStrategy extends PassportStrategy(Strategy, 'subscription-validation') {
+  constructor(
+    readonly configService: ConfigService,
+    @Inject(UserService) private userService: UserService,
+  ) {
+    super({
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      secretOrKey: process.env.SECRET_FOR_ACCESS_TOKEN || configService.get('auth.jwt.accessToken.secret'),
+    });
+  }
+
+  async validate(payload: JwtPayload): Promise<User> {
+    if (payload.type != TokenTypes.ACCESS_TOKEN)
+      throw new UnauthorizedException();
+
+    const user = await this.userService.getUserWithSubscription(payload.id);
+
+    if (!user) {
+      throw new UnprocessableEntityException(
+        'Accessul la aceasta pagina este limitat de abonamentul activ.'
+      );
+    }
+
+    return user;
+  }
+}
+
+Token Configuration:
+- Secret: SECRET_FOR_ACCESS_TOKEN (same as access token!)
+- Expiration: 8 hours (same as access token)
+- Extraction: Authorization: Bearer {token}
+- Strategy Name: 'subscription-validation'
+
+Used By:
+- GET /v1/lesson/:lessonId (premium lesson content)
+- GET /v1/course/video/:videoId (premium video player data)
+- Other premium content endpoints
+
+Notes:
+- ⚠️ Uses same secret as AccessTokenStrategy (not a separate token type)
+- ⚠️ Error message in Romanian: "Accessul la aceasta pagina este limitat de abonamentul activ."
+- getUserWithSubscription() checks for active subscriptions (status, endDate)
+- No isActive check (assumes user already validated by access token)
+- Different exception: UnprocessableEntityException instead of UnauthorizedException
+
+Error Handling:
+- No active subscription → UnprocessableEntityException (422)
+- User not found → UnprocessableEntityException (422)
+- Invalid token → UnauthorizedException (Passport.js)
+
+Recommendations for .NET:
+- Use ASP.NET Core policy-based authorization:
+  builder.Services.AddAuthorization(options => {
+    options.AddPolicy("ActiveSubscription", policy =>
+      policy.Requirements.Add(new ActiveSubscriptionRequirement()));
+  });
+- Create custom authorization handler:
+  public class ActiveSubscriptionHandler : AuthorizationHandler<ActiveSubscriptionRequirement> {
+    private readonly ISubscriptionService _subscriptionService;
+
+    protected override async Task HandleRequirementAsync(
+      AuthorizationHandlerContext context,
+      ActiveSubscriptionRequirement requirement) {
+
+      var userIdClaim = context.User.FindFirst(ClaimTypes.NameIdentifier);
+      if (userIdClaim == null) {
+        context.Fail();
+        return;
+      }
+
+      var userId = int.Parse(userIdClaim.Value);
+      var hasActiveSubscription = await _subscriptionService.HasActiveSubscriptionAsync(userId);
+
+      if (hasActiveSubscription) {
+        context.Succeed(requirement);
+      } else {
+        context.Fail();
+      }
+    }
+  }
+- Use on controllers:
+  [Authorize(Policy = "ActiveSubscription")]
+  [HttpGet("lessons/{id}")]
+  public async Task<IActionResult> GetPremiumLesson(int id) { ... }
+- Add caching for subscription checks (reduce DB queries):
+  var cacheKey = $"subscription:{userId}";
+  var hasSubscription = await _cache.GetOrCreateAsync(cacheKey, async entry => {
+    entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
+    return await _subscriptionService.HasActiveSubscriptionAsync(userId);
+  });
+- Consider adding subscription claims to JWT (avoid DB lookup on every request):
+  new Claim("has_subscription", "true"),
+  new Claim("subscription_expires", subscription.EndDate.ToString("o"))
+- Return 403 Forbidden (not 422) for better HTTP semantics
+
+Example Authorization Handler (.NET):
+public class ActiveSubscriptionRequirement : IAuthorizationRequirement { }
+
+public class ActiveSubscriptionHandler : AuthorizationHandler<ActiveSubscriptionRequirement> {
+  private readonly ApplicationDbContext _db;
+  private readonly IMemoryCache _cache;
+
+  public ActiveSubscriptionHandler(ApplicationDbContext db, IMemoryCache cache) {
+    _db = db;
+    _cache = cache;
+  }
+
+  protected override async Task HandleRequirementAsync(
+    AuthorizationHandlerContext context,
+    ActiveSubscriptionRequirement requirement) {
+
+    var userIdClaim = context.User.FindFirst(ClaimTypes.NameIdentifier);
+    if (userIdClaim == null) {
+      context.Fail();
+      return;
+    }
+
+    var userId = int.Parse(userIdClaim.Value);
+    var cacheKey = $"subscription:{userId}";
+
+    var hasActiveSubscription = await _cache.GetOrCreateAsync(cacheKey, async entry => {
+      entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
+
+      return await _db.Subscriptions.AnyAsync(s =>
+        s.ClientId == userId &&
+        s.Status == SubscriptionStatuses.Active &&
+        s.EndDate > DateTime.UtcNow
+      );
+    });
+
+    if (hasActiveSubscription) {
+      context.Succeed(requirement);
+    } else {
+      context.Fail(new AuthorizationFailureReason(this,
+        "Accessul la aceasta pagina este limitat de abonamentul activ."));
+    }
+  }
+}
+
+// Register in Program.cs
+builder.Services.AddSingleton<IAuthorizationHandler, ActiveSubscriptionHandler>();
+
+--------------------------------------------------------------------------------
+TASK 8: Rate Limiting (Throttler) - Global & Endpoint-Specific
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Rate limiting folosind @nestjs/throttler pentru protecție împotriva abuse și DDoS.
+Configurare globală (20,000 req/60s) cu override-uri per endpoint pentru
+endpoint-uri sensibile (admin login: 2,000 req/60s).
+
+Configuration:
+--------------
+Global Rate Limit (app.module.ts):
+ThrottlerModule.forRoot([
+  {
+    ttl: 60000,        // 60 seconds
+    limit: 20000,      // 20,000 requests per 60 seconds
+  },
+])
+
+Endpoint-Specific Overrides:
+
+1. POST /v1/auth/signin (Client Login):
+   @Throttle({ default: { limit: 200000, ttl: 60000 } })
+   - 200,000 requests / 60 seconds (very high limit!)
+   - Rationale: public endpoint, high traffic expected
+
+2. POST /v1/auth/admin-signin (Admin Login):
+   @Throttle({ default: { limit: 2000, ttl: 60000 } })
+   - 2,000 requests / 60 seconds
+   - Rationale: sensitive endpoint, admin-only, protect against brute-force
+
+Cod sursă:
+- Global config: src/app.module.ts:121-126
+- Endpoint overrides: src/v1/Auth/Controller/auth.controller.ts:41, 60
+
+Implementation:
+// app.module.ts
+import { ThrottlerModule } from '@nestjs/throttler';
+
+@Module({
+  imports: [
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000,
+        limit: 20000,
+      },
+    ]),
+  ],
+})
+export class AppModule {}
+
+// auth.controller.ts
+import { Throttle } from '@nestjs/throttler';
+
+@Throttle({ default: { limit: 2000, ttl: 60000 } })
+@Post('admin-signin')
+async adminSignIn(@Body() dto: LoginDto) { ... }
+
+Rate Limit Headers:
+- X-RateLimit-Limit: Maximum requests allowed
+- X-RateLimit-Remaining: Requests remaining in window
+- X-RateLimit-Reset: Unix timestamp when limit resets
+
+Error Response (429 Too Many Requests):
+{
+  "statusCode": 429,
+  "message": "ThrottlerException: Too Many Requests"
+}
+
+Notes:
+- ⚠️ Global limit very high (20,000 req/60s) - may not prevent abuse effectively
+- ⚠️ Signin limit HIGHER than global (200,000 vs 20,000) - likely misconfiguration
+- ⚠️ No rate limiting on password reset endpoints (vulnerable to email bombing)
+- ⚠️ No rate limiting on expensive operations (video upload, CSV export)
+- Rate limiting based on IP address (default ThrottlerGuard behavior)
+- No user-based rate limiting (authenticated users can bypass IP limits with multiple IPs)
+
+Used By:
+- All endpoints (global ThrottlerGuard)
+- Specific overrides on auth endpoints
+
+Recommendations for .NET:
+- Use ASP.NET Core rate limiting middleware (built-in since .NET 7):
+  builder.Services.AddRateLimiter(options => {
+    // Global rate limit
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+      RateLimitPartition.GetFixedWindowLimiter(
+        partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        factory: partition => new FixedWindowRateLimiterOptions {
+          PermitLimit = 100,
+          Window = TimeSpan.FromMinutes(1),
+          QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+          QueueLimit = 0
+        }
+      )
+    );
+
+    // Endpoint-specific policies
+    options.AddFixedWindowLimiter("auth", options => {
+      options.PermitLimit = 10;
+      options.Window = TimeSpan.FromMinutes(1);
+    });
+
+    options.AddFixedWindowLimiter("api", options => {
+      options.PermitLimit = 1000;
+      options.Window = TimeSpan.FromMinutes(1);
+    });
+  });
+- Apply policies with [EnableRateLimiting] attribute:
+  [EnableRateLimiting("auth")]
+  [HttpPost("signin")]
+  public async Task<IActionResult> SignIn(LoginDto dto) { ... }
+- Use sliding window for better accuracy:
+  options.AddSlidingWindowLimiter("sliding", options => {
+    options.PermitLimit = 100;
+    options.Window = TimeSpan.FromMinutes(1);
+    options.SegmentsPerWindow = 4;
+  });
+- Add user-based rate limiting for authenticated requests:
+  options.AddPolicy("authenticated", context => {
+    var userId = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "anonymous";
+    return RateLimitPartition.GetFixedWindowLimiter(userId, _ => new FixedWindowRateLimiterOptions {
+      PermitLimit = 1000,
+      Window = TimeSpan.FromMinutes(1)
+    });
+  });
+- Add distributed rate limiting with Redis (for multi-instance deployments)
+- Lower limits for sensitive endpoints:
+  - Login: 5-10 attempts per minute per IP
+  - Password reset: 3 attempts per hour per email
+  - Video upload: 10 uploads per hour per user
+  - CSV export: 5 exports per hour per user
+
+Example Rate Limiting (.NET):
+// Program.cs
+builder.Services.AddRateLimiter(options => {
+  // Global IP-based rate limit
+  options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+    RateLimitPartition.GetFixedWindowLimiter(
+      context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+      _ => new FixedWindowRateLimiterOptions {
+        PermitLimit = 100,
+        Window = TimeSpan.FromMinutes(1)
+      }
+    )
+  );
+
+  // Auth endpoints: strict limit
+  options.AddFixedWindowLimiter("auth", options => {
+    options.PermitLimit = 5;
+    options.Window = TimeSpan.FromMinutes(1);
+  });
+
+  // Admin endpoints: very strict limit
+  options.AddFixedWindowLimiter("admin", options => {
+    options.PermitLimit = 10;
+    options.Window = TimeSpan.FromMinutes(1);
+  });
+
+  options.OnRejected = async (context, token) => {
+    context.HttpContext.Response.StatusCode = 429;
+    await context.HttpContext.Response.WriteAsJsonAsync(new {
+      error = "Too many requests. Please try again later.",
+      retryAfter = context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter)
+        ? retryAfter.TotalSeconds
+        : null
+    });
+  };
+});
+
+app.UseRateLimiter();
+
+// Controller
+[EnableRateLimiting("auth")]
+[HttpPost("signin")]
+public async Task<IActionResult> SignIn(LoginDto dto) { ... }
+
+[EnableRateLimiting("admin")]
+[HttpPost("admin-signin")]
+public async Task<IActionResult> AdminSignIn(LoginDto dto) { ... }
+
+[DisableRateLimiting] // Exclude from global limit
+[HttpGet("health")]
+public IActionResult Health() => Ok();
+
+--------------------------------------------------------------------------------
+TASK 9: CORS Configuration - Cross-Origin Resource Sharing
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Configurare CORS pentru permisiuni cross-origin requests de la frontend-uri
+(web, admin) hosted pe domenii diferite. Allow credentials pentru cookie-based
+authentication (refresh tokens).
+
+Configuration:
+--------------
+Cod sursă: src/main.ts:29-48
+
+fastifyAdapter.enableCors({
+  origin: [
+    'http://localhost',
+    'http://127.0.0.1',
+    'http://127.0.0.1:63485',
+    'http://127.0.0.1:*',
+    'http://localhost:3000',       // Next.js dev server
+    'http://localhost:5173',       // Vite dev server (Admin)
+    'http://localhost:5174',       // Vite dev server (Web)
+    'http://somaway.ro',
+    'http://www.somaway.ro',
+    'http://dev.somaway.ro',       // Development environment
+    'https://somaway.ro',          // Production web
+    'https://www.somaway.ro',      // Production web (www)
+    'https://dev.somaway.ro',      // Development web
+    'https://dev-admin.somaway.ro', // Development admin
+    'https://admin.somaway.ro',    // Production admin
+  ],
+  credentials: true,  // Allow cookies (for refresh tokens)
+});
+
+Allowed Origins:
+- Localhost (dev): http://localhost:*, http://127.0.0.1:*
+- Dev servers: localhost:3000 (Next.js), localhost:5173/5174 (Vite)
+- Production: somaway.ro, www.somaway.ro
+- Dev environment: dev.somaway.ro, dev-admin.somaway.ro
+- Admin: admin.somaway.ro, dev-admin.somaway.ro
+
+Credentials:
+- credentials: true → allows Set-Cookie headers
+- Used for HttpOnly refresh token cookies
+- Frontend must send withCredentials: true in requests
+
+Notes:
+- ⚠️ Wildcard pattern 'http://127.0.0.1:*' doesn't work (CORS expects exact origins)
+- ⚠️ Mix of HTTP and HTTPS for same domain (should be HTTPS only in production)
+- ⚠️ No validation of request methods or headers (default: all allowed)
+- credentials: true requires exact origin match (can't use '*')
+
+Security Considerations:
+- Exact origin matching (no wildcards)
+- credentials: true only for trusted origins
+- HTTPS enforced in production (redirect HTTP → HTTPS)
+
+Recommendations for .NET:
+- Use ASP.NET Core CORS middleware:
+  builder.Services.AddCors(options => {
+    options.AddPolicy("SomawayPolicy", policy => {
+      policy.WithOrigins(
+          "https://somaway.ro",
+          "https://www.somaway.ro",
+          "https://admin.somaway.ro"
+        )
+        .AllowAnyMethod()
+        .AllowAnyHeader()
+        .AllowCredentials()
+        .SetIsOriginAllowedToAllowWildcardSubdomains(); // Allow *.somaway.ro
+    });
+
+    if (builder.Environment.IsDevelopment()) {
+      options.AddPolicy("Development", policy => {
+        policy.WithOrigins(
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "http://localhost:5174"
+          )
+          .AllowAnyMethod()
+          .AllowAnyHeader()
+          .AllowCredentials();
+      });
+    }
+  });
+- Apply in Program.cs:
+  app.UseCors(builder.Environment.IsDevelopment() ? "Development" : "SomawayPolicy");
+- Enforce HTTPS redirect:
+  app.UseHttpsRedirection();
+- Add preflight cache:
+  policy.SetPreflightMaxAge(TimeSpan.FromMinutes(10));
+- Use environment-specific origins (appsettings.json):
+  "Cors": {
+    "AllowedOrigins": [
+      "https://somaway.ro",
+      "https://admin.somaway.ro"
+    ]
+  }
+- Consider CDN origins if using CloudFront/Cloudflare
+
+Example CORS (.NET):
+// Program.cs
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
+
+builder.Services.AddCors(options => {
+  options.AddDefaultPolicy(policy => {
+    policy.WithOrigins(allowedOrigins)
+      .AllowAnyMethod()
+      .AllowAnyHeader()
+      .AllowCredentials()
+      .SetPreflightMaxAge(TimeSpan.FromMinutes(10));
+  });
+});
+
+app.UseCors();
+
+// appsettings.json
+{
+  "Cors": {
+    "AllowedOrigins": [
+      "https://somaway.ro",
+      "https://www.somaway.ro",
+      "https://admin.somaway.ro"
+    ]
+  }
+}
+
+// appsettings.Development.json
+{
+  "Cors": {
+    "AllowedOrigins": [
+      "http://localhost:3000",
+      "http://localhost:5173",
+      "http://localhost:5174"
+    ]
+  }
+}
+
+--------------------------------------------------------------------------------
+TASK 10: Fastify Configuration - HTTP Server & Middleware
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Configurare Fastify HTTP server (alternativă la Express) cu middleware pentru
+compression, cookie parsing, multipart uploads, și Swagger documentation.
+
+Configuration:
+--------------
+Cod sursă: src/main.ts
+
+const fastifyAdapter = new FastifyAdapter({
+  logger: !configService.isProduction(),  // Logging disabled in production
+  bodyLimit: 10048576,  // 10MB body size limit
+});
+
+Middleware Registered:
+1. fastify-compress: Gzip/Brotli compression for responses
+2. fastify-cookie: Cookie parsing and serialization
+3. fastify-multipart: Multipart/form-data parsing (300MB file limit)
+4. fastify-helmet: Security headers (COMMENTED OUT!)
+
+fastifyAdapter.register(fastifyMultipart, {
+  limits: {
+    fileSize: 300 * 1024 * 1024, // 300MB limit
+  },
+});
+fastifyAdapter.register(fastifyCompress);
+fastifyAdapter.register(fastifyCookie);
+// fastifyAdapter.register(fastifyHelmet); // DISABLED
+
+Global Configuration:
+- Base path: /api (app.setGlobalPrefix('/api'))
+- Body limit: 10MB (Fastify adapter)
+- File upload limit: 300MB (fastify-multipart)
+- Validation: Global ValidationPipe with transformation
+- Logger: Winston (production: Sentry integration)
+
+Swagger Documentation (dev only):
+- Path: /docs
+- Bearer token authentication
+- Disabled in production (configService.isProduction())
+
+Root Endpoint (GET /):
+{
+  "title": "somaway: video lessons for everyone",
+  "description": "API of somaway.ro",
+  "termsOfService": "https://somaway.ro/termsOfService",
+  "contact": {
+    "name": "API Support",
+    "email": "admin@somaway.ro"
+  },
+  "license": {
+    "name": "GPLv3",
+    "url": "https://raw.bitbucketusercontent.com/somaway/master/COPYING"
+  },
+  "source": "https://bitbucket.com/somaway",
+  "versions": ["v1"]
+}
+
+Notes:
+- ⚠️ fastify-helmet COMMENTED OUT (missing security headers!)
+- ⚠️ Body limit 10MB but file upload 300MB (inconsistent, should be separate)
+- ⚠️ Swagger exposed on /docs (should be /api/docs for consistency)
+- ⚠️ Fastify logging disabled in production (relies on Winston/Sentry)
+- cookie-parser registered twice (fastifyCookie + cookieParser middleware)
+
+Security Headers (MISSING):
+- X-Content-Type-Options: nosniff
+- X-Frame-Options: DENY
+- X-XSS-Protection: 1; mode=block
+- Strict-Transport-Security: max-age=31536000; includeSubDomains
+- Content-Security-Policy: default-src 'self'
+
+Recommendations for .NET:
+- Use Kestrel (built-in HTTP server, no need for adapter)
+- Configure body size limits:
+  builder.WebHost.ConfigureKestrel(options => {
+    options.Limits.MaxRequestBodySize = 300 * 1024 * 1024; // 300MB
+  });
+- Add response compression:
+  builder.Services.AddResponseCompression(options => {
+    options.EnableForHttps = true;
+    options.Providers.Add<BrotliCompressionProvider>();
+    options.Providers.Add<GzipCompressionProvider>();
+  });
+- Add security headers middleware:
+  app.Use(async (context, next) => {
+    context.Response.Headers.Add("X-Content-Type-Options", "nosniff");
+    context.Response.Headers.Add("X-Frame-Options", "DENY");
+    context.Response.Headers.Add("X-XSS-Protection", "1; mode=block");
+    context.Response.Headers.Add("Referrer-Policy", "no-referrer");
+    if (context.Request.IsHttps) {
+      context.Response.Headers.Add("Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains; preload");
+    }
+    await next();
+  });
+- Enable Swagger only in development:
+  if (app.Environment.IsDevelopment()) {
+    app.UseSwagger();
+    app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Somaway API v1"));
+  }
+- Add health check endpoint:
+  builder.Services.AddHealthChecks()
+    .AddDbContextCheck<ApplicationDbContext>()
+    .AddRedis(builder.Configuration["Redis:ConnectionString"]);
+
+  app.MapHealthChecks("/health");
+
+Example Kestrel Configuration (.NET):
+// Program.cs
+builder.WebHost.ConfigureKestrel(options => {
+  options.Limits.MaxRequestBodySize = 300 * 1024 * 1024; // 300MB
+  options.Limits.RequestHeadersTimeout = TimeSpan.FromMinutes(2);
+  options.AddServerHeader = false; // Hide "Server: Kestrel" header
+});
+
+builder.Services.AddResponseCompression(options => {
+  options.EnableForHttps = true;
+  options.Providers.Add<BrotliCompressionProvider>();
+  options.Providers.Add<GzipCompressionProvider>();
+  options.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(
+    new[] { "application/json", "text/plain" }
+  );
+});
+
+// Security headers middleware
+app.Use(async (context, next) => {
+  context.Response.Headers.Add("X-Content-Type-Options", "nosniff");
+  context.Response.Headers.Add("X-Frame-Options", "DENY");
+  context.Response.Headers.Add("X-XSS-Protection", "1; mode=block");
+  context.Response.Headers.Add("Referrer-Policy", "strict-origin-when-cross-origin");
+  context.Response.Headers.Add("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+
+  if (context.Request.IsHttps) {
+    context.Response.Headers.Add("Strict-Transport-Security",
+      "max-age=31536000; includeSubDomains; preload");
+  }
+
+  await next();
+});
+
+app.UseResponseCompression();
+
+--------------------------------------------------------------------------------
+TASK 11: Global Exception Filter & Logging - Error Handling
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Global exception filter pentru formatare consistentă errori și logging cu Winston + Sentry.
+Toate exception-urile caught și loggate, apoi transformate în răspunsuri HTTP standardizate.
+
+Configuration:
+--------------
+Cod sursă:
+- Exception Filter: src/shared/Exceptions/http-error.filter.ts
+- Logging Interceptor: src/shared/Logger/logger.interceptor.ts
+- Winston Transports: src/shared/Logger/winston.transports.ts
+- Sentry Integration: src/shared/Services/sentry.service.ts
+
+Global Providers (app.module.ts):
+{
+  provide: APP_INTERCEPTOR,
+  useValue: new RavenInterceptor(), // Sentry error tracking
+},
+{
+  provide: APP_INTERCEPTOR,
+  useClass: LoggingInterceptor,  // Winston request logging
+},
+{
+  provide: APP_FILTER,
+  useClass: HttpErrorFilter,  // Exception formatting
+}
+
+Winston Configuration:
+WinstonModule.forRootAsync({
+  inject: [ConfigService],
+  useFactory: (configService: ConfigService) => ({
+    transports: _winstonTransports(configService),
+  }),
+})
+
+Winston Transports:
+- Console: Development only (colorized, human-readable)
+- File: All environments (JSON format, rotation)
+- Sentry: Production only (error level and above)
+
+Sentry Configuration:
+sentry.init({
+  dsn: configService.getEnv('SENTRY_DSN')
+});
+
+Used in main.ts:
+app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
+
+Logging Patterns:
+1. Request Logging: LoggingInterceptor logs all HTTP requests
+2. Error Logging: HttpErrorFilter logs all exceptions
+3. Sentry: RavenInterceptor sends errors to Sentry (production only)
+
+Error Response Format (HttpErrorFilter):
+{
+  "statusCode": 400,
+  "timestamp": "2024-11-02T12:00:00.000Z",
+  "path": "/api/v1/auth/signin",
+  "message": "Email or password is incorrect"
+}
+
+Notes:
+- ⚠️ Winston transports configuration not visible (imported from file)
+- ⚠️ Sentry DSN from environment variable (security sensitive)
+- ⚠️ No structured logging format for Winston (should use JSON in production)
+- ⚠️ No correlation ID for request tracing across services
+- ⚠️ No log sampling or rate limiting (high-traffic spam)
+
+Recommendations for .NET:
+- Use Serilog for structured logging:
+  builder.Host.UseSerilog((context, configuration) => {
+    configuration
+      .ReadFrom.Configuration(context.Configuration)
+      .Enrich.FromLogContext()
+      .Enrich.WithMachineName()
+      .Enrich.WithEnvironmentName()
+      .WriteTo.Console(new JsonFormatter())
+      .WriteTo.File(new JsonFormatter(),
+        "logs/app-.log",
+        rollingInterval: RollingInterval.Day)
+      .WriteTo.Sentry(o => {
+        o.Dsn = context.Configuration["Sentry:Dsn"];
+        o.MinimumBreadcrumbLevel = LogEventLevel.Information;
+        o.MinimumEventLevel = LogEventLevel.Error;
+      });
+  });
+- Add global exception handler:
+  app.UseExceptionHandler(errorApp => {
+    errorApp.Run(async context => {
+      var exceptionHandlerFeature = context.Features.Get<IExceptionHandlerFeature>();
+      var exception = exceptionHandlerFeature?.Error;
+
+      var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+      logger.LogError(exception, "Unhandled exception occurred");
+
+      context.Response.StatusCode = exception switch {
+        NotFoundException => 404,
+        ValidationException => 400,
+        UnauthorizedAccessException => 401,
+        _ => 500
+      };
+
+      await context.Response.WriteAsJsonAsync(new {
+        statusCode = context.Response.StatusCode,
+        timestamp = DateTime.UtcNow,
+        path = context.Request.Path,
+        message = exception?.Message ?? "An error occurred"
+      });
+    });
+  });
+- Add correlation ID middleware:
+  app.Use(async (context, next) => {
+    var correlationId = context.Request.Headers["X-Correlation-ID"].FirstOrDefault()
+      ?? Guid.NewGuid().ToString();
+    context.Response.Headers.Add("X-Correlation-ID", correlationId);
+    using (LogContext.PushProperty("CorrelationId", correlationId)) {
+      await next();
+    }
+  });
+- Add request logging middleware:
+  app.UseSerilogRequestLogging(options => {
+    options.EnrichDiagnosticContext = (diagnosticContext, httpContext) => {
+      diagnosticContext.Set("ClientIP", httpContext.Connection.RemoteIpAddress);
+      diagnosticContext.Set("UserAgent", httpContext.Request.Headers["User-Agent"].ToString());
+      diagnosticContext.Set("UserId", httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value);
+    };
+  });
+
+Example Global Exception Handler (.NET):
+// Program.cs
+builder.Host.UseSerilog((context, configuration) => {
+  configuration
+    .ReadFrom.Configuration(context.Configuration)
+    .Enrich.FromLogContext()
+    .Enrich.WithProperty("Application", "Somaway.API")
+    .WriteTo.Console(new JsonFormatter())
+    .WriteTo.Sentry(o => {
+      o.Dsn = context.Configuration["Sentry:Dsn"];
+      o.MinimumEventLevel = LogEventLevel.Error;
+    });
+});
+
+app.UseExceptionHandler(errorApp => {
+  errorApp.Run(async context => {
+    var exceptionHandlerFeature = context.Features.Get<IExceptionHandlerFeature>();
+    var exception = exceptionHandlerFeature?.Error;
+
+    var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+    logger.LogError(exception, "Unhandled exception: {Message}", exception?.Message);
+
+    var statusCode = exception switch {
+      NotFoundException => StatusCodes.Status404NotFound,
+      ValidationException => StatusCodes.Status400BadRequest,
+      UnauthorizedAccessException => StatusCodes.Status401Unauthorized,
+      ForbiddenException => StatusCodes.Status403Forbidden,
+      _ => StatusCodes.Status500InternalServerError
+    };
+
+    context.Response.StatusCode = statusCode;
+    context.Response.ContentType = "application/json";
+
+    await context.Response.WriteAsJsonAsync(new {
+      statusCode,
+      timestamp = DateTime.UtcNow,
+      path = context.Request.Path.Value,
+      message = exception?.Message ?? "An unexpected error occurred",
+      traceId = Activity.Current?.Id ?? context.TraceIdentifier
+    });
+  });
+});
+
+app.UseSerilogRequestLogging(options => {
+  options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
+  options.EnrichDiagnosticContext = (diagnosticContext, httpContext) => {
+    diagnosticContext.Set("ClientIP", httpContext.Connection.RemoteIpAddress);
+    diagnosticContext.Set("UserAgent", httpContext.Request.Headers["User-Agent"].ToString());
+    diagnosticContext.Set("UserId", httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value);
+    diagnosticContext.Set("CorrelationId", httpContext.Request.Headers["X-Correlation-ID"].ToString());
+  };
+});
+
+================================================================================
+INTEGRATION SUMMARY
+================================================================================
+
+Migration Checklist for Middleware & Guards:
+
+1. **Authentication & Authorization**:
+   - ✅ Replace Passport.js JWT strategies with ASP.NET Core JWT Bearer authentication
+   - ✅ Use built-in [Authorize] attribute instead of custom guards
+   - ✅ Implement policy-based authorization for subscription validation
+   - ✅ Add refresh token rotation for better security
+
+2. **Rate Limiting**:
+   - ✅ Use ASP.NET Core rate limiting middleware (built-in since .NET 7)
+   - ✅ Configure IP-based and user-based rate limiting
+   - ✅ Lower limits for sensitive endpoints (login, password reset)
+   - ✅ Consider distributed rate limiting with Redis for multi-instance deployments
+
+3. **File Upload**:
+   - ✅ Use IFormFile (no custom middleware needed)
+   - ✅ Configure max request body size in Kestrel (300MB)
+   - ✅ Implement streaming for large files (avoid memory buffer)
+   - ✅ Add file type validation and virus scanning
+
+4. **CORS**:
+   - ✅ Use ASP.NET Core CORS middleware
+   - ✅ Environment-specific origins (appsettings.json)
+   - ✅ Enforce HTTPS redirect in production
+
+5. **Security Headers**:
+   - ✅ Add security headers middleware (X-Content-Type-Options, X-Frame-Options, etc.)
+   - ✅ Implement Strict-Transport-Security for HTTPS
+   - ✅ Add Content-Security-Policy for XSS protection
+
+6. **Logging & Error Handling**:
+   - ✅ Use Serilog with Sentry integration
+   - ✅ Implement global exception handler
+   - ✅ Add correlation ID for distributed tracing
+   - ✅ Use structured logging (JSON format)
+
+7. **HTTP Server**:
+   - ✅ Use Kestrel (built-in, no adapter needed)
+   - ✅ Configure body size limits and timeouts
+   - ✅ Add response compression (Brotli/Gzip)
+   - ✅ Add health checks for database and Redis
+
+8. **Token Blacklist**:
+   - ✅ Use IDistributedCache (Redis) for token blacklist
+   - ✅ Add graceful error handling for Redis failures
+   - ✅ Consider short-lived access tokens + refresh token rotation
+
+9. **Validation**:
+   - ✅ Use FluentValidation for request validation
+   - ✅ Add model binding validation (Data Annotations)
+   - ✅ Implement custom validators for business rules
+
+10. **Performance**:
+    - ✅ Add caching for user lookups (reduce DB queries)
+    - ✅ Add caching for subscription checks
+    - ✅ Implement response caching for static data
+    - ✅ Add output caching for expensive endpoints
+
+================================================================================
+NOTES & RECOMMENDATIONS
+================================================================================
+
+Critical Security Improvements:
+1. Enable fastify-helmet (security headers) - currently COMMENTED OUT
+2. Lower rate limits for sensitive endpoints (currently too high)
+3. Add rate limiting for password reset (vulnerable to email bombing)
+4. Implement refresh token rotation (currently not implemented)
+5. Enforce HTTPS only in production (currently allows HTTP)
+6. Add virus scanning for uploaded files
+7. Implement single-use tokens for email confirmation
+
+Performance Optimizations:
+1. Add caching for user lookups (every request queries DB)
+2. Add caching for subscription checks (heavy query)
+3. Implement streaming for large file uploads (currently in-memory)
+4. Add Redis distributed caching for multi-instance deployments
+5. Implement response compression (partially implemented)
+
+Code Quality Issues:
+1. DRY violation: All JWT strategies have similar validation logic
+2. Hardcoded strings: Error messages in Romanian (should be i18n)
+3. Inconsistent error types: UnauthorizedException vs UnprocessableEntityException
+4. Missing graceful error handling for Redis failures
+5. No unit tests for middleware/guards/strategies
+
+Migration Priority:
+1. HIGH: Authentication & Authorization (core functionality)
+2. HIGH: Rate Limiting (security critical)
+3. HIGH: Security Headers (security critical)
+4. MEDIUM: File Upload (affects video/image upload)
+5. MEDIUM: Logging & Error Handling (observability)
+6. LOW: CORS (already working, minor improvements)
+7. LOW: HTTP Server Config (Kestrel handles most automatically)
+
+================================================================================
+END OF MIDDLEWARE & GUARDS DOCUMENTATION
+================================================================================
+
+Ready for JIRA import! 🔒
+
+Summary:
+- Infrastructure Components: 11 tasks documented
+- Middleware: FileUploadMiddleware (multipart), BlacklistMiddleware (Redis token blacklist)
+- Guards: RolesGuard (role-based authorization)
+- JWT Strategies: 4 strategies (Access, Refresh, EmailValidation, SubscriptionValidation)
+- Rate Limiting: Global + endpoint-specific (ThrottlerModule)
+- CORS: Multi-origin configuration with credentials
+- Fastify: HTTP server configuration (compression, cookies, multipart)
+- Logging: Winston + Sentry integration
+- Security: Missing headers (fastify-helmet disabled!)
+- Critical Issues: Rate limits too high, security headers missing, no refresh token rotation
+
+Migration Complexity: HIGH (core authentication infrastructure)
+Estimated Effort: 2-3 weeks (authentication rewrite + security hardening)

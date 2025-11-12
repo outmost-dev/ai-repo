@@ -1,0 +1,492 @@
+================================================================================
+STORY: Shortlist Module
+================================================================================
+
+Modulul Shortlist gestionează listele de favorite ale utilizatorilor (wishlist/bookmarks). Fiecare utilizator poate avea multiple shortlist-uri, dar doar unul poate fi activ la un moment dat. Shortlist-urile pot conține atât cursuri (courses) cât și lecții individuale (lessons).
+
+Locație cod sursă: src/v1/Shortlist/
+
+Endpoints implementate: 6
+
+Services utilizate:
+- ShortlistsRepository
+
+Dependencies:
+- AuthGuard('jwt') pe toate endpoint-urile (autentificare obligatorie)
+- shortlistRecipientTypes enum: 'course' | 'lesson'
+
+Notes:
+- Un utilizator poate avea mai multe shortlist-uri
+- Doar un shortlist poate fi activ la un moment dat (active shortlist)
+- recipients[] = array de courseId-uri
+- lessonRecipients[] = array de lessonId-uri
+- createOrRetrieve: creează shortlist nou sau returnează existent dacă găsește unul cu același titlu
+- getAuthActiveShortlist există în service dar NU e expusă în controller
+
+
+================================================================================
+TASK 1: GET /v1/shortlist/:shortlistId - Detaliu shortlist
+================================================================================
+
+Business Logic:
+1. Primește shortlistId din URL params
+2. Interogează baza de date pentru a obține detaliile shortlist-ului
+3. Returnează shortlist-ul cu toate câmpurile (id, title, status, recipients, lessonRecipients, clientId)
+
+Cod sursă:
+- Controller: src/v1/Shortlist/Controller/shortlist.controller.ts:31-34
+- Service: src/v1/Shortlist/Service/shortlist.service.ts:21-25
+
+Request:
+GET /v1/shortlist/123
+Authorization: Bearer {jwt_token}
+
+Path Parameters:
+- shortlistId (required): ID-ul shortlist-ului
+
+Response Success (200):
+{
+  "id": 123,
+  "title": "My Favorites",
+  "status": 1,
+  "clientId": 456,
+  "recipients": [10, 20, 30],
+  "lessonRecipients": [100, 200],
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-01-01T00:00:00.000Z"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (404):
+{
+  "statusCode": 404,
+  "message": "Shortlist not found"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat (nu verifică ownership!)
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- ShortlistsRepository.getShortlist()
+
+Security Issues:
+- ⚠️ Nu verifică dacă shortlist-ul aparține user-ului autentificat - orice user poate accesa orice shortlist prin ID!
+
+
+================================================================================
+TASK 2: POST /v1/shortlist/create-retrieve-shortlist - Creare sau obținere shortlist
+================================================================================
+
+Business Logic:
+1. Primește datele shortlist-ului în body (CreateShortlistDto)
+2. Verifică dacă există deja un shortlist cu același titlu pentru user-ul autentificat
+3. Dacă DA: returnează shortlist-ul existent
+4. Dacă NU: creează un shortlist nou și îl returnează
+5. Extrage clientId din token-ul JWT (nu din body)
+
+Cod sursă:
+- Controller: src/v1/Shortlist/Controller/shortlist.controller.ts:36-42
+- Service: src/v1/Shortlist/Service/shortlist.service.ts:35-43
+
+Request:
+POST /v1/shortlist/create-retrieve-shortlist
+Authorization: Bearer {jwt_token}
+
+Body:
+{
+  "title": "Web Development Favorites",
+  "status": 1,
+  "recipients": [10, 20],
+  "lessonRecipients": [100, 200]
+}
+
+Note: clientId din DTO este ignorat - se extrage din JWT
+
+Response Success (201):
+{
+  "id": 789,
+  "title": "Web Development Favorites",
+  "status": 1,
+  "clientId": 456,
+  "recipients": [10, 20],
+  "lessonRecipients": [100, 200],
+  "createdAt": "2024-11-02T10:00:00.000Z",
+  "updatedAt": "2024-11-02T10:00:00.000Z"
+}
+
+Response Success (200) - existing shortlist:
+{
+  "id": 789,
+  "title": "Web Development Favorites",
+  "status": 1,
+  "clientId": 456,
+  "recipients": [10, 20, 30],
+  "lessonRecipients": [100, 200, 300],
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-11-01T12:00:00.000Z"
+}
+
+Response Error (400):
+{
+  "statusCode": 400,
+  "message": ["title should not be empty", "title must be shorter than or equal to 50 characters"],
+  "error": "Bad Request"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- ShortlistsRepository.createOrRetrieveShortlist()
+
+Validation:
+- title: NotEmpty, MaxLength(50)
+- status: NotEmpty, number
+- clientId: Optional, number (IGNORAT - se ia din JWT)
+- recipients: Optional, number[] (course IDs)
+- lessonRecipients: Optional, number[] (lesson IDs)
+
+Notes:
+- Logica "createOrRetrieve" verifică după titlu (nu verifică dacă shortlist-ul are aceleași items)
+- recipients[] și lessonRecipients[] din request sunt folosite doar la creare, nu la retrieve
+
+
+================================================================================
+TASK 3: POST /v1/shortlist/make-active/:shortlistId - Activare shortlist
+================================================================================
+
+Business Logic:
+1. Primește shortlistId din URL params și user din JWT
+2. Dezactivează toate shortlist-urile existente ale user-ului (setează status = 0 sau similar)
+3. Activează shortlist-ul specificat (setează status = 1 sau active = true)
+4. Un singur shortlist poate fi activ la un moment dat per utilizator
+5. Returnează status ok
+
+Cod sursă:
+- Controller: src/v1/Shortlist/Controller/shortlist.controller.ts:44-50
+- Service: src/v1/Shortlist/Service/shortlist.service.ts:45-53
+
+Request:
+POST /v1/shortlist/make-active/123
+Authorization: Bearer {jwt_token}
+
+Path Parameters:
+- shortlistId (required): ID-ul shortlist-ului de activat
+
+Response Success (200):
+{
+  "status": "ok",
+  "message": "Lista de favorite a fost facuta activa"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (404):
+{
+  "statusCode": 404,
+  "message": "Shortlist not found"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- ShortlistsRepository.makeActiveShortlist()
+
+Notes:
+- ⚠️ Nu verifică ownership - user poate activa shortlist-urile altui user!
+- Ar trebui verificat că shortlistId aparține user.id
+
+
+================================================================================
+TASK 4: DELETE /v1/shortlist/:shortlistId - Ștergere shortlist
+================================================================================
+
+Business Logic:
+1. Primește shortlistId din URL params
+2. Șterge shortlist-ul din baza de date (probabil HARD DELETE)
+3. ⚠️ Nu verifică dacă shortlist-ul aparține user-ului autentificat
+4. Returnează status ok
+
+Cod sursă:
+- Controller: src/v1/Shortlist/Controller/shortlist.controller.ts:52-58
+- Service: src/v1/Shortlist/Service/shortlist.service.ts:55-58
+
+Request:
+DELETE /v1/shortlist/123
+Authorization: Bearer {jwt_token}
+
+Path Parameters:
+- shortlistId (required): ID-ul shortlist-ului de șters
+
+Response Success (200):
+{
+  "status": "ok",
+  "message": "Listga de favorite a fost stearsa"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (404):
+{
+  "statusCode": 404,
+  "message": "Shortlist not found"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- ShortlistsRepository.deleteShortlist()
+
+Security Issues:
+- ⚠️ CRITICAL: Nu verifică ownership - orice user poate șterge shortlist-urile altui user!
+- ⚠️ Parametrul _user în service e unused (prefixat cu underscore)
+
+Bugs:
+- ⚠️ TYPO: "Listga" în loc de "Lista" în mesajul de răspuns
+
+
+================================================================================
+TASK 5: PATCH /v1/shortlist/recipient/:recipientId/:materialType - Adăugare item în shortlist
+================================================================================
+
+Business Logic:
+1. Primește recipientId (courseId sau lessonId) și materialType ('course' sau 'lesson') din URL params
+2. Obține shortlist-ul activ al user-ului autentificat
+3. Verifică dacă item-ul există deja în shortlist:
+   - Dacă materialType = 'course': verifică în recipients[]
+   - Dacă materialType = 'lesson': verifică în lessonRecipients[]
+4. Dacă item-ul NU există: îl adaugă în array-ul corespunzător
+5. Dacă item-ul există deja: nu face nimic (idempotent)
+6. Salvează shortlist-ul actualizat
+7. Returnează shortlist-ul complet actualizat
+
+Cod sursă:
+- Controller: src/v1/Shortlist/Controller/shortlist.controller.ts:60-71
+- Service: src/v1/Shortlist/Service/shortlist.service.ts:60-72
+
+Request:
+PATCH /v1/shortlist/recipient/45/course
+Authorization: Bearer {jwt_token}
+
+Path Parameters:
+- recipientId (required): ID-ul cursului sau lecției (string, convertit la number)
+- materialType (required): 'course' sau 'lesson' (enum shortlistRecipientTypes)
+
+Response Success (200):
+{
+  "id": 123,
+  "title": "My Favorites",
+  "status": 1,
+  "clientId": 456,
+  "recipients": [10, 20, 30, 45],
+  "lessonRecipients": [100, 200],
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-11-02T10:30:00.000Z"
+}
+
+Response Error (400):
+{
+  "statusCode": 400,
+  "message": "No active shortlist found for user"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- ShortlistsRepository.addRecipientToShortlist()
+
+Validation:
+- materialType trebuie să fie 'course' sau 'lesson'
+
+Notes:
+- Operația funcționează doar pe shortlist-ul ACTIV al user-ului
+- Dacă user-ul nu are shortlist activ, operația eșuează
+- Operație idempotentă (nu adaugă duplicate)
+- ⚠️ Nu verifică dacă courseId sau lessonId există în baza de date
+
+
+================================================================================
+TASK 6: DELETE /v1/shortlist/recipient/:recipientId/:materialType - Ștergere item din shortlist
+================================================================================
+
+Business Logic:
+1. Primește recipientId (courseId sau lessonId) și materialType ('course' sau 'lesson') din URL params
+2. Obține shortlist-ul activ al user-ului autentificat
+3. Filtrează array-ul corespunzător pentru a elimina recipientId:
+   - Dacă materialType = 'course': elimină din recipients[]
+   - Dacă materialType = 'lesson': elimină din lessonRecipients[]
+4. Salvează shortlist-ul actualizat
+5. Returnează shortlist-ul complet actualizat
+
+Cod sursă:
+- Controller: src/v1/Shortlist/Controller/shortlist.controller.ts:73-84
+- Service: src/v1/Shortlist/Service/shortlist.service.ts:74-86
+
+Request:
+DELETE /v1/shortlist/recipient/45/course
+Authorization: Bearer {jwt_token}
+
+Path Parameters:
+- recipientId (required): ID-ul cursului sau lecției (string, convertit la number)
+- materialType (required): 'course' sau 'lesson' (enum shortlistRecipientTypes)
+
+Response Success (200):
+{
+  "id": 123,
+  "title": "My Favorites",
+  "status": 1,
+  "clientId": 456,
+  "recipients": [10, 20, 30],
+  "lessonRecipients": [100, 200],
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-11-02T10:35:00.000Z"
+}
+
+Response Error (400):
+{
+  "statusCode": 400,
+  "message": "No active shortlist found for user"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- ShortlistsRepository.removeRecipientFromShortlist()
+
+Validation:
+- materialType trebuie să fie 'course' sau 'lesson'
+
+Notes:
+- Operația funcționează doar pe shortlist-ul ACTIV al user-ului
+- Dacă item-ul nu există în shortlist, operația se execută fără eroare (idempotent)
+- Dacă user-ul nu are shortlist activ, operația eșuează
+
+
+================================================================================
+ADDITIONAL NOTES - SERVICE METHODS NOT EXPOSED
+================================================================================
+
+Metodă: getAuthActiveShortlist(authUserId: number)
+Locație: src/v1/Shortlist/Service/shortlist.service.ts:27-33
+
+Business Logic:
+- Returnează shortlist-ul activ al unui utilizator specific
+- Dacă authUserId este null/undefined, returnează null
+- Altfel, interogează repository pentru a obține active shortlist
+
+Utilizare:
+- Probabil folosită intern de alte module (User, Course) pentru a verifica shortlist-ul activ
+
+Recomandare pentru .NET:
+- Consideră expunerea ca endpoint: GET /v1/shortlist/active
+- Util pentru frontend să obțină rapid shortlist-ul activ fără a ști ID-ul
+
+
+================================================================================
+SUMMARY - Shortlist Module
+================================================================================
+
+Total Endpoints: 6 (nu 3 cum era în inventar inițial!)
+
+Authenticated Endpoints (toate cu JWT):
+- GET /v1/shortlist/:shortlistId
+- POST /v1/shortlist/create-retrieve-shortlist
+- POST /v1/shortlist/make-active/:shortlistId
+- DELETE /v1/shortlist/:shortlistId
+- PATCH /v1/shortlist/recipient/:recipientId/:materialType
+- DELETE /v1/shortlist/recipient/:recipientId/:materialType
+
+Concept:
+- Un user poate avea multiple shortlist-uri (liste de favorite)
+- Doar un shortlist poate fi activ la un moment dat
+- Shortlist-urile conțin courses (recipients[]) și lessons (lessonRecipients[])
+- Operațiuni add/remove funcționează doar pe shortlist-ul activ
+
+Security Issues - CRITICAL:
+1. ⚠️ GET /:shortlistId - Nu verifică ownership (orice user poate vedea orice shortlist)
+2. ⚠️ POST /make-active/:shortlistId - Nu verifică ownership (user poate activa shortlist-ul altui user)
+3. ⚠️ DELETE /:shortlistId - Nu verifică ownership (user poate șterge shortlist-ul altui user)
+
+Bugs:
+1. TYPO: "Listga" în loc de "Lista" în delete message (line 57 din service)
+2. Parametrul _user în deleteShortlist este unused (line 55 din service)
+
+Missing Validations:
+1. Add/remove recipient nu verifică dacă courseId/lessonId există în baza de date
+2. Nu există validare pentru materialType enum în controller (doar type hint)
+
+Missing Features:
+1. getAuthActiveShortlist nu e expusă ca endpoint (GET /v1/shortlist/active)
+2. Nu există endpoint pentru list all shortlists of user
+3. Nu există endpoint pentru update shortlist (title, status)
+
+Recomandări pentru .NET:
+1. ⚠️ URGENT: Adaugă verificări de ownership pentru toate operațiunile CRUD
+2. Implementează soft delete pentru shortlists (IsDeleted flag)
+3. Adaugă endpoint GET /v1/shortlist/active pentru a obține shortlist-ul activ
+4. Adaugă endpoint GET /v1/shortlist/by-user pentru a obține toate shortlist-urile user-ului
+5. Adaugă endpoint PATCH /v1/shortlist/:shortlistId pentru update title/status
+6. Validează existența courses/lessons înainte de add în shortlist
+7. Implementează constraint UNIQUE pe (clientId, title) în baza de date
+8. Consideră paginarea pentru recipients/lessonRecipients dacă pot fi multe items
+9. Fixează typo "Listga" → "Lista"
+10. Adaugă validare enum pentru materialType la nivel de controller

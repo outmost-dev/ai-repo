@@ -1,0 +1,1432 @@
+================================================================================
+STORY: Subscription Module
+================================================================================
+
+Modulul Subscription gestionează abonamentele utilizatorilor la platformă. Sistemul include două concepte principale: Subscriptions (abonamentele utilizatorilor) și Subscription Types (tipurile de abonamente disponibile). Modulul este integrat strâns cu Stripe pentru procesarea plăților, SmartBill pentru facturare, și MailerLite pentru email marketing. Abonamentele pot fi FREE, STANDARD, sau COURSE_BASED.
+
+Locație cod sursă: src/v1/Subscription/
+
+Endpoints implementate: 17 (11 pentru Subscriptions + 6 pentru Subscription Types)
+
+Services utilizate:
+- SubscriptionsRepository
+- SubscriptionTypesRepository
+- AddressesRepository
+- UserService (pentru activare status abonament)
+- StripeService (pentru PaymentIntent)
+- PaymentsService (pentru tracking plăți)
+- MailerService (pentru email-uri tranzacționale)
+- MailerLiteService (pentru email marketing)
+
+Dependencies:
+- AuthGuard('jwt') pe majoritatea endpoint-urilor
+- @Roles(UserRoles.ADMIN) pentru operațiuni administrative
+- @Roles(UserRoles.CLIENT) pentru update subscriptions
+- Stripe integration pentru procesarea plăților
+- SmartBill integration pentru generarea facturilor
+
+Notes:
+- Subscription forms: FREE (0), STANDARD (1), COURSE_BASED (2)
+- Subscription statuses: PENDING, PAYMENT_PENDING, PAYMENT_ACCEPTED, PAYMENT_FAILED, CANCELLED, EXPIRED
+- Workflow: createInternalSubscription → acceptSubscription → payment → activate
+- extendSubscription și cancelSubscription există în service dar NU sunt expuse
+- bulkEnrollInSummit există dar este commented out (Cron job)
+
+
+================================================================================
+SUBSCRIPTIONS ENDPOINTS (11 endpoints)
+================================================================================
+
+TASK 1: GET /v1/subscription/:subscriptionId - Detaliu abonament
+================================================================================
+
+Business Logic:
+1. Primește subscriptionId din URL params
+2. Interogează baza de date pentru detaliile abonamentului
+3. Returnează abonamentul cu toate câmpurile
+4. ⚠️ Nu verifică ownership - orice user autentificat poate vedea orice abonament prin ID!
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:42-48
+- Service: src/v1/Subscription/Service/subscription.service.ts
+
+Request:
+GET /v1/subscription/123
+Authorization: Bearer {jwt_token}
+
+Path Parameters:
+- subscriptionId (required): ID-ul abonamentului
+
+Response Success (200):
+{
+  "id": 123,
+  "clientId": 456,
+  "subTypeId": 1,
+  "form": 1,
+  "status": 2,
+  "startDate": "2024-01-01T00:00:00.000Z",
+  "endDate": "2025-01-01T00:00:00.000Z",
+  "cancelledAt": null,
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-01-01T00:00:00.000Z"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (404):
+{
+  "statusCode": 404,
+  "message": "Subscription not found"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- SubscriptionsRepository.getSubscription()
+
+Security Issues:
+- ⚠️ CRITICAL: Nu verifică ownership - orice user poate accesa orice abonament prin ID
+- Ar trebui să verifice că subscription.clientId === authUser.id sau authUser.role === ADMIN
+
+
+================================================================================
+TASK 2: GET /v1/subscription/user/active - Abonamente active ale user-ului
+================================================================================
+
+Business Logic:
+1. Extrage user ID din JWT (authUser.id)
+2. Interogează abonamentele ACTIVE ale utilizatorului
+3. Filtrează după status PAYMENT_ACCEPTED și endDate > now
+4. Poate filtra după gatewayType (opțional, intern în service)
+5. Returnează lista de abonamente active
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:50-56
+- Service: src/v1/Subscription/Service/subscription.service.ts:185-197
+
+Request:
+GET /v1/subscription/user/active
+Authorization: Bearer {jwt_token}
+
+Response Success (200):
+{
+  "subscriptions": [
+    {
+      "id": 123,
+      "clientId": 456,
+      "subTypeId": 1,
+      "form": 1,
+      "status": 2,
+      "startDate": "2024-01-01T00:00:00.000Z",
+      "endDate": "2025-01-01T00:00:00.000Z",
+      "cancelledAt": null,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    }
+  ],
+  "count": 1
+}
+
+Response Success (200) - empty:
+{
+  "subscriptions": [],
+  "count": 0
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+- Ownership: User vede doar propriile abonamente (clientId === authUser.id)
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- SubscriptionsRepository.getActiveSubscriptionsByUserId()
+
+Notes:
+- Returnează doar abonamente ACTIVE (status = PAYMENT_ACCEPTED, endDate > now)
+- Parametrul gatewayType este folosit intern în service (undefined default)
+- Useful pentru verificarea accesului la cursuri
+
+
+================================================================================
+TASK 3: GET /v1/subscription/user - Toate abonamentele user-ului
+================================================================================
+
+Business Logic:
+1. Extrage user ID din JWT (authUser.id)
+2. Interogează TOATE abonamentele utilizatorului (active, expirate, pending, etc.)
+3. Nu filtrează după status sau endDate
+4. Returnează lista completă de abonamente
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:58-64
+- Service: src/v1/Subscription/Service/subscription.service.ts:211-217
+
+Request:
+GET /v1/subscription/user
+Authorization: Bearer {jwt_token}
+
+Response Success (200):
+{
+  "subscriptions": [
+    {
+      "id": 123,
+      "clientId": 456,
+      "subTypeId": 1,
+      "form": 1,
+      "status": 2,
+      "startDate": "2024-01-01T00:00:00.000Z",
+      "endDate": "2025-01-01T00:00:00.000Z"
+    },
+    {
+      "id": 124,
+      "clientId": 456,
+      "subTypeId": 2,
+      "form": 2,
+      "status": 5,
+      "startDate": "2023-01-01T00:00:00.000Z",
+      "endDate": "2023-06-01T00:00:00.000Z"
+    }
+  ],
+  "count": 2
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+- Ownership: User vede doar propriile abonamente
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- SubscriptionsRepository.getSubscriptionsByUserId()
+
+Notes:
+- Returnează TOATE abonamentele (indiferent de status sau endDate)
+- Useful pentru istoric abonamente în profile user
+
+
+================================================================================
+TASK 4: GET /v1/subscription/active/standard - Abonament STANDARD activ
+================================================================================
+
+Business Logic:
+1. Extrage user ID din JWT (authUser.id)
+2. Interogează abonamentul STANDARD activ al utilizatorului
+3. Filtrează după form = STANDARD (1) și status = PAYMENT_ACCEPTED
+4. Returnează UN SINGUR abonament (cel mai recent/activ)
+5. Returnează obiect gol dacă nu există
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:66-74
+- Service: src/v1/Subscription/Service/subscription.service.ts:219-230
+
+Request:
+GET /v1/subscription/active/standard
+Authorization: Bearer {jwt_token}
+
+Response Success (200) - found:
+{
+  "id": 123,
+  "clientId": 456,
+  "subTypeId": 1,
+  "form": 1,
+  "status": 2,
+  "startDate": "2024-01-01T00:00:00.000Z",
+  "endDate": "2025-01-01T00:00:00.000Z",
+  "createdAt": "2024-01-01T00:00:00.000Z"
+}
+
+Response Success (200) - not found:
+{}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+- Ownership: User vede doar propriul abonament
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- SubscriptionsRepository.getActiveAuthStandardSubscription()
+
+Notes:
+- Returnează doar abonament de tip STANDARD (form = 1)
+- Abonamentul STANDARD oferă acces la toate cursurile
+- Useful pentru verificarea accesului global la platformă
+
+
+================================================================================
+TASK 5: GET /v1/subscription/billing-address - Adresa de facturare
+================================================================================
+
+Business Logic:
+1. Extrage user ID din JWT (authUser.id)
+2. Interogează adresa de facturare asociată cu utilizatorul
+3. Returnează adresa (One-to-One relationship: Users → Addresses)
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:76-80
+- Service: src/v1/Subscription/Service/subscription.service.ts
+
+Request:
+GET /v1/subscription/billing-address
+Authorization: Bearer {jwt_token}
+
+Response Success (200):
+{
+  "id": 789,
+  "customerId": 456,
+  "firstName": "John",
+  "lastName": "Doe",
+  "companyName": null,
+  "cif": null,
+  "regNumber": null,
+  "city": "Bucharest",
+  "county": "Bucuresti",
+  "country": "Romania",
+  "zipCode": "010101",
+  "address": "Str. Exemplu nr. 123",
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-01-01T00:00:00.000Z"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (404):
+{
+  "statusCode": 404,
+  "message": "Address not found"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+- Ownership: User vede doar propria adresă
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- AddressesRepository.getBillingAddress()
+
+Notes:
+- One-to-One relationship: un user are o singură adresă de facturare
+- Adresa este necesară pentru SmartBill invoice generation
+- Poate include detalii companie (companyName, cif, regNumber) pentru facturi juridice
+
+
+================================================================================
+TASK 6: POST /v1/subscription/create-subscription - Creare abonament (Step 1)
+================================================================================
+
+Business Logic:
+1. Primește selectedTypeId în body (ID-ul subscription type selectat)
+2. Extrage user ID din JWT (authUser)
+3. Verifică tipul de abonament selectat (FREE, STANDARD, COURSE_BASED)
+4. Creează sau obține abonament PENDING existent pentru tipul respectiv
+5. Dacă tipul este FREE:
+   a. Marchează abonamentul ca PAYMENT_ACCEPTED direct (fără plată)
+   b. Activează status abonament pentru user (HAS_SUBSCRIPTION)
+   c. Subscribe user la MailerLite group
+   d. Trimite email de confirmare
+6. Dacă tipul NU este FREE:
+   a. Returnează abonamentul PENDING (așteaptă acceptSubscription)
+7. Returnează abonamentul creat/actualizat
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:82-92
+- Service: src/v1/Subscription/Service/subscription.service.ts:70-132
+
+Request:
+POST /v1/subscription/create-subscription
+Authorization: Bearer {jwt_token}
+
+Body:
+{
+  "selectedTypeId": 1
+}
+
+Response Success (201) - FREE subscription:
+{
+  "id": 123,
+  "clientId": 456,
+  "subTypeId": 1,
+  "form": 0,
+  "status": 2,
+  "startDate": "2024-11-02T00:00:00.000Z",
+  "endDate": "2025-11-02T00:00:00.000Z",
+  "createdAt": "2024-11-02T10:00:00.000Z"
+}
+
+Response Success (201) - PAID subscription (PENDING):
+{
+  "id": 124,
+  "clientId": 456,
+  "subTypeId": 2,
+  "form": 1,
+  "status": 0,
+  "startDate": null,
+  "endDate": null,
+  "createdAt": "2024-11-02T10:00:00.000Z"
+}
+
+Response Error (400):
+{
+  "statusCode": 400,
+  "message": ["selectedTypeId should not be empty"],
+  "error": "Bad Request"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (404):
+{
+  "statusCode": 404,
+  "message": "Subscription type not found"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- SubscriptionTypesRepository.getTypeById()
+- SubscriptionsRepository.createOrRetrievePendingSub()
+- UserService.activateUserSubStatus() (pentru FREE)
+- MailerService.sendMail() (pentru confirmation emails)
+- MailerLiteService.retrieveOrCreateGroup() (pentru FREE)
+- MailerLiteService.subscribeToMarketing() (pentru FREE)
+
+Notes:
+- **Step 1** al workflow-ului de achiziție abonament
+- Pentru FREE: procesare completă instant (auto-activate)
+- Pentru PAID: doar creare PENDING, așteaptă acceptSubscription (Step 2)
+- createOrRetrievePendingSub: dacă există PENDING pentru tipul respectiv, îl returnează
+- Email template "summit-enrollment" pentru FREE subscriptions
+- Email template "success-registration" pentru alte tipuri după plată
+
+
+================================================================================
+TASK 7: POST /v1/subscription/check-expiration - Verificare expirare Stripe
+================================================================================
+
+Business Logic:
+1. Primește expiredSub (abonament expirat) în body
+2. Extrage user ID din JWT (authUser)
+3. Verifică status abonament în Stripe (dacă există Stripe subscription ID)
+4. Dacă Stripe subscription este încă activ:
+   a. Extinde endDate în baza de date locală pentru a match Stripe
+   b. Returnează abonamentul actualizat
+5. Dacă Stripe subscription este expirat/cancelled:
+   a. Confirmă expirarea
+   b. Returnează status ok
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:94-103
+- Service: src/v1/Subscription/Service/subscription.service.ts (checkStripeSubExpiration)
+
+Request:
+POST /v1/subscription/check-expiration
+Authorization: Bearer {jwt_token}
+
+Body:
+{
+  "expiredSub": {
+    "id": 123,
+    "clientId": 456,
+    "subTypeId": 1,
+    "status": 2,
+    "endDate": "2024-10-31T23:59:59.000Z"
+  }
+}
+
+Response Success (200) - still active in Stripe:
+{
+  "id": 123,
+  "clientId": 456,
+  "subTypeId": 1,
+  "status": 2,
+  "endDate": "2024-12-31T23:59:59.000Z",
+  "updatedAt": "2024-11-02T10:00:00.000Z"
+}
+
+Response Success (200) - expired confirmed:
+{
+  "status": "ok",
+  "message": "Subscription is expired"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- StripeService (pentru verificare status in Stripe)
+- SubscriptionsRepository (pentru update endDate)
+
+Notes:
+- Reconciliază status între database locală și Stripe
+- Extinde automat endDate dacă Stripe subscription este încă activ
+- Apelat tipic de frontend când detectează că endDate < now
+
+
+================================================================================
+TASK 8: POST /v1/subscription/accept/:selectedType - Acceptare abonament (Step 2)
+================================================================================
+
+Business Logic:
+1. Primește selectedType din URL params și addressDto în body
+2. Extrage user ID din JWT (authUser)
+3. **Crează sau actualizează adresa de facturare** (billing address)
+4. Obține detaliile subscription type selectat
+5. Verifică dacă există abonament activ de același tip:
+   a. Pentru COURSE_BASED: NU permite duplicate (throw error 422)
+   b. Pentru STANDARD: permite (poate extinde perioada prin renewal)
+6. Validează că subscription type are preț valid (price >= 1 pentru non-FREE)
+7. Creează sau obține abonament PENDING
+8. **Creează Stripe PaymentIntent**:
+   a. Amount = subscription type price (în RON, convertit în bani)
+   b. Metadata: userId, subscriptionId, subscriptionTypeId
+9. Returnează PaymentIntent cu client_secret pentru frontend
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:108-120
+- Service: src/v1/Subscription/Service/subscription.service.ts:253-330
+
+Request:
+POST /v1/subscription/accept/1
+Authorization: Bearer {jwt_token}
+
+Path Parameters:
+- selectedType (required): ID-ul subscription type selectat
+
+Body:
+{
+  "firstName": "John",
+  "lastName": "Doe",
+  "city": "Bucharest",
+  "county": "Bucuresti",
+  "country": "Romania",
+  "zipCode": "010101",
+  "address": "Str. Exemplu nr. 123",
+  "companyName": null,
+  "cif": null,
+  "regNumber": null
+}
+
+Response Success (200):
+{
+  "paymentIntent": {
+    "id": "pi_xxx",
+    "client_secret": "pi_xxx_secret_yyy",
+    "amount": 4999,
+    "currency": "ron",
+    "status": "requires_payment_method",
+    "metadata": {
+      "userId": "456",
+      "subscriptionId": "123",
+      "subscriptionTypeId": "1"
+    }
+  }
+}
+
+Response Error (400):
+{
+  "statusCode": 400,
+  "message": "Tipul de abonament de forma nu este valid sau finalizat..",
+  "error": "Bad Request"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (422):
+{
+  "statusCode": 422,
+  "message": "Ai deja un abonament activ.",
+  "error": "Unprocessable Entity"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- AddressesRepository.createOrUpdateAddress()
+- SubscriptionTypesRepository.getTypeById()
+- SubscriptionsRepository.getLastActiveSubByTypeAndForm()
+- SubscriptionsRepository.createOrRetrievePendingSub()
+- StripeService.createPaymentIntent()
+
+Validation:
+- firstName: Required, string
+- lastName: Required, string
+- city: Required, string
+- county: Required, string
+- country: Required, string
+- zipCode: Required, string
+- address: Required, string
+- companyName: Optional, string (pentru persoane juridice)
+- cif: Optional, string (CUI pentru persoane juridice)
+- regNumber: Optional, string (Nr. reg. com. pentru persoane juridice)
+
+Notes:
+- **Step 2** al workflow-ului de achiziție abonament
+- Adresa de facturare este creată/actualizată ÎNAINTE de PaymentIntent
+- NU permite duplicate pentru COURSE_BASED subscriptions (422 error)
+- PERMITE duplicate pentru STANDARD subscriptions (renewal/extension)
+- Stripe PaymentIntent.metadata include IDs pentru webhook processing
+- După această operație, frontend folosește client_secret pentru Stripe Checkout
+
+
+================================================================================
+TASK 9: PATCH /v1/subscription/:subscriptionId - Actualizare abonament
+================================================================================
+
+Business Logic:
+1. Primește subscriptionId din URL params și dto în body
+2. Extrage user ID din JWT (authUser.id)
+3. Actualizează abonamentul în baza de date
+4. ⚠️ Nu verifică ownership explicit (ar trebui!)
+5. Returnează abonamentul actualizat
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:122-135
+- Service: src/v1/Subscription/Service/subscription.service.ts
+
+Request:
+PATCH /v1/subscription/123
+Authorization: Bearer {jwt_token}
+
+Path Parameters:
+- subscriptionId (required): ID-ul abonamentului
+
+Body:
+{
+  "status": 2,
+  "endDate": "2025-12-31T23:59:59.000Z"
+}
+
+Response Success (200):
+{
+  "id": 123,
+  "clientId": 456,
+  "subTypeId": 1,
+  "form": 1,
+  "status": 2,
+  "endDate": "2025-12-31T23:59:59.000Z",
+  "updatedAt": "2024-11-02T10:30:00.000Z"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Response Error (404):
+{
+  "statusCode": 404,
+  "message": "Subscription not found"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.CLIENT) - Doar CLIENT
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- SubscriptionsRepository.updateSubscription()
+
+Notes:
+- @Roles(UserRoles.CLIENT) limită la role CLIENT, NU ADMIN
+- ⚠️ Ar trebui să verifice că subscription.clientId === authUser.id
+- Permite update manual al status și endDate (risc de abuse)
+
+
+================================================================================
+TASK 10: GET /v1/subscription/all - Listă abonamente (ADMIN)
+================================================================================
+
+Business Logic:
+1. Primește parametri de filtrare și paginare prin query (GetSubscriptionDTO)
+2. Filtrează după: clientId, status, form, subTypeId, date ranges
+3. Returnează listă paginată de abonamente
+4. Doar ADMIN poate accesa (orice abonamente, orice utilizatori)
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:137-145
+- Service: src/v1/Subscription/Service/subscription.service.ts:232-236
+
+Request:
+GET /v1/subscription/all?status=2&form=1&page=1&limit=20
+Authorization: Bearer {jwt_token}
+
+Query Parameters:
+- clientId (optional): Filtrare după user ID
+- status (optional): Filtrare după status (0-5)
+- form (optional): Filtrare după form (0-2)
+- subTypeId (optional): Filtrare după subscription type
+- fromStartDate (optional): Data minimă startDate
+- toStartDate (optional): Data maximă startDate
+- fromEndDate (optional): Data minimă endDate
+- toEndDate (optional): Data maximă endDate
+- page (optional): Număr pagină
+- limit (optional): Număr elemente per pagină
+
+Response Success (200):
+{
+  "subscriptions": [
+    {
+      "id": 123,
+      "clientId": 456,
+      "subTypeId": 1,
+      "form": 1,
+      "status": 2,
+      "startDate": "2024-01-01T00:00:00.000Z",
+      "endDate": "2025-01-01T00:00:00.000Z"
+    }
+  ],
+  "count": 150
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.ADMIN) - Doar administratori
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- SubscriptionsRepository.getSubscriptionList()
+
+Notes:
+- Endpoint pentru management dashboard ADMIN
+- Permite filtrare complexă după multiple criterii
+- Useful pentru rapoarte și statistici
+
+
+================================================================================
+TASK 11: DELETE /v1/subscription/:subscriptionId - Ștergere abonament (ADMIN)
+================================================================================
+
+Business Logic:
+1. Primește subscriptionId din URL params
+2. Șterge abonamentul din baza de date (probabil HARD DELETE)
+3. ⚠️ Nu face cleanup în Stripe sau MailerLite
+4. Returnează status ok
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:147-154
+- Service: src/v1/Subscription/Service/subscription.service.ts
+
+Request:
+DELETE /v1/subscription/123
+Authorization: Bearer {jwt_token}
+
+Path Parameters:
+- subscriptionId (required): ID-ul abonamentului
+
+Response Success (200):
+{
+  "status": "ok",
+  "message": "Subscription has been deleted"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Response Error (404):
+{
+  "statusCode": 404,
+  "message": "Subscription not found"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.ADMIN) - Doar administratori
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- SubscriptionsRepository.deleteSubscription()
+
+Notes:
+- ⚠️ Probabil HARD DELETE - risc de pierdere date și inconsistențe
+- ⚠️ Nu cancelează Stripe subscription (dacă există)
+- ⚠️ Nu face cleanup în MailerLite
+- Consideră soft delete (IsDeleted flag) pentru .NET
+
+
+================================================================================
+SUBSCRIPTION TYPES ENDPOINTS (6 endpoints)
+================================================================================
+
+TASK 12: GET /v1/subscription/types - Subscription types active (PUBLIC)
+================================================================================
+
+Business Logic:
+1. Interogează subscription types cu isActive = true
+2. Returnează lista de tipuri de abonamente disponibile pentru achiziție
+3. Endpoint PUBLIC (fără AuthGuard) - oricine poate vedea ofertele
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:158-161
+- Service: src/v1/Subscription/Service/subscription.service.ts
+
+Request:
+GET /v1/subscription/types
+
+Response Success (200):
+{
+  "subscriptionTypes": [
+    {
+      "id": 1,
+      "productName": "Premium Monthly",
+      "form": 1,
+      "price": 49.99,
+      "duration": 1,
+      "isRecurrent": true,
+      "isActive": true,
+      "stripePriceId": "price_xxx",
+      "mailerLiteGroup": "Premium Subscribers"
+    }
+  ],
+  "count": 5
+}
+
+Authorization:
+- ⚠️ PUBLIC - fără AuthGuard
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- SubscriptionTypesRepository.getActiveSubscriptionTypes()
+
+Notes:
+- Endpoint PUBLIC pentru landing page și checkout
+- Doar subscription types active (isActive = true)
+- Useful pentru display pricing plans
+
+
+================================================================================
+TASK 13: GET /v1/subscription/types/all - Toate subscription types (PUBLIC)
+================================================================================
+
+Business Logic:
+1. Interogează TOATE subscription types (active + inactive)
+2. Returnează lista completă
+3. Endpoint PUBLIC (fără AuthGuard)
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:163-166
+- Service: src/v1/Subscription/Service/subscription.service.ts
+
+Request:
+GET /v1/subscription/types/all
+
+Response Success (200):
+{
+  "subscriptionTypes": [
+    {
+      "id": 1,
+      "productName": "Premium Monthly",
+      "isActive": true
+    },
+    {
+      "id": 2,
+      "productName": "Old Plan",
+      "isActive": false
+    }
+  ],
+  "count": 10
+}
+
+Authorization:
+- ⚠️ PUBLIC - fără AuthGuard
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- SubscriptionTypesRepository.getAllSubscriptionTypes()
+
+Notes:
+- Include subscription types inactive (historical plans)
+- Ar trebui să fie ADMIN only pentru a nu expune planuri vechi
+
+
+================================================================================
+TASK 14: GET /v1/subscription/type/:typeId - Detaliu subscription type (PUBLIC)
+================================================================================
+
+Business Logic:
+1. Primește typeId din URL params
+2. Interogează detaliile subscription type
+3. Returnează subscription type complet
+4. Endpoint PUBLIC
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:168-173
+- Service: src/v1/Subscription/Service/subscription.service.ts
+
+Request:
+GET /v1/subscription/type/1
+
+Path Parameters:
+- typeId (required): ID-ul subscription type
+
+Response Success (200):
+{
+  "id": 1,
+  "productName": "Premium Monthly",
+  "form": 1,
+  "price": 49.99,
+  "currency": "RON",
+  "duration": 1,
+  "isRecurrent": true,
+  "isActive": true,
+  "stripePriceId": "price_xxx",
+  "stripeProductId": "prod_xxx",
+  "mailerLiteGroup": "Premium Subscribers",
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-01-01T00:00:00.000Z"
+}
+
+Response Error (404):
+{
+  "statusCode": 404,
+  "message": "Subscription type not found"
+}
+
+Authorization:
+- ⚠️ PUBLIC - fără AuthGuard
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- SubscriptionTypesRepository.getSubscriptionTypeById()
+
+Notes:
+- Endpoint PUBLIC pentru detalii pricing plan
+- Include Stripe IDs (stripePriceId, stripeProductId)
+- Include MailerLite group name pentru segmentare email
+
+
+================================================================================
+TASK 15: POST /v1/subscription/type - Creare subscription type (ADMIN)
+================================================================================
+
+Business Logic:
+1. Primește datele subscription type în body
+2. Creează înregistrarea în baza de date
+3. ⚠️ Nu creează automat Stripe Product/Price (manual setup necesar)
+4. Returnează subscription type creat
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:175-182
+- Service: src/v1/Subscription/Service/subscription.service.ts
+
+Request:
+POST /v1/subscription/type
+Authorization: Bearer {jwt_token}
+
+Body:
+{
+  "productName": "Enterprise Annual",
+  "form": 1,
+  "price": 499.99,
+  "currency": "RON",
+  "duration": 12,
+  "isRecurrent": false,
+  "isActive": true,
+  "stripePriceId": "price_xxx",
+  "stripeProductId": "prod_xxx",
+  "mailerLiteGroup": "Enterprise Subscribers"
+}
+
+Response Success (201):
+{
+  "id": 10,
+  "productName": "Enterprise Annual",
+  "form": 1,
+  "price": 499.99,
+  "currency": "RON",
+  "duration": 12,
+  "isRecurrent": false,
+  "isActive": true,
+  "stripePriceId": "price_xxx",
+  "stripeProductId": "prod_xxx",
+  "mailerLiteGroup": "Enterprise Subscribers",
+  "createdAt": "2024-11-02T10:00:00.000Z",
+  "updatedAt": "2024-11-02T10:00:00.000Z"
+}
+
+Response Error (400):
+{
+  "statusCode": 400,
+  "message": ["productName should not be empty", "price must be a number"],
+  "error": "Bad Request"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.ADMIN) - Doar administratori
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- SubscriptionTypesRepository.createSubscriptionType()
+
+Validation:
+- productName: Required, string
+- form: Required, number (0-2)
+- price: Required, number
+- currency: Optional, string (default: "RON")
+- duration: Required, number (months)
+- isRecurrent: Required, boolean (true = renewable monthly)
+- isActive: Required, boolean (display in pricing page)
+- stripePriceId: Optional, string (Stripe Price ID)
+- stripeProductId: Optional, string (Stripe Product ID)
+- mailerLiteGroup: Optional, string (MailerLite group name)
+
+Notes:
+- ⚠️ Stripe Product/Price trebuie creat manual în Stripe Dashboard
+- stripePriceId și stripeProductId trebuie copiate din Stripe
+- form: FREE (0), STANDARD (1), COURSE_BASED (2)
+- duration în luni (1, 3, 6, 12, etc.)
+
+
+================================================================================
+TASK 16: PATCH /v1/subscription/type/:typeId - Update subscription type (ADMIN)
+================================================================================
+
+Business Logic:
+1. Primește typeId din URL params și dto în body
+2. Actualizează subscription type în baza de date
+3. ⚠️ Nu sincronizează cu Stripe (price changes trebuie făcute manual în Stripe)
+4. Returnează subscription type actualizat
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:184-192
+- Service: src/v1/Subscription/Service/subscription.service.ts
+
+Request:
+PATCH /v1/subscription/type/1
+Authorization: Bearer {jwt_token}
+
+Path Parameters:
+- typeId (required): ID-ul subscription type
+
+Body:
+{
+  "price": 59.99,
+  "isActive": true
+}
+
+Response Success (200):
+{
+  "id": 1,
+  "productName": "Premium Monthly",
+  "price": 59.99,
+  "isActive": true,
+  "updatedAt": "2024-11-02T10:30:00.000Z"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Response Error (404):
+{
+  "statusCode": 404,
+  "message": "Subscription type not found"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.ADMIN) - Doar administratori
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- SubscriptionTypesRepository.updateSubscriptionType()
+
+Notes:
+- ⚠️ Schimbarea price nu sincronizează cu Stripe
+- Pentru price changes: trebuie creat nou Stripe Price și actualizat stripePriceId
+- Useful pentru activare/dezactivare planuri (isActive toggle)
+
+
+================================================================================
+TASK 17: DELETE /v1/subscription/type/:typeId - Ștergere subscription type (ADMIN)
+================================================================================
+
+Business Logic:
+1. Primește typeId din URL params
+2. Șterge subscription type din baza de date (probabil HARD DELETE)
+3. ⚠️ Nu verifică dacă există subscriptions active cu acest tip!
+4. ⚠️ Nu șterge Stripe Product/Price
+5. Returnează status ok
+
+Cod sursă:
+- Controller: src/v1/Subscription/Controller/subscription.controller.ts:194-199
+- Service: src/v1/Subscription/Service/subscription.service.ts
+
+Request:
+DELETE /v1/subscription/type/1
+Authorization: Bearer {jwt_token}
+
+Path Parameters:
+- typeId (required): ID-ul subscription type
+
+Response Success (200):
+{
+  "status": "ok",
+  "message": "Subscription type has been deleted"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Response Error (404):
+{
+  "statusCode": 404,
+  "message": "Subscription type not found"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.ADMIN) - Doar administratori
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- SubscriptionTypesRepository.deleteSubscriptionType()
+
+Notes:
+- ⚠️ CRITICAL: Nu verifică dacă există subscriptions active cu acest tip
+- ⚠️ HARD DELETE - risc de foreign key constraints sau orphaned subscriptions
+- Ar trebui să prevină ștergerea dacă există subscriptions
+- Consideră soft delete (isActive = false) în loc de hard delete
+
+
+================================================================================
+ADDITIONAL NOTES - SERVICE METHODS NOT EXPOSED
+================================================================================
+
+Metodă: extendSubscription(subscriptionId: number)
+Locație: src/v1/Subscription/Service/subscription.service.ts:162-174
+
+Business Logic:
+- Extinde endDate al unui abonament cu duration-ul subscription type-ului
+- Adaugă subscriptionType.duration luni la endDate curent
+- Folosește dayjs pentru date manipulation
+
+Utilizare:
+- Apelat intern pentru renewal subscriptions
+- Ar putea fi expus ca endpoint: POST /v1/subscription/:subscriptionId/extend (ADMIN)
+
+
+Metodă: cancelSubscription(subscriptionId: number)
+Locație: src/v1/Subscription/Service/subscription.service.ts:176-183
+
+Business Logic:
+- Marchează abonamentul ca anulat (set cancelledAt = now)
+- NU șterge abonamentul
+- NU cancelează în Stripe
+
+Utilizare:
+- Ar trebui expus ca endpoint: POST /v1/subscription/:subscriptionId/cancel
+- Ar trebui să integreze cu Stripe pentru cancel subscription
+
+
+Metodă: bulkEnrollInSummit()
+Locație: src/v1/Subscription/Service/subscription.service.ts:135-160
+
+Business Logic:
+- Cron job (commented out) pentru bulk enrollment în Summit
+- Subscriptionărie ID hardcodat: 28
+- Obține users fără subscriptions
+- Creează subscriptions FREE pentru toți
+- Delay 800ms între fiecare user
+
+Notes:
+- @Cron decorator este commented out
+- Hardcoded subscriptionTypeId = 28 (Summit subscription)
+
+
+Metodă: getActiveLibraRecurrentSubscriptions(userId: number)
+Locație: src/v1/Subscription/Service/subscription.service.ts:199-209
+
+Business Logic:
+- Obține subscriptions active Librapay recurrent pentru un user
+- Filtrare specifică Librapay gateway
+
+Utilizare:
+- Folosit intern pentru procesarea plăților Librapay recurrent
+
+
+Metodă: getLastActiveSubscriptionByType(userId, subscriptionTypeId)
+Locație: src/v1/Subscription/Service/subscription.service.ts:238-250
+
+Business Logic:
+- Obține ultimul abonament activ de un anumit tip pentru un user
+- Filtrează după form și subscriptionTypeId
+
+Utilizare:
+- Folosit intern în acceptSubscription pentru verificare duplicate
+
+
+================================================================================
+SUBSCRIPTION WORKFLOW - Complete Flow
+================================================================================
+
+**Step 1**: User selectează un subscription type în UI
+**Step 2**: Frontend calls POST /v1/subscription/create-subscription
+   - Backend: creează/retrieve PENDING subscription
+   - Pentru FREE: activate instant + email + MailerLite sync
+   - Pentru PAID: returnează PENDING subscription
+**Step 3**: Frontend calls POST /v1/subscription/accept/:selectedType
+   - Backend: save billing address + create Stripe PaymentIntent
+   - Backend: returnează client_secret pentru Stripe Checkout
+**Step 4**: Frontend opens Stripe Checkout cu client_secret
+   - User completează plata în Stripe
+**Step 5**: Stripe webhook notifică backend despre payment success
+   - Webhook handler (în Payments Module) actualizează subscription status
+   - Backend: set status = PAYMENT_ACCEPTED, startDate, endDate
+   - Backend: activate user subscription status
+   - Backend: send confirmation email
+   - Backend: subscribe la MailerLite group
+**Step 6**: User are acces la cursuri conform subscription type
+
+
+================================================================================
+SUBSCRIPTION FORMS & STATUSES - Enumerări
+================================================================================
+
+SubscriptionForms enum:
+- FREE = 0 (abonamente gratuite, instant activate)
+- STANDARD = 1 (acces complet la toate cursurile)
+- COURSE_BASED = 2 (acces la cursuri specifice)
+
+SubscriptionStatuses enum:
+- PENDING = 0 (creat, așteaptă acceptSubscription)
+- PAYMENT_PENDING = 1 (PaymentIntent creat, așteaptă plată)
+- PAYMENT_ACCEPTED = 2 (plată reușită, subscription activ)
+- PAYMENT_FAILED = 3 (plată eșuată)
+- CANCELLED = 4 (subscription anulat)
+- EXPIRED = 5 (subscription expirat, endDate < now)
+
+
+================================================================================
+SUMMARY - Subscription Module
+================================================================================
+
+Total Endpoints: 17 (nu 8 cum era în inventar!)
+- 11 endpoints pentru Subscriptions
+- 6 endpoints pentru Subscription Types
+
+Public Endpoints (fără AuthGuard):
+- GET /v1/subscription/types ⚠️
+- GET /v1/subscription/types/all ⚠️
+- GET /v1/subscription/type/:typeId ⚠️
+
+Authenticated Endpoints (orice rol):
+- GET /v1/subscription/:subscriptionId ⚠️ (nu verifică ownership)
+- GET /v1/subscription/user/active
+- GET /v1/subscription/user
+- GET /v1/subscription/active/standard
+- GET /v1/subscription/billing-address
+- POST /v1/subscription/create-subscription
+- POST /v1/subscription/check-expiration
+- POST /v1/subscription/accept/:selectedType
+
+CLIENT Only:
+- PATCH /v1/subscription/:subscriptionId
+
+ADMIN Only:
+- GET /v1/subscription/all
+- DELETE /v1/subscription/:subscriptionId
+- POST /v1/subscription/type
+- PATCH /v1/subscription/type/:typeId
+- DELETE /v1/subscription/type/:typeId
+
+Concept - Subscription Workflow:
+1. createInternalSubscription (Step 1) - creare PENDING
+2. acceptSubscription (Step 2) - billing address + Stripe PaymentIntent
+3. Stripe Checkout (frontend) - user completează plata
+4. Stripe Webhook (Payments Module) - activate subscription
+5. User has access to courses
+
+Integrations:
+- **Stripe**: PaymentIntent creation, recurring payments
+- **SmartBill**: Invoice generation (necesar billing address)
+- **MailerLite**: Email marketing, group sync
+- **Postmark**: Transactional emails (confirmation, success)
+
+Security Issues:
+1. ⚠️ GET /v1/subscription/:subscriptionId nu verifică ownership
+2. ⚠️ 3 endpoints PUBLIC pentru subscription types (ar trebui protected?)
+3. ⚠️ PATCH /v1/subscription/:subscriptionId nu verifică ownership explicit
+
+Critical Bugs:
+1. DELETE subscription nu cancelează în Stripe (risc de continued billing)
+2. DELETE subscription type nu verifică dacă există active subscriptions
+3. extendSubscription și cancelSubscription NU sunt expuse ca endpoints
+4. UPDATE subscription type nu sincronizează cu Stripe (price changes)
+
+Missing Features:
+1. Nu există endpoint pentru cancel subscription cu Stripe sync
+2. Nu există endpoint pentru extend subscription manual
+3. Nu există endpoint pentru subscription renewal history
+4. Nu există endpoint pentru invoice generation trigger
+5. Nu există webhook endpoint expus în acest controller (e în Payments Module)
+
+Missing Validations:
+1. acceptSubscription nu verifică dacă billing address e completă pentru SmartBill
+2. DELETE subscription type nu previne ștergerea dacă există subscriptions
+3. createInternalSubscription nu verifică dacă user are too many PENDING subscriptions
+
+Recomandări pentru .NET:
+1. ⚠️ URGENT: Adaugă ownership check pentru GET /v1/subscription/:subscriptionId
+2. ⚠️ URGENT: Delete subscription trebuie să canceleze Stripe subscription
+3. Implementează soft delete pentru subscriptions și subscription types
+4. Expune extendSubscription ca POST /v1/subscription/:subscriptionId/extend (ADMIN)
+5. Expune cancelSubscription ca POST /v1/subscription/:subscriptionId/cancel (cu Stripe sync)
+6. Protejează subscription types endpoints (cel puțin /all ar trebui ADMIN only)
+7. Adaugă validare billing address completă înainte de Stripe PaymentIntent
+8. Implementează subscription renewal history tracking
+9. Adaugă endpoint pentru invoice generation trigger
+10. Previne DELETE subscription type dacă există active subscriptions
+11. Implementează rate limiting pentru acceptSubscription (evită duplicate PaymentIntents)
+12. Adaugă indexing pe (clientId, status, endDate) pentru performanță
+13. Consideră background job pentru auto-expire subscriptions (status = EXPIRED când endDate < now)
+14. Sincronizează subscription type updates cu Stripe (price changes)

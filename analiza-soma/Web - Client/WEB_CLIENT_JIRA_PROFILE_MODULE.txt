@@ -1,0 +1,3292 @@
+================================================================================
+WEB CLIENT - JIRA STORY: PROFILE MODULE (PROFIL-EDITARE)
+================================================================================
+
+PROJECT: Somaway Web Client Migration (Next.js → Nuxt 3)
+EPIC: User Profile Management
+STORY TYPE: Module Migration
+COMPLEXITY: Medium
+ESTIMATED EFFORT: 8-10 story points
+
+================================================================================
+STORY DESCRIPTION
+================================================================================
+
+Modulul de profil (Profil-editare) permite utilizatorilor autentificați să:
+1. Vizualizeze și actualizeze informațiile personale (nume, prenume, sex, dată naștere, telefon)
+2. Gestioneze preferințele de comunicare (email marketing, WhatsApp)
+3. Vizualizeze și anuleze abonamentele active recurente (Stripe/Librapay)
+4. Acceseze și descarce facturile emise (PDF download)
+
+Modulul include:
+- Pagina principală de profil cu UserBoard reutilizat din Dashboard
+- Formular de editare date personale cu validări
+- View pentru gestionarea abonamentelor recurente cu sistem de anulare
+- Tabel de facturi cu funcționalitate de descărcare PDF
+
+Particularități:
+- Email este disabled (nu poate fi modificat)
+- Telefon folosește componenta react-phone-input-2 (migrare către vue-tel-input)
+- Anulare abonament Stripe/Librapay cu modal de confirmare
+- Subscription types preluate din API pentru mapping produs-abonament
+- Notificări WhatsApp și email cu checkbox inversat (checked = nu vreau)
+
+================================================================================
+TECHNICAL STACK TRANSITION
+================================================================================
+
+CURRENT (NEXT.JS + REACT):
+- Framework: Next.js 15.2.4 (Pages Router)
+- UI Library: Ant Design 5.24.2
+- State: Redux Toolkit (user, subscriptions)
+- Phone Input: react-phone-input-2
+- Routing: Next.js Router (useRouter)
+- Forms: Ant Design Form
+- Date: dayjs
+
+TARGET (NUXT 3 + VUE):
+- Framework: Nuxt 3.15+ (Pages Router)
+- UI Library: Ant Design Vue 4.x
+- State: Pinia (userStore, subscriptionsStore)
+- Phone Input: vue-tel-input
+- Routing: Vue Router (useRouter from Nuxt)
+- Forms: Ant Design Vue Form
+- Date: dayjs (same)
+
+================================================================================
+MODULE FILE STRUCTURE
+================================================================================
+
+CURRENT:
+web/src/pages/profil-editare/
+├── index.tsx                           (Main page - 373 lines)
+├── InvoicesTable.tsx                   (Invoices table - 135 lines)
+└── web/src/components/pages/profil-editare/
+    └── EditSubscriptions.tsx           (Subscriptions management - 302 lines)
+
+TARGET (NUXT 3):
+web/pages/profil-editare/
+├── index.vue                           (Main page)
+├── components/
+    ├── InvoicesTable.vue               (Invoices table)
+    └── EditSubscriptions.vue           (Subscriptions management)
+
+================================================================================
+API ENDPOINTS
+================================================================================
+
+1. GET /v1/users/:id
+   - Fetch user details by ID
+   - Used on mount to sync latest user data
+
+2. PUT /v1/users/update
+   - Update user profile fields
+   - Body: { fullName, phone, email, gender, birthdate, marketingAgreement, whatsappAgreement }
+
+3. GET /v1/invoices
+   - Retrieve user invoices list
+   - Returns: { invoices: [...] }
+
+4. GET /v1/invoices/:id/download
+   - Download invoice PDF by ID
+   - Response: Blob (application/pdf)
+
+5. GET /v1/stripe/subscriptions
+   - Retrieve Stripe subscriptions for logged user
+   - Returns array of StripeSubscription objects
+
+6. POST /v1/stripe/subscriptions/:id/cancel
+   - Cancel Stripe subscription
+   - Returns updated subscription with cancel_at_period_end: true
+
+7. POST /v1/subscriptions/:id/cancel
+   - Cancel Librapay subscription
+   - Returns success status
+
+8. GET /v1/subscription-types
+   - Fetch all subscription types (for product name mapping)
+   - Returns: { subscriptionTypes: [...] }
+
+================================================================================
+STATE MANAGEMENT
+================================================================================
+
+CURRENT (REDUX):
+- state.user (authUser with fullName, email, phone, gender, birthdate, etc.)
+- state.subscriptions.subscriptions (user subscriptions list)
+- dispatch({ type: 'UPDATE_USER', payload })
+
+TARGET (PINIA):
+- userStore.user (authUser)
+- subscriptionsStore.subscriptions
+- userStore.updateUser(payload)
+
+================================================================================
+DEPENDENCIES
+================================================================================
+
+CURRENT:
+- UserBoard from dashboard (reused)
+- PageHelmet (meta tags)
+- AppLayout (with UserRoles.CUSTOMER)
+- CustomButton
+- react-phone-input-2
+- dayjs
+- sanitize utility
+
+TARGET:
+- UserBoard from dashboard (reused)
+- PageHelmet composable
+- AppLayout (with UserRoles.CUSTOMER)
+- CustomButton
+- vue-tel-input
+- dayjs (same)
+- sanitize utility
+
+================================================================================
+KEY FEATURES & BUSINESS RULES
+================================================================================
+
+1. PROFILE EDIT VIEW:
+   - Fetch user by ID on mount (fetchUserById)
+   - Form pre-filled with user data (fullName split to firstName/lastName)
+   - Email is disabled (cannot be changed)
+   - Phone input with country code (default: RO)
+   - Gender select: 1=Masculin, 2=Feminin
+   - Birthdate picker (format: DD/MM/YYYY)
+   - Marketing/WhatsApp checkboxes INVERTED (checked = do NOT send)
+   - Submit updates user via PUT /v1/users/update
+   - Success dispatches UPDATE_USER to Redux/Pinia
+
+2. SUBSCRIPTIONS MANAGEMENT VIEW:
+   - Toggle between profile/subscriptions/invoices views
+   - Fetch Stripe subscriptions on mount
+   - Fetch subscription types for product name mapping
+   - Display active recurring subscriptions (paymentSubscriptions)
+   - Each subscription shows:
+     * Plan name (sub.plan.nickname or subscriptionType.productName)
+     * Status: "Abonament activ"
+     * Next payment date (current_period_end) or cancellation date
+     * Price (amount/100 + currency)
+     * Cancel button (if not already cancelled)
+   - FUTURE SUBSCRIPTION LOGIC:
+     * If futureLocalSub exists and startDate >= current endDate
+     * Show "va fi anulat automat atunci când va începe noul abonament"
+     * Hide cancel button (interruptedByFutureSub = true)
+   - Cancel subscription:
+     * Modal confirmation with warning
+     * Stripe: POST /v1/stripe/subscriptions/:id/cancel → cancel_at_period_end: true
+     * Librapay: POST /v1/subscriptions/:id/cancel → immediate redirect to dashboard
+     * Update local paymentSubscriptions array
+
+3. INVOICES TABLE VIEW:
+   - Fetch invoices on mount (retrieveUserInvoices)
+   - Table columns: Factura (seriesName + externalId), Data emiterii, Produs, Valoare, Acțiuni
+   - Subscription ID mapped to product name via subscriptionTypes
+   - Value displayed as Tag (green) with RON currency
+   - Download action:
+     * Fetch PDF blob via downloadPdfInvoice(invoiceId)
+     * Create blob URL and trigger download (invoice-{id}.pdf)
+     * Revoke URL after download
+   - Pagination: 10 per page
+
+4. NAVIGATION:
+   - UserBoard has toggleProduct and toggleInvoices callbacks
+   - Clicking "Abonamente" shows EditSubscriptions
+   - Clicking "Facturi" shows InvoicesTable
+   - Back buttons return to main profile edit form
+
+5. AUTHORIZATION:
+   - AppLayout authority: UserRoles.CUSTOMER
+   - If !authUser?.id → redirect to 404 page
+
+================================================================================
+MIGRATION NOTES
+================================================================================
+
+1. PHONE INPUT MIGRATION:
+   - Current: react-phone-input-2 with country="ro"
+   - Target: vue-tel-input with defaultCountry="RO"
+   - Props mapping: value/onChange → v-model
+   - Prefix icon remains MailFilled/PhoneFilled
+
+2. REDUX → PINIA:
+   - useSelector → computed(() => userStore.user)
+   - dispatch({ type: 'UPDATE_USER' }) → userStore.updateUser()
+
+3. FORM HANDLING:
+   - Ant Design Form API is similar in Vue
+   - form.setFieldsValue → form.setFieldsValue (same)
+   - onFinish callback → @finish="onSubmit"
+
+4. ROUTER:
+   - useRouter from next/router → useRouter from '#app'
+   - router.push(PATHS.DASHBOARD) → navigateTo(PATHS.DASHBOARD)
+
+5. BLOB DOWNLOAD:
+   - Same logic: URL.createObjectURL, a.download, a.click(), URL.revokeObjectURL
+
+6. CHECKBOX INVERSION:
+   - marketingAgreement: !values.marketingAgreement (send inverted to API)
+   - whatsappAgreement: !values.whatsappAgreement
+   - Initial values also inverted: !user.marketingAgreement
+
+7. MODAL CONFIRMATION:
+   - Ant Design Modal with okButtonProps.danger: true
+   - Loading state on confirm button while cancelling
+
+================================================================================
+TESTING STRATEGY
+================================================================================
+
+1. Unit Tests:
+   - Profile form validation (required fields)
+   - Phone input country code handling
+   - Checkbox inversion logic (marketing/whatsapp)
+   - Invoice download blob creation
+   - Subscription status display logic
+   - Future subscription interruption logic
+
+2. Integration Tests:
+   - Fetch user by ID and populate form
+   - Update user profile via PUT
+   - Fetch invoices and subscriptions
+   - Cancel Stripe/Librapay subscriptions
+   - Download invoice PDF
+
+3. E2E Tests:
+   - Navigate to profile page
+   - Edit profile fields and submit
+   - Toggle to subscriptions view and cancel
+   - Toggle to invoices view and download PDF
+   - Navigate back to profile
+
+4. Edge Cases:
+   - User with no subscriptions (empty state)
+   - User with no invoices (empty table)
+   - Subscription already cancelled (cancel_at_period_end: true)
+   - Future subscription exists (interruptedByFutureSub)
+   - Invalid invoice ID (error handling)
+
+================================================================================
+TASKS BREAKDOWN
+================================================================================
+
+Task 1: Profile Edit Page (Main View)
+Task 2: Profile Edit Form Component
+Task 3: EditSubscriptions Component (Subscription Management)
+Task 4: InvoicesTable Component (Invoices Display & Download)
+
+Total Tasks: 4
+
+================================================================================
+RECOMMENDATIONS
+================================================================================
+
+1. Reuse UserBoard from Dashboard module (already migrated)
+2. Create shared composable for invoice PDF download (useInvoiceDownload)
+3. Extract subscription cancellation logic to composable (useSubscriptionCancellation)
+4. Add loading states for all async operations
+5. Implement optimistic UI updates for profile edit (update store before API response)
+6. Add error boundaries for API failures
+7. Consider adding Sentry error tracking for subscription cancellation failures
+8. Add confirmation toast after profile update success
+9. Implement field-level validation (email format, phone format)
+10. Add "unsaved changes" warning when navigating away from dirty form
+
+================================================================================
+TASK 2: INVOICESTABLE COMPONENT
+================================================================================
+
+TASK TYPE: Component Migration
+PRIORITY: High
+ESTIMATED EFFORT: 2 story points
+
+================================================================================
+BUSINESS LOGIC
+================================================================================
+
+Componenta InvoicesTable este un tabel care afișează facturile utilizatorului autentificat:
+
+1. LA ÎNCĂRCARE:
+   - Fetch invoices via GET /v1/invoices
+   - Setează invoices state cu array din răspuns (response.data.invoices)
+   - Afișează tabel cu 5 coloane (Factura, Data emiterii, Produs, Valoare, Acțiuni)
+
+2. MAPARE SUBSCRIPTION ID → PRODUCT NAME:
+   - subscriptionTypes primit ca prop din parent (Profile page)
+   - Fiecare invoice are subscriptionId
+   - Fiecare subscription type are id și productName
+   - Funcția getSubscriptionTitle(subscriptionId):
+     * Caută subscription în userSubscriptions (Redux/Pinia) cu id === subscriptionId
+     * Caută în subscriptionTypes.find(type => type.id === sub.subTypeId)
+     * Returnează type.productName sau "N/A" dacă nu găsit
+
+3. COLOANE TABEL:
+   - **Factura**: seriesName + externalId (e.g., "BC 123")
+   - **Data emiterii**: issueDate formatat ca DD/MM/YYYY (dayjs format)
+   - **Produs Achiziționat**: invoice.subscriptionId → getSubscriptionTitle()
+   - **Valoare**: paymentValue / 100 + " RON" (converti din cents), displayed in green Tag
+   - **Acțiuni**: CustomButton cu icon DownloadOutlined → fetchDownloadInvoice(invoiceId)
+
+4. DOWNLOAD PDF:
+   - Click pe "Descarcă factura" button
+   - Apelează downloadPdfInvoice(invoiceId)
+   - Răspunsul este Blob (application/pdf)
+   - Crează blob URL cu URL.createObjectURL()
+   - Crează <a> element, setează href, download attribute
+   - Declanșează click() pentru download
+   - Revocă blob URL cu URL.revokeObjectURL()
+   - Success: silent (no message)
+   - Error: message.error("Eroare la descărcarea facturii")
+
+5. PAGINATION:
+   - Table pagination: pageSize=10 (10 facturi per pagină)
+   - Ant Design Table handles pagination automatically
+
+6. EMPTY STATES:
+   - paymentSubscriptions.length === 0 → table shows "No data"
+   - Handled by Ant Design Table component
+
+================================================================================
+CURRENT IMPLEMENTATION (NEXT.JS + REACT)
+================================================================================
+
+FILE: web/src/pages/profil-editare/InvoicesTable.tsx (135 lines)
+
+```tsx
+import React, { useEffect, useState } from "react";
+import { Table, Tag, message } from "antd/lib";
+import { DownloadOutlined } from "@ant-design/icons";
+import dayjs from "dayjs";
+import { downloadPdfInvoice, retrieveUserInvoices } from "@/services/api/api";
+import CustomButton from "@/components/global/Button/button";
+import { useSelector } from "react-redux";
+import { SubscriptionTypeEntity } from "@/@types/pages/subscriptions";
+
+interface InvoicesTableProps {
+  subscriptionTypes: SubscriptionTypeEntity[];
+}
+
+const InvoicesTable: React.FC<InvoicesTableProps> = ({ subscriptionTypes }) => {
+  const [invoices, setInvoices] = useState([]);
+
+  const userSubscriptions = useSelector(
+    (state: any) => state.subscriptions?.subscriptions || []
+  );
+
+  useEffect(() => {
+    const fetchInvoices = async () => {
+      try {
+        const response = await retrieveUserInvoices();
+        if (response?.data && response.data?.invoices) {
+          setInvoices(response.data.invoices);
+        }
+      } catch (error) {
+        message.error("Eroare la preluarea facturilor.");
+      }
+    };
+    fetchInvoices();
+  }, []);
+
+  const fetchDownloadInvoice = async (invoiceId: string) => {
+    try {
+      const response = await downloadPdfInvoice(invoiceId);
+      const blob = new Blob([response.data], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `invoice-${invoiceId}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      message.error("Eroare la descărcarea facturii");
+    }
+  };
+
+  const getSubscriptionTitle = (subscriptionId: number): string => {
+    const subscription = userSubscriptions.find(
+      (sub: any) => sub.id === subscriptionId
+    );
+
+    return (
+      subscriptionTypes.find((type: any) => type.id === subscription?.subTypeId)
+        ?.productName || "N/A"
+    );
+  };
+
+  const columns = [
+    {
+      title: "Factura",
+      dataIndex: "invoiceDetails",
+      key: "invoiceDetails",
+      render: (_: any, record: { externalId: string; seriesName: string }) => (
+        <strong>{`${record.seriesName} ${record.externalId}`}</strong>
+      ),
+    },
+    {
+      title: "Data emiterii",
+      dataIndex: "issueDate",
+      key: "issueDate",
+      render: (issueDate: string) => dayjs(issueDate).format("DD/MM/YYYY"),
+    },
+    {
+      title: "Produs Achiziționat",
+      dataIndex: "subscriptionId",
+      key: "subscriptionId",
+      render: (subscriptionId: number) => getSubscriptionTitle(subscriptionId),
+    },
+    {
+      title: "Valoare",
+      dataIndex: "paymentValue",
+      key: "paymentValue",
+      render: (paymentValue: number) => (
+        <Tag color="green">{paymentValue / 100} RON</Tag>
+      ),
+    },
+    {
+      title: "Acțiuni",
+      key: "actions",
+      render: (record: { id: string }) => (
+        <CustomButton
+          type="tag"
+          onClick={() => fetchDownloadInvoice(record.id)}
+          className="flex items-center gap-5"
+          size="small"
+        >
+          Descarcă factura &nbsp;
+          <DownloadOutlined />
+        </CustomButton>
+      ),
+    },
+  ];
+
+  return (
+    <Table
+      columns={columns}
+      dataSource={invoices}
+      rowKey="id"
+      pagination={{ pageSize: 10 }}
+      className="invoicesTable"
+    />
+  );
+};
+
+export default InvoicesTable;
+```
+
+KEY PATTERNS:
+- useEffect hook to fetch invoices on mount
+- useSelector to get userSubscriptions from Redux
+- Blob download pattern: Blob → createObjectURL → create <a> element → click() → revokeObjectURL
+- getSubscriptionTitle function maps subscriptionId → productName
+- Ant Design Table with custom column renders
+- Empty state handled by Table component
+
+================================================================================
+TARGET IMPLEMENTATION (NUXT 3 + VUE 3)
+================================================================================
+
+FILE: web/pages/profil-editare/components/InvoicesTable.vue
+
+```vue
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue';
+import { Table, Tag, message } from 'ant-design-vue';
+import { DownloadOutlined } from '@ant-design/icons-vue';
+import dayjs from 'dayjs';
+import { downloadPdfInvoice, retrieveUserInvoices } from '~/services/api/api';
+import CustomButton from '~/components/global/Button/button.vue';
+import { useSubscriptionsStore } from '~/stores/subscriptions';
+import type { SubscriptionTypeEntity } from '~/@types/pages/subscriptions';
+
+interface InvoicesTableProps {
+  subscriptionTypes: SubscriptionTypeEntity[];
+}
+
+const props = defineProps<InvoicesTableProps>();
+
+// Store
+const subscriptionsStore = useSubscriptionsStore();
+
+// Refs
+const invoices = ref([]);
+
+// Computed
+const userSubscriptions = computed(() => subscriptionsStore.subscriptions || []);
+
+// Lifecycle
+onMounted(async () => {
+  await fetchInvoices();
+});
+
+// Methods
+const fetchInvoices = async () => {
+  try {
+    const response = await retrieveUserInvoices();
+    if (response?.data && response.data?.invoices) {
+      invoices.value = response.data.invoices;
+    }
+  } catch (error) {
+    message.error('Eroare la preluarea facturilor.');
+  }
+};
+
+const fetchDownloadInvoice = async (invoiceId: string) => {
+  try {
+    const response = await downloadPdfInvoice(invoiceId);
+    const blob = new Blob([response.data], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `invoice-${invoiceId}.pdf`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    message.error('Eroare la descărcarea facturii');
+  }
+};
+
+const getSubscriptionTitle = (subscriptionId: number): string => {
+  const subscription = userSubscriptions.value.find(
+    (sub: any) => sub.id === subscriptionId
+  );
+
+  return (
+    props.subscriptionTypes.find(
+      (type: any) => type.id === subscription?.subTypeId
+    )?.productName || 'N/A'
+  );
+};
+
+// Columns definition
+const columns = [
+  {
+    title: 'Factura',
+    dataIndex: 'invoiceDetails',
+    key: 'invoiceDetails',
+    customRender: ({ record }: any) => (
+      `${record.seriesName} ${record.externalId}`
+    ),
+  },
+  {
+    title: 'Data emiterii',
+    dataIndex: 'issueDate',
+    key: 'issueDate',
+    customRender: ({ text }: any) => dayjs(text).format('DD/MM/YYYY'),
+  },
+  {
+    title: 'Produs Achiziționat',
+    dataIndex: 'subscriptionId',
+    key: 'subscriptionId',
+    customRender: ({ text }: any) => getSubscriptionTitle(text),
+  },
+  {
+    title: 'Valoare',
+    dataIndex: 'paymentValue',
+    key: 'paymentValue',
+    customRender: ({ text }: any) => `${text / 100} RON`,
+  },
+  {
+    title: 'Acțiuni',
+    key: 'actions',
+    customRender: ({ record }: any) => ({
+      id: `action-${record.id}`,
+      text: `Descarcă factura`,
+      click: () => fetchDownloadInvoice(record.id),
+    }),
+  },
+];
+</script>
+
+<template>
+  <Table
+    :columns="columns"
+    :data-source="invoices"
+    row-key="id"
+    :pagination="{ pageSize: 10 }"
+    class="invoicesTable"
+  >
+    <template #bodyCell="{ column, record }">
+      <template v-if="column.key === 'invoiceDetails'">
+        <strong>{{ record.seriesName }} {{ record.externalId }}</strong>
+      </template>
+
+      <template v-else-if="column.key === 'issueDate'">
+        {{ dayjs(record.issueDate).format('DD/MM/YYYY') }}
+      </template>
+
+      <template v-else-if="column.key === 'subscriptionId'">
+        {{ getSubscriptionTitle(record.subscriptionId) }}
+      </template>
+
+      <template v-else-if="column.key === 'paymentValue'">
+        <Tag color="green">{{ record.paymentValue / 100 }} RON</Tag>
+      </template>
+
+      <template v-else-if="column.key === 'actions'">
+        <CustomButton
+          type="tag"
+          class="flex items-center gap-5"
+          size="small"
+          @click="fetchDownloadInvoice(record.id)"
+        >
+          Descarcă factura
+          <DownloadOutlined />
+        </CustomButton>
+      </template>
+    </template>
+  </Table>
+</template>
+
+<style scoped>
+/* Import existing invoice styles */
+@import '~/assets/styles/components/invoices-table.scss';
+</style>
+```
+
+KEY CHANGES:
+1. **useSelector → computed()**:
+   - `useSelector(state => state.subscriptions)` → `computed(() => subscriptionsStore.subscriptions)`
+2. **defineProps<T>**:
+   - Props are typed in Vue 3 script setup
+   - Access via `props.subscriptionTypes`
+3. **useState → ref()**:
+   - `useState([])` → `ref([])`
+   - Access/update via `.value`
+4. **Table columns**:
+   - In Ant Design Vue, use `#bodyCell` slot for custom renders
+   - Less verbose than React render functions
+5. **Blob download**:
+   - Logic remains identical (URL.createObjectURL/revokeObjectURL)
+6. **onMounted hook**:
+   - Called once when component mounts
+   - Async/await pattern same as React
+
+================================================================================
+API REQUEST/RESPONSE
+================================================================================
+
+REQUEST: GET /v1/invoices
+Headers: {
+  Authorization: "Bearer {accessToken}"
+}
+
+RESPONSE: 200 OK
+{
+  "invoices": [
+    {
+      "id": "inv_123",
+      "seriesName": "BC",
+      "externalId": "123",
+      "issueDate": "2023-11-15T10:30:00Z",
+      "subscriptionId": 45,
+      "paymentValue": 19900,
+      "createdAt": "2023-11-15T10:30:00Z"
+    },
+    {
+      "id": "inv_124",
+      "seriesName": "BC",
+      "externalId": "124",
+      "issueDate": "2023-10-15T10:30:00Z",
+      "subscriptionId": 46,
+      "paymentValue": 29900,
+      "createdAt": "2023-10-15T10:30:00Z"
+    }
+  ]
+}
+
+---
+
+REQUEST: GET /v1/invoices/:id/download
+Headers: {
+  Authorization: "Bearer {accessToken}"
+}
+Path Parameters: {
+  id: "inv_123"
+}
+
+RESPONSE: 200 OK (Blob - application/pdf)
+[Binary PDF data]
+
+================================================================================
+DEPENDENCIES
+================================================================================
+
+CURRENT (REACT):
+- React 18.2.0
+- antd (5.24.2) - Table, Tag components
+- @ant-design/icons (5.5.2) - DownloadOutlined
+- dayjs (1.11.13)
+- react-redux (9.1.0) - useSelector hook
+- CustomButton component
+- API: downloadPdfInvoice, retrieveUserInvoices
+
+TARGET (VUE):
+- Vue 3.4+
+- ant-design-vue (4.x) - Table, Tag components
+- @ant-design/icons-vue (7.x) - DownloadOutlined
+- dayjs (1.11.13) - same
+- pinia (2.1+) - useSubscriptionsStore
+- CustomButton component
+- API: downloadPdfInvoice, retrieveUserInvoices (same)
+
+================================================================================
+AUTHORIZATION
+================================================================================
+
+- GET /v1/invoices: User must be authenticated
+- GET /v1/invoices/:id/download: User must be authenticated
+- Used by authenticated user only (parent page checks !authUser?.id)
+
+================================================================================
+NOTES
+================================================================================
+
+1. BLOB DOWNLOAD PATTERN:
+   - API returns blob (response.data)
+   - Create new Blob with { type: "application/pdf" }
+   - URL.createObjectURL creates downloadable link
+   - Trigger download via <a> element click()
+   - URL.revokeObjectURL cleans up memory
+
+2. SUBSCRIPTION MAPPING:
+   - subscriptionTypes is prop from parent (Profile page)
+   - getSubscriptionTitle looks up productName for display
+   - Handles missing subscriptions gracefully (returns "N/A")
+
+3. PAGINATION:
+   - Table pagination: pageSize=10
+   - Ant Design Table component handles pagination UI automatically
+   - User can navigate between pages
+
+4. ROWKEY:
+   - rowKey="id" identifies each invoice uniquely
+   - Prevents React/Vue key warnings
+
+5. COLUMN RENDERS:
+   - Factura: seriesName + externalId (e.g., "BC 123")
+   - Data emiterii: formatted as DD/MM/YYYY
+   - Valoare: converted from cents (paymentValue / 100) with currency
+   - Acțiuni: download button with icon
+
+6. ERROR HANDLING:
+   - fetchInvoices: catch → message.error("Eroare la preluarea facturilor.")
+   - fetchDownloadInvoice: catch → message.error("Eroare la descărcarea facturii")
+   - No silent failures
+
+7. LOADING STATES:
+   - No loading state displayed during fetch
+   - Table shows empty state while loading
+   - Consider adding skeleton loader for better UX
+
+8. EMPTY STATE:
+   - Table component shows "No Data" by default when invoices.length === 0
+   - Can be customized with empty-state slot if needed
+
+9. STYLING:
+   - className/class="invoicesTable" for custom styling
+   - Import existing SCSS for styling
+   - CustomButton styling inherited from component
+
+10. PERFORMANCE:
+    - onMounted → fetchInvoices() called once
+    - No infinite loops or memory leaks
+    - URL.revokeObjectURL prevents memory leak from blob URLs
+
+================================================================================
+RECOMMENDATIONS
+================================================================================
+
+1. Add loading skeleton while fetching invoices
+2. Implement useInvoiceDownload composable (DRY principle)
+3. Add error boundary for API failures
+4. Consider memoizing columns definition (computed)
+5. Add empty state message (e.g., "Nu ai nicio factură")
+6. Implement retry mechanism for failed downloads
+7. Add download progress indicator for large PDFs
+8. Consider adding invoice detail modal (click on row)
+9. Add filters: date range, product type, amount range
+10. Implement CSV export of invoices (besides PDF download)
+
+================================================================================
+TASK 3: EDITSUBSCRIPTIONS COMPONENT (SUBSCRIPTIONS MANAGEMENT)
+================================================================================
+
+TASK TYPE: Component Migration
+PRIORITY: High
+ESTIMATED EFFORT: 3 story points
+
+================================================================================
+BUSINESS LOGIC
+================================================================================
+
+Componenta EditSubscriptions gestionează vizualizarea și anularea abonamentelor recurente:
+
+1. LA ÎNCĂRCARE:
+   - Fetch Stripe subscriptions via GET /v1/stripe/subscriptions
+   - Fetch subscription types via GET /v1/subscription-types
+   - Setează paymentSubscriptions și subscriptionTypes state
+
+2. SUBSCRIPTION DISPLAY LOGIC:
+   - Afișează fiecare subscription în "bubble" card design
+   - Status header: "Abonament activ"
+   - Plan name: sub.plan.nickname || linkedSubType?.productName
+   - Price: sub.plan.amount / 100 + sub.plan.currency (e.g., "199 RON")
+   - Next payment date: dayjs(new Date(sub.current_period_end * 1000))
+
+3. CANCEL_AT_PERIOD_END LOGIC:
+   - Dacă sub.cancel_at_period_end === true → subscription este deja anulată
+   - Afișează: "Abonament activ pana la data {cancelledDate}. Nu va fi reînnoit."
+   - Hide cancel button
+   - cancelledDate = dayjs(new Date(sub.cancel_at * 1000)) OR dayjs(linkedSub?.endDate)
+
+4. FUTURE SUBSCRIPTION INTERRUPTION:
+   - futureLocalSub = subscriptions.find(s => new Date(s.startDate) > new Date())
+   - interruptedByFutureSub = Boolean(futureLocalSub?.id) && new Date(futureLocalSub.startDate) >= new Date(linkedSub?.endDate)
+   - Dacă interruptedByFutureSub === true:
+     * Afișează: "El va fi anulat automat atunci când va începe noul abonament"
+     * Hide cancel button
+
+5. SUBSCRIPTION LINKING:
+   - Match internal subscription (local) with Stripe subscription:
+     * linkedSub = subscriptions.find(s => Number(s.id) === Number(sub?.metadata?.internalSubscriptionId))
+   - Match internal subscription type:
+     * linkedSubType = subscriptionTypes.find(s => s.id === linkedSub?.subTypeId)
+
+6. CANCELLATION MODAL:
+   - Click "Întrerupe abonamentul" button → showSubscriptionCancellationModal()
+   - Modal title: "Confirmare anulare abonament" (with ExclamationCircleOutlined icon)
+   - Modal body: warning text with bullet points
+   - OK button: "Da, anulează abonamentul" (danger=true, loading state)
+   - Cancel button: "Nu, păstrează abonamentul"
+
+7. CANCEL SUBSCRIPTION LOGIC:
+   - Determine gateway type: sub.gatewayType === "LIBRAPAY"
+   - STRIPE:
+     * POST /v1/stripe/subscriptions/:id/cancel
+     * Response includes updated subscription with cancel_at_period_end: true
+     * Update local paymentSubscriptions array: filter + add updated subscription
+     * Show success message
+   - LIBRAPAY:
+     * Strip "librapay_" prefix from ID: sub.id.replace("librapay_", "")
+     * POST /v1/subscriptions/:id/cancel
+     * Show success message
+     * Wait 500ms
+     * Redirect to dashboard (router.push(PATHS.DASHBOARD))
+
+8. ERROR HANDLING:
+   - Try-catch on both subscriptions fetch and type fetch
+   - onCancelStripeSubscription: catch → message.error("Eroare la anularea abonamentului...")
+   - Check res.status [200, 201] before processing
+
+================================================================================
+CURRENT IMPLEMENTATION (NEXT.JS + REACT)
+================================================================================
+
+FILE: web/src/components/pages/profil-editare/EditSubscriptions.tsx (302 lines)
+
+```tsx
+import React, { useEffect, useState } from "react";
+import { Col, Row, Typography, message, Modal } from "antd/lib";
+import {
+  ArrowLeftOutlined,
+  ExclamationCircleOutlined,
+} from "@ant-design/icons/lib";
+import dayjs from "dayjs";
+import "dayjs/locale/ro";
+
+dayjs.locale("ro");
+
+import {
+  cancelStripeSubscription,
+  cancelSubscription,
+  fetchAllSubscriptionFormsApi,
+  getStripeSubscriptions,
+} from "@/services/api/api";
+import { SubscriptionEntity } from "@/@types/api";
+import { useSelector } from "react-redux";
+import { AxiosResponse } from "axios";
+import { useRouter } from "next/router";
+import { PATHS } from "../../../../config/constants";
+
+const { Title, Paragraph, Text, Link } = Typography;
+
+type StripeSubscription = {
+  id: string;
+  plan: {
+    nickname: string;
+    amount: number;
+    currency: string;
+  };
+  metadata: {
+    internalSubscriptionId: string;
+  };
+  status: string;
+  current_period_end: number;
+  cancel_at_period_end?: boolean;
+  cancel_at?: number;
+  gatewayType?: string;
+};
+
+type EditSubscriptionsProps = {
+  subscriptions: SubscriptionEntity[];
+  paymentSubscriptions: StripeSubscription[];
+  setDisplayProducts: (status: boolean) => void;
+};
+
+const EditSubscriptions: React.FC<EditSubscriptionsProps> = ({
+  setDisplayProducts,
+}) => {
+  const router = useRouter();
+  const [paymentSubscriptions, setStripeSubscriptions] = useState<any>([]);
+  const [subscriptionTypes, setSubscriptionTypes] = useState<any[]>([]);
+  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [subscriptionToCancel, setSubscriptionToCancel] = useState<{
+    id: string;
+    gatewayType?: string;
+    planName?: string;
+  } | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const { subscriptions } = useSelector((state: any) => state.subscriptions);
+  const futureLocalSub = subscriptions?.find(
+    (s: any) => new Date(s.startDate) > new Date(),
+  );
+
+  const showSubscriptionCancellationModal = (
+    subscriptionId: string,
+    gatewayType?: string,
+    planName?: string,
+  ) => {
+    setSubscriptionToCancel({ id: subscriptionId, gatewayType, planName });
+    setIsModalVisible(true);
+  };
+
+  const handleConfirmationCancel = () => {
+    setIsModalVisible(false);
+    setSubscriptionToCancel(null);
+  };
+
+  const onCancelStripeSubscription = async () => {
+    if (!subscriptionToCancel) return;
+
+    setIsLoading(true);
+
+    try {
+      let res: AxiosResponse<any, any>;
+      if (subscriptionToCancel.gatewayType === "LIBRAPAY") {
+        res = await cancelSubscription(
+          subscriptionToCancel.id.replace("librapay_", ""),
+        );
+      } else {
+        res = await cancelStripeSubscription(subscriptionToCancel.id);
+      }
+
+      if ([200, 201].includes(res?.status)) {
+        if (subscriptionToCancel.gatewayType === "LIBRAPAY") {
+          message.success("Abonamentul a fost anulat cu succes.");
+          setTimeout(() => {
+            router.push(PATHS.DASHBOARD);
+          }, 500);
+        } else {
+          const newStripeSubscriptions = paymentSubscriptions.filter(
+            (sub: any) => sub.id !== subscriptionToCancel.id,
+          );
+          setStripeSubscriptions([...newStripeSubscriptions, res.data]);
+
+          if (res?.data?.cancel_at_period_end === true) {
+            message.success("Abonamentul a fost anulat cu succes.");
+          }
+        }
+        setIsModalVisible(false);
+        setSubscriptionToCancel(null);
+      } else {
+        message.error(
+          "Eroare la incarcarea abonamentelor. Te rugăm să încerci din nou.",
+        );
+      }
+    } catch (error) {
+      message.error(
+        "Eroare la anularea abonamentului. Te rugăm să încerci din nou.",
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    getStripeSubscriptions().then((res) => {
+      if ([200, 201].includes(res?.status) && res?.data) {
+        setStripeSubscriptions(res.data);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    fetchAllSubscriptionFormsApi().then((res) => {
+      if ([200, 201].includes(res?.status) && res?.data) {
+        setSubscriptionTypes(res.data.subscriptionTypes || []);
+      }
+    });
+  }, []);
+
+  return (
+    <>
+      <Link onClick={() => setDisplayProducts(false)}>
+        <ArrowLeftOutlined /> Inapoi
+      </Link>
+
+      <Title level={4} className="title">
+        Produse active (recurente)
+      </Title>
+
+      <Text className="description">
+        Din această secțiune poți face modificări abonamentelor tale și poți
+        vedea pachetele achiziționate.
+      </Text>
+
+      <Row>
+        <Col span={24}>
+          <Paragraph className="subscriptions-container">
+            {paymentSubscriptions.length > 0 &&
+              paymentSubscriptions.map((sub: StripeSubscription) => {
+                const linkedSub = subscriptions?.find(
+                  (s: any) =>
+                    Number(s.id) ===
+                    Number(sub?.metadata?.internalSubscriptionId),
+                );
+                const linkedSubType = subscriptionTypes?.find(
+                  (s: any) => s.id === linkedSub?.subTypeId,
+                );
+                const interruptedByFutureSub =
+                  Boolean(futureLocalSub?.id) &&
+                  new Date(futureLocalSub.startDate) >=
+                    new Date(linkedSub?.endDate);
+
+                const nextPaymentDate = dayjs(
+                  new Date(sub.current_period_end * 1000),
+                ).format("DD MMMM YYYY");
+                const cancelledDate = sub.cancel_at
+                  ? dayjs(new Date(sub.cancel_at * 1000)).format("DD MMMM YYYY")
+                  : dayjs(linkedSub?.endDate).format("DD MMMM YYYY");
+
+                return (
+                  <div
+                    key={sub.id}
+                    className="subscription-bubble"
+                    style={{ marginBottom: "10px" }}
+                  >
+                    <Row>
+                      <Col span={24}>
+                        <Title level={5} className="subscription-status">
+                          Abonament activ
+                        </Title>
+                      </Col>
+                    </Row>
+
+                    <Row>
+                      <Col span={24}>
+                        <Title level={4} className="subscription-title">
+                          {sub.plan.nickname || linkedSubType?.productName}
+                        </Title>
+                      </Col>
+                    </Row>
+
+                    <Row className="subscription-details">
+                      <Col span={12}>
+                        {sub.cancel_at_period_end !== true &&
+                        !interruptedByFutureSub ? (
+                          <Text>
+                            Urmatoarea plată: <strong>{nextPaymentDate}</strong>
+                          </Text>
+                        ) : (
+                          <Text>
+                            Abonament activ pana la data{" "}
+                            <strong>{cancelledDate}</strong>.
+                            {interruptedByFutureSub &&
+                              "El va fi anulat automat atunci când va începe noul abonament, asigurând o tranziție fără întreruperi în serviciul dvs."}
+                          </Text>
+                        )}
+                      </Col>
+                      <Col span={12} className="subscription-price">
+                        <Text>
+                          <strong>
+                            {sub.plan.amount / 100} {sub.plan.currency}
+                          </strong>
+                        </Text>
+                      </Col>
+                    </Row>
+
+                    {sub.cancel_at_period_end !== true &&
+                      !interruptedByFutureSub && (
+                        <Link
+                          className="cancel-btn"
+                          onClick={() =>
+                            showSubscriptionCancellationModal(
+                              sub.id,
+                              sub.gatewayType,
+                              sub.plan.nickname || linkedSubType?.productName,
+                            )
+                          }
+                        >
+                          Intrerupe abonamentul
+                        </Link>
+                      )}
+                  </div>
+                );
+              })}
+          </Paragraph>
+        </Col>
+      </Row>
+
+      <Modal
+        title={
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <ExclamationCircleOutlined style={{ color: "#faad14" }} />
+            Confirmare anulare abonament
+          </div>
+        }
+        open={isModalVisible}
+        onOk={onCancelStripeSubscription}
+        onCancel={handleConfirmationCancel}
+        okText="Da, anulează abonamentul"
+        cancelText="Nu, păstrează abonamentul"
+        okButtonProps={{
+          danger: true,
+          loading: isLoading,
+        }}
+        cancelButtonProps={{
+          disabled: isLoading,
+        }}
+        maskClosable={!isLoading}
+        closable={!isLoading}
+      >
+        <div style={{ padding: "16px 0" }}>
+          <p style={{ marginBottom: "16px" }}>
+            Ești sigur că vrei să anulezi abonamentul{" "}
+            <strong>{subscriptionToCancel?.planName}</strong>?
+          </p>
+          <p style={{ marginBottom: "8px", color: "#666" }}>După anulare:</p>
+          <ul style={{ paddingLeft: "20px", color: "#666" }}>
+            <li>
+              Abonamentul va rămâne activ până la sfârșitul perioadei curente de
+              facturare
+            </li>
+            <li>Nu vei mai fi taxat pentru următoarele perioade</li>
+            <li>
+              Vei pierde accesul la beneficiile abonamentului la sfârșitul
+              perioadei curente
+            </li>
+          </ul>
+        </div>
+      </Modal>
+    </>
+  );
+};
+
+export default EditSubscriptions;
+```
+
+KEY PATTERNS:
+- Multiple useState hooks (paymentSubscriptions, subscriptionTypes, isModalVisible, isLoading)
+- useSelector to access Redux subscriptions
+- useRouter for navigation
+- useEffect to fetch data on mount
+- Modal confirmation with loading state
+- Conditional rendering of cancel button based on subscription state
+- Future subscription interruption logic (interruptedByFutureSub)
+- Blob/ID stripping logic for Librapay
+
+================================================================================
+TARGET IMPLEMENTATION (NUXT 3 + VUE 3)
+================================================================================
+
+FILE: web/pages/profil-editare/components/EditSubscriptions.vue
+
+```vue
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue';
+import { Col, Row, Typography, message, Modal } from 'ant-design-vue';
+import {
+  ArrowLeftOutlined,
+  ExclamationCircleOutlined,
+} from '@ant-design/icons-vue';
+import dayjs from 'dayjs';
+import 'dayjs/locale/ro';
+
+dayjs.locale('ro');
+
+import {
+  cancelStripeSubscription,
+  cancelSubscription,
+  fetchAllSubscriptionFormsApi,
+  getStripeSubscriptions,
+} from '~/services/api/api';
+import type { SubscriptionEntity } from '~/@types/api';
+import { useSubscriptionsStore } from '~/stores/subscriptions';
+import { useRouter } from '#app';
+import { PATHS } from '~/config/constants';
+
+const { Title, Paragraph, Text, Link } = Typography;
+
+interface StripeSubscription {
+  id: string;
+  plan: {
+    nickname: string;
+    amount: number;
+    currency: string;
+  };
+  metadata: {
+    internalSubscriptionId: string;
+  };
+  status: string;
+  current_period_end: number;
+  cancel_at_period_end?: boolean;
+  cancel_at?: number;
+  gatewayType?: string;
+}
+
+interface EditSubscriptionsProps {
+  setDisplayProducts: (status: boolean) => void;
+}
+
+const props = defineProps<EditSubscriptionsProps>();
+
+// Router & Store
+const router = useRouter();
+const subscriptionsStore = useSubscriptionsStore();
+
+// Refs
+const paymentSubscriptions = ref<StripeSubscription[]>([]);
+const subscriptionTypes = ref<any[]>([]);
+const isModalVisible = ref(false);
+const subscriptionToCancel = ref<{
+  id: string;
+  gatewayType?: string;
+  planName?: string;
+} | null>(null);
+const isLoading = ref(false);
+
+// Computed
+const subscriptions = computed(() => subscriptionsStore.subscriptions || []);
+
+const futureLocalSub = computed(() =>
+  subscriptions.value?.find(
+    (s: any) => new Date(s.startDate) > new Date()
+  )
+);
+
+// Methods
+const showSubscriptionCancellationModal = (
+  subscriptionId: string,
+  gatewayType?: string,
+  planName?: string
+) => {
+  subscriptionToCancel.value = { id: subscriptionId, gatewayType, planName };
+  isModalVisible.value = true;
+};
+
+const handleConfirmationCancel = () => {
+  isModalVisible.value = false;
+  subscriptionToCancel.value = null;
+};
+
+const onCancelStripeSubscription = async () => {
+  if (!subscriptionToCancel.value) return;
+
+  isLoading.value = true;
+
+  try {
+    let res: any;
+    if (subscriptionToCancel.value.gatewayType === 'LIBRAPAY') {
+      res = await cancelSubscription(
+        subscriptionToCancel.value.id.replace('librapay_', '')
+      );
+    } else {
+      res = await cancelStripeSubscription(subscriptionToCancel.value.id);
+    }
+
+    if ([200, 201].includes(res?.status)) {
+      if (subscriptionToCancel.value.gatewayType === 'LIBRAPAY') {
+        message.success('Abonamentul a fost anulat cu succes.');
+        setTimeout(() => {
+          navigateTo(PATHS.DASHBOARD);
+        }, 500);
+      } else {
+        const newStripeSubscriptions = paymentSubscriptions.value.filter(
+          (sub: any) => sub.id !== subscriptionToCancel.value!.id
+        );
+        paymentSubscriptions.value = [...newStripeSubscriptions, res.data];
+
+        if (res?.data?.cancel_at_period_end === true) {
+          message.success('Abonamentul a fost anulat cu succes.');
+        }
+      }
+      isModalVisible.value = false;
+      subscriptionToCancel.value = null;
+    } else {
+      message.error(
+        'Eroare la incarcarea abonamentelor. Te rugăm să încerci din nou.'
+      );
+    }
+  } catch (error) {
+    message.error(
+      'Eroare la anularea abonamentului. Te rugăm să încerci din nou.'
+    );
+  } finally {
+    isLoading.value = false;
+  }
+};
+
+// Lifecycle
+onMounted(async () => {
+  try {
+    const subscriptionsRes = await getStripeSubscriptions();
+    if ([200, 201].includes(subscriptionsRes?.status) && subscriptionsRes?.data) {
+      paymentSubscriptions.value = subscriptionsRes.data;
+    }
+  } catch (error) {
+    message.error('Eroare la preluarea abonamentelor.');
+  }
+
+  try {
+    const typesRes = await fetchAllSubscriptionFormsApi();
+    if ([200, 201].includes(typesRes?.status) && typesRes?.data) {
+      subscriptionTypes.value = typesRes.data.subscriptionTypes || [];
+    }
+  } catch (error) {
+    message.error('Eroare la preluarea tipurilor de abonament.');
+  }
+});
+
+// Computed for subscription display
+const getLinkedSub = (sub: StripeSubscription) => {
+  return subscriptions.value?.find(
+    (s: any) =>
+      Number(s.id) === Number(sub?.metadata?.internalSubscriptionId)
+  );
+};
+
+const getLinkedSubType = (linkedSub: any) => {
+  return subscriptionTypes.value?.find(
+    (s: any) => s.id === linkedSub?.subTypeId
+  );
+};
+
+const isInterruptedByFutureSub = (linkedSub: any) => {
+  return (
+    Boolean(futureLocalSub.value?.id) &&
+    new Date(futureLocalSub.value!.startDate) >=
+      new Date(linkedSub?.endDate)
+  );
+};
+
+const getNextPaymentDate = (sub: StripeSubscription) => {
+  return dayjs(new Date(sub.current_period_end * 1000)).format(
+    'DD MMMM YYYY'
+  );
+};
+
+const getCancelledDate = (sub: StripeSubscription, linkedSub: any) => {
+  return sub.cancel_at
+    ? dayjs(new Date(sub.cancel_at * 1000)).format('DD MMMM YYYY')
+    : dayjs(linkedSub?.endDate).format('DD MMMM YYYY');
+};
+</script>
+
+<template>
+  <>
+    <Link @click="setDisplayProducts(false)">
+      <ArrowLeftOutlined /> Inapoi
+    </Link>
+
+    <Title :level="4" class="title">
+      Produse active (recurente)
+    </Title>
+
+    <Text class="description">
+      Din această secțiune poți face modificări abonamentelor tale și poți vedea
+      pachetele achiziționate.
+    </Text>
+
+    <Row>
+      <Col :span="24">
+        <Paragraph class="subscriptions-container">
+          <div
+            v-for="sub in paymentSubscriptions"
+            :key="sub.id"
+            class="subscription-bubble"
+            style="margin-bottom: 10px"
+          >
+            <template v-if="getLinkedSub(sub)">
+              <Row>
+                <Col :span="24">
+                  <Title :level="5" class="subscription-status">
+                    Abonament activ
+                  </Title>
+                </Col>
+              </Row>
+
+              <Row>
+                <Col :span="24">
+                  <Title :level="4" class="subscription-title">
+                    {{
+                      sub.plan.nickname ||
+                      getLinkedSubType(getLinkedSub(sub))?.productName
+                    }}
+                  </Title>
+                </Col>
+              </Row>
+
+              <Row class="subscription-details">
+                <Col :span="12">
+                  <template
+                    v-if="
+                      sub.cancel_at_period_end !== true &&
+                      !isInterruptedByFutureSub(getLinkedSub(sub))
+                    "
+                  >
+                    <Text>
+                      Urmatoarea plată:
+                      <strong>{{ getNextPaymentDate(sub) }}</strong>
+                    </Text>
+                  </template>
+                  <template v-else>
+                    <Text>
+                      Abonament activ pana la data
+                      <strong>{{
+                        getCancelledDate(sub, getLinkedSub(sub))
+                      }}</strong>
+                      .
+                      <span v-if="isInterruptedByFutureSub(getLinkedSub(sub))">
+                        El va fi anulat automat atunci când va începe noul
+                        abonament, asigurând o tranziție fără întreruperi în
+                        serviciul dvs.
+                      </span>
+                    </Text>
+                  </template>
+                </Col>
+                <Col :span="12" class="subscription-price">
+                  <Text>
+                    <strong>
+                      {{ sub.plan.amount / 100 }} {{ sub.plan.currency }}
+                    </strong>
+                  </Text>
+                </Col>
+              </Row>
+
+              <template
+                v-if="
+                  sub.cancel_at_period_end !== true &&
+                  !isInterruptedByFutureSub(getLinkedSub(sub))
+                "
+              >
+                <Link
+                  class="cancel-btn"
+                  @click="
+                    showSubscriptionCancellationModal(
+                      sub.id,
+                      sub.gatewayType,
+                      sub.plan.nickname ||
+                        getLinkedSubType(getLinkedSub(sub))?.productName
+                    )
+                  "
+                >
+                  Intrerupe abonamentul
+                </Link>
+              </template>
+            </template>
+          </div>
+        </Paragraph>
+      </Col>
+    </Row>
+
+    <Modal
+      :open="isModalVisible"
+      ok-text="Da, anulează abonamentul"
+      cancel-text="Nu, păstrează abonamentul"
+      :ok-button-props="{
+        danger: true,
+        loading: isLoading,
+      }"
+      :cancel-button-props="{
+        disabled: isLoading,
+      }"
+      :mask-closable="!isLoading"
+      :closable="!isLoading"
+      @ok="onCancelStripeSubscription"
+      @cancel="handleConfirmationCancel"
+    >
+      <template #title>
+        <div style="display: flex; align-items: center; gap: 8px">
+          <ExclamationCircleOutlined style="color: #faad14" />
+          Confirmare anulare abonament
+        </div>
+      </template>
+
+      <div style="padding: 16px 0">
+        <p style="margin-bottom: 16px">
+          Ești sigur că vrei să anulezi abonamentul
+          <strong>{{ subscriptionToCancel?.planName }}</strong>
+          ?
+        </p>
+        <p style="margin-bottom: 8px; color: #666">După anulare:</p>
+        <ul style="padding-left: 20px; color: #666">
+          <li>
+            Abonamentul va rămâne activ până la sfârșitul perioadei curente de
+            facturare
+          </li>
+          <li>Nu vei mai fi taxat pentru următoarele perioade</li>
+          <li>
+            Vei pierde accesul la beneficiile abonamentului la sfârșitul
+            perioadei curente
+          </li>
+        </ul>
+      </div>
+    </Modal>
+  </>
+</template>
+
+<style scoped>
+/* Import existing subscription styles */
+@import '~/assets/styles/components/edit-subscriptions.scss';
+</style>
+```
+
+KEY CHANGES:
+1. **useSelector → computed()**:
+   - `useSelector(state => state.subscriptions)` → `computed(() => subscriptionsStore.subscriptions)`
+2. **useState → ref()**:
+   - All state variables converted to `ref<T>()`
+   - Access/update via `.value`
+3. **useRouter**:
+   - `useRouter()` from '#app' (Nuxt)
+   - `router.push()` → `navigateTo()` (Nuxt composable)
+4. **useEffect → onMounted**:
+   - Two `useEffect` hooks → single `onMounted` with try-catch blocks
+5. **Subscriptions mapping**:
+   - Extract to computed helper functions (getLinkedSub, getLinkedSubType, etc.)
+   - Better readability than inline logic
+6. **Modal**:
+   - Props: `:open`, `:ok-button-props`, `:cancel-button-props`
+   - Events: `@ok`, `@cancel`
+   - Title slot: `#title`
+7. **Conditional rendering**:
+   - `v-if`, `v-else-if`, `v-for` instead of ternary operators
+
+================================================================================
+API REQUEST/RESPONSE
+================================================================================
+
+REQUEST: GET /v1/stripe/subscriptions
+Headers: {
+  Authorization: "Bearer {accessToken}"
+}
+
+RESPONSE: 200 OK
+[
+  {
+    "id": "sub_stripe_123",
+    "plan": {
+      "nickname": "Pro Plan",
+      "amount": 19900,
+      "currency": "RON"
+    },
+    "metadata": {
+      "internalSubscriptionId": "45"
+    },
+    "status": "active",
+    "current_period_end": 1704067200,
+    "cancel_at_period_end": false,
+    "cancel_at": null,
+    "gatewayType": "STRIPE"
+  },
+  {
+    "id": "librapay_sub_456",
+    "plan": {
+      "nickname": "Basic Plan",
+      "amount": 9900,
+      "currency": "RON"
+    },
+    "metadata": {
+      "internalSubscriptionId": "46"
+    },
+    "status": "active",
+    "current_period_end": 1701561600,
+    "cancel_at_period_end": false,
+    "cancel_at": null,
+    "gatewayType": "LIBRAPAY"
+  }
+]
+
+---
+
+REQUEST: GET /v1/subscription-types
+Headers: {
+  Authorization: "Bearer {accessToken}"
+}
+
+RESPONSE: 200 OK
+{
+  "subscriptionTypes": [
+    {
+      "id": 1,
+      "productName": "Premium Annual"
+    },
+    {
+      "id": 2,
+      "productName": "Basic Monthly"
+    }
+  ]
+}
+
+---
+
+REQUEST: POST /v1/stripe/subscriptions/:id/cancel
+Headers: {
+  Authorization: "Bearer {accessToken}",
+  Content-Type: "application/json"
+}
+Path Parameters: {
+  id: "sub_stripe_123"
+}
+
+RESPONSE: 200 OK
+{
+  "id": "sub_stripe_123",
+  "status": "active",
+  "cancel_at_period_end": true,
+  "cancel_at": null,
+  "current_period_end": 1704067200
+}
+
+---
+
+REQUEST: POST /v1/subscriptions/:id/cancel
+Headers: {
+  Authorization: "Bearer {accessToken}",
+  Content-Type: "application/json"
+}
+Path Parameters: {
+  id: "sub_456" (after stripping "librapay_")
+}
+
+RESPONSE: 200 OK
+{
+  "status": "cancelled",
+  "message": "Subscription cancelled successfully"
+}
+
+================================================================================
+DEPENDENCIES
+================================================================================
+
+CURRENT (REACT):
+- React 18.2.0
+- antd (5.24.2) - Modal, Typography components
+- @ant-design/icons (5.5.2) - ArrowLeftOutlined, ExclamationCircleOutlined
+- dayjs (1.11.13)
+- react-redux (9.1.0) - useSelector hook
+- next/router - useRouter
+- API: getStripeSubscriptions, cancelStripeSubscription, cancelSubscription, fetchAllSubscriptionFormsApi
+
+TARGET (VUE):
+- Vue 3.4+
+- ant-design-vue (4.x) - Modal, Typography components
+- @ant-design/icons-vue (7.x) - ArrowLeftOutlined, ExclamationCircleOutlined
+- dayjs (1.11.13) - same
+- pinia (2.1+) - useSubscriptionsStore
+- '#app' composables - useRouter, navigateTo
+- API: getStripeSubscriptions, cancelStripeSubscription, cancelSubscription, fetchAllSubscriptionFormsApi (same)
+
+================================================================================
+AUTHORIZATION
+================================================================================
+
+- GET /v1/stripe/subscriptions: User must be authenticated
+- GET /v1/subscription-types: User must be authenticated
+- POST /v1/stripe/subscriptions/:id/cancel: User must be authenticated
+- POST /v1/subscriptions/:id/cancel: User must be authenticated
+
+================================================================================
+NOTES
+================================================================================
+
+1. CANCEL_AT_PERIOD_END LOGIC:
+   - If cancel_at_period_end === true, subscription is already cancelled
+   - Display cancellation date and hide cancel button
+   - subscription remains active until current_period_end
+
+2. FUTURE SUBSCRIPTION INTERRUPTION:
+   - futureLocalSub = subscriptions.find(s => new Date(s.startDate) > new Date())
+   - interruptedByFutureSub checks if future sub starts >= current sub ends
+   - If true: hide cancel button and show auto-cancellation message
+
+3. GATEWAY TYPE HANDLING:
+   - STRIPE: POST /v1/stripe/subscriptions/:id/cancel
+   - LIBRAPAY: Strip "librapay_" prefix, then POST /v1/subscriptions/:id/cancel
+   - Librapay redirects to dashboard, Stripe stays on page
+
+4. LIBRAPAY ID STRIPPING:
+   - Librapay subscription IDs are stored as "librapay_{id}"
+   - When cancelling: sub.id.replace("librapay_", "") extracts real ID
+   - Important: only Librapay IDs have this prefix
+
+5. MODAL CONFIRMATION:
+   - Title includes ExclamationCircleOutlined icon (warning color #faad14)
+   - OK button is red (danger=true) indicating destructive action
+   - Shows warning message with bullet points about consequences
+
+6. SUBSCRIPTION LINKING:
+   - Stripe subscription metadata.internalSubscriptionId → local subscription ID
+   - Links to subscription type for product name display
+   - Fallback to sub.plan.nickname if linking fails
+
+7. DATE FORMATTING:
+   - Stripe timestamps are in seconds (current_period_end * 1000)
+   - Convert to Date object: new Date(sub.current_period_end * 1000)
+   - Format with dayjs as "DD MMMM YYYY"
+   - Locale set to Romanian (dayjs.locale("ro"))
+
+8. LOADING STATES:
+   - isLoading ref during subscription cancellation
+   - Modal OK button shows loading spinner
+   - Modal cancel button disabled while loading
+   - Modal not closable while loading
+
+9. ERROR HANDLING:
+   - Try-catch on both subscription fetches
+   - Try-catch on cancellation with specific error messages
+   - No silent failures
+
+10. NAVIGATION:
+    - Back link: @click="setDisplayProducts(false)" returns to profile edit view
+    - Librapay cancellation: navigateTo(PATHS.DASHBOARD) after success
+
+================================================================================
+RECOMMENDATIONS
+================================================================================
+
+1. Extract subscription cancellation to composable (useSubscriptionCancellation)
+2. Create SubscriptionBubble child component for reusability
+3. Add loading skeleton while fetching subscriptions
+4. Implement optimistic UI updates (remove from array before API response)
+5. Add retry mechanism for failed cancellations
+6. Consider adding renewal date countdown timer
+7. Add subscription upgrade functionality (link to subscription page)
+8. Implement subscription pause feature (if supported by gateways)
+9. Add Sentry error tracking for cancellation failures
+10. Consider adding subscription history/audit log
+
+================================================================================
+TASK 4: MODULE SUMMARY & INTEGRATION
+================================================================================
+
+TASK TYPE: Architecture & Integration
+PRIORITY: High
+ESTIMATED EFFORT: 2 story points
+
+================================================================================
+ARCHITECTURE OVERVIEW
+================================================================================
+
+Modulul Profile (Profil-editare) este un sistem complet de management de cont cu 3 view-uri exclusive:
+
+1. **PROFILE EDIT VIEW (DEFAULT)**:
+   - Form cu 6 câmpuri: firstName, lastName, gender, birthdate, phone, email
+   - Email disabled (nu poate fi modificat)
+   - Marketing/WhatsApp agreement checkboxes (inverted logic)
+   - Float button "Back to Top" pentru formulare lungi
+   - Fetch user on mount (sync latest data from server)
+   - Update via PUT /v1/users/update
+
+2. **SUBSCRIPTIONS VIEW** (EditSubscriptions component):
+   - Display Stripe/Librapay active subscriptions
+   - Each subscription shows plan, price, next payment date
+   - Cancel subscription with modal confirmation
+   - Handle cancel_at_period_end and future subscription interruption logic
+   - Gateway-specific handling (Stripe vs Librapay)
+
+3. **INVOICES VIEW** (InvoicesTable component):
+   - Table with pagination (10 per page)
+   - Columns: Invoice Number, Issue Date, Product Name, Value, Download
+   - Map subscriptionId → productName via subscriptionTypes prop
+   - Download PDF via blob URL pattern
+   - Empty state: "No Data"
+
+================================================================================
+STATE MANAGEMENT ARCHITECTURE
+================================================================================
+
+REDUX (CURRENT) → PINIA (TARGET):
+
+authUser State:
+- Redux: useSelector((state) => state.user)
+- Pinia: computed(() => userStore.user)
+- Used to check authentication (if !authUser?.id → 404)
+- Used to pre-fill form and display profile name
+
+subscriptions State:
+- Redux: useSelector((state) => state.subscriptions.subscriptions)
+- Pinia: computed(() => subscriptionsStore.subscriptions)
+- Used to find linkedSub for subscription mapping
+- Used to find futureLocalSub for interruption logic
+
+subscriptionTypes Local State:
+- Parent (Profile page) manages subscriptionTypes state
+- Passed to InvoicesTable via prop
+- Populated by UserBoard via setMainSubscriptionTypes callback
+- Used to map subscriptionId → productName
+
+Local Component State:
+- EditSubscriptions: paymentSubscriptions, subscriptionTypes (local fetch)
+- InvoicesTable: invoices (local fetch)
+- Profile: displayProducts, displayInvoices (view state)
+
+================================================================================
+MIGRATION CHALLENGES & SOLUTIONS
+================================================================================
+
+1. **PHONE INPUT MIGRATION**:
+   Challenge: react-phone-input-2 → vue-tel-input
+   - Different props (country vs defaultCountry)
+   - Different event handling (onChange vs @input)
+   Solution:
+   - Use vue-tel-input with v-model for two-way binding
+   - Handle @input event to update phone value
+   - Maintain country code logic (default: RO)
+
+2. **CHECKBOX INVERSION LOGIC**:
+   Challenge: Marketing/WhatsApp checkboxes are inverted
+   - Checked = user does NOT want to receive emails/messages
+   - Form checkbox = true, API expects = false
+   Solution:
+   - On form load: set checkbox = !user.marketingAgreement
+   - On form submit: send !values.marketingAgreement to API
+   - Double inversion creates double negation (correct logic)
+
+3. **BLOB DOWNLOAD PATTERN**:
+   Challenge: Same blob download pattern but different timing
+   - React: response.data is blob
+   - Vue: may need different API response handling
+   Solution:
+   - Same pattern: URL.createObjectURL → create <a> → click() → revokeObjectURL
+   - Axios configuration ensures response.data is blob in both frameworks
+
+4. **ROUTER NAVIGATION**:
+   Challenge: next/router → Vue Router (via Nuxt)
+   - Next.js: useRouter().push(path)
+   - Nuxt: useRouter() returns router, but navigateTo() is composable
+   Solution:
+   - Use navigateTo() from '#app' for Nuxt integration
+   - Works with both pages and components
+   - Handles soft navigation (SPA-like)
+
+5. **STATE UPDATES VIA CALLBACKS**:
+   Challenge: Parent-child state sharing pattern
+   - Child (UserBoard) fetches subscriptionTypes
+   - Passes back to parent via callback (setMainSubscriptionTypes)
+   - Parent shares with InvoicesTable via prop
+   Solution:
+   - Use props and callbacks (same pattern works in Vue)
+   - Or extract to Pinia store (subscriptionTypesStore)
+   - Current approach: keep as prop/callback for consistency
+
+6. **FUTURE SUBSCRIPTION LOGIC**:
+   Challenge: Complex date comparison and conditional rendering
+   - futureLocalSub = subscriptions.find(s => new Date(s.startDate) > new Date())
+   - interruptedByFutureSub = new Date(futureLocalSub.startDate) >= new Date(linkedSub.endDate)
+   Solution:
+   - Extract to computed functions (getLinkedSub, isInterruptedByFutureSub)
+   - Cleaner than inline logic
+   - Easier to test and debug
+
+7. **MODAL CONFIRMATION STATE**:
+   Challenge: Modal needs multiple pieces of state
+   - isModalVisible (bool)
+   - subscriptionToCancel (object with id, gatewayType, planName)
+   - isLoading (bool during cancellation)
+   Solution:
+   - Use separate refs for each piece of state
+   - Or combine into single object: subscriptionCancellation = {visible, data, loading}
+   - Current approach: three separate refs (clearer)
+
+================================================================================
+COMPONENT DEPENDENCY TREE
+================================================================================
+
+Profile.vue (main page)
+├── AppLayout (from layouts)
+├── PageHelmet (from components/global)
+├── FloatButton.BackTop (Ant Design)
+├── UserBoard (from dashboard - reused)
+│   └── triggers setMainSubscriptionTypes callback
+├── EditSubscriptions (conditional render)
+│   ├── Modal (Ant Design)
+│   ├── Link (Ant Design Typography)
+│   ├── Row/Col (Ant Design Grid)
+│   └── Title/Paragraph/Text (Ant Design Typography)
+└── InvoicesTable (conditional render)
+    ├── Table (Ant Design)
+    ├── Tag (Ant Design)
+    ├── CustomButton (from components/global)
+    └── DownloadOutlined icon (Ant Design Icons)
+
+================================================================================
+DATA FLOW ARCHITECTURE
+================================================================================
+
+1. **PROFILE EDIT FLOW**:
+   User inputs → Form validation → PUT /v1/users/update → userStore.updateUser → Display success message
+
+2. **SUBSCRIPTIONS VIEW FLOW**:
+   Mount → GET /v1/stripe/subscriptions → paymentSubscriptions state
+   → GET /v1/subscription-types → subscriptionTypes state
+   → Render subscriptions with linked data
+
+3. **SUBSCRIPTION CANCELLATION FLOW**:
+   User clicks "Intrerupe abonamentul" → Modal confirmation
+   → Determine gateway type (STRIPE vs LIBRAPAY)
+   → POST /v1/stripe/subscriptions/:id/cancel OR POST /v1/subscriptions/:id/cancel
+   → Update paymentSubscriptions state
+   → Show success message
+   → Librapay: redirect to dashboard
+
+4. **INVOICES FLOW**:
+   Mount → GET /v1/invoices → invoices state
+   → Render table with pagination
+   → User clicks download → GET /v1/invoices/:id/download → Blob
+   → Trigger browser download
+
+5. **VIEW SWITCHING FLOW**:
+   Default view: displayProducts=false, displayInvoices=false
+   → Click "Abonamente": displayProducts=true, displayInvoices=false
+   → Click "Facturi": displayProducts=false, displayInvoices=true
+   → Back button: return to displayProducts=false, displayInvoices=false
+
+================================================================================
+TESTING STRATEGY
+================================================================================
+
+**UNIT TESTS:**
+
+1. Profile Form Tests:
+   - Test form validation (required fields)
+   - Test phone input country code handling
+   - Test checkbox inversion (marketing/whatsapp agreement)
+   - Test email field disabled state
+   - Test form submit payload (fullName concatenation, agreement inversion)
+   - Test date formatting (DD/MM/YYYY)
+
+2. InvoicesTable Tests:
+   - Test invoices fetch on mount
+   - Test subscription title mapping (subscriptionId → productName)
+   - Test payment value formatting (cents to euros, 100 divisor)
+   - Test date formatting (DD/MM/YYYY)
+   - Test blob download trigger
+   - Test empty state when invoices.length === 0
+
+3. EditSubscriptions Tests:
+   - Test subscriptions fetch on mount
+   - Test subscription types fetch on mount
+   - Test linked subscription mapping
+   - Test cancel_at_period_end conditional rendering
+   - Test future subscription interruption logic
+   - Test cancel button visibility based on state
+   - Test Librapay ID stripping ("librapay_" prefix removal)
+   - Test modal confirmation state
+
+**INTEGRATION TESTS:**
+
+1. Profile Page Integration:
+   - Navigate to profile page → should fetch user
+   - Fill form and submit → should update user and show success message
+   - Update Redux/Pinia store → should reflect in form pre-fill
+   - Click "Abonamente" → should show EditSubscriptions view
+   - Click "Facturi" → should show InvoicesTable view
+   - Click back button → should return to profile edit view
+
+2. EditSubscriptions Integration:
+   - Mount EditSubscriptions → should fetch subscriptions and types
+   - Click cancel button → should show modal
+   - Click "Da, anulează abonamentul" → should call cancel API
+   - Cancel Stripe subscription → should update paymentSubscriptions state
+   - Cancel Librapay subscription → should redirect to dashboard
+
+3. InvoicesTable Integration:
+   - Mount InvoicesTable → should fetch invoices
+   - Click download button → should fetch blob and trigger download
+   - Pagination: click next page → should display next invoices
+
+**E2E TESTS:**
+
+1. Full Profile Flow:
+   - Navigate to /profil-editare
+   - Verify authenticated (authUser?.id exists)
+   - Fill form fields
+   - Click submit
+   - Verify success message
+   - Verify form updated
+
+2. Subscription Management Flow:
+   - Click "Abonamente" button
+   - Verify subscriptions displayed
+   - Click cancel on active subscription
+   - Confirm modal
+   - Verify subscription cancelled
+
+3. Invoice Download Flow:
+   - Click "Facturi" button
+   - Verify invoices table
+   - Click download button
+   - Verify PDF downloaded with correct filename
+
+4. Edge Cases:
+   - No subscriptions (empty state)
+   - No invoices (empty table)
+   - Subscription already cancelled (interruptedByFutureSub)
+   - Network errors (API failures)
+
+================================================================================
+PERFORMANCE CONSIDERATIONS
+================================================================================
+
+1. **LAZY LOADING VIEW STATES**:
+   - Only render active view (profile/subscriptions/invoices)
+   - InvoicesTable and EditSubscriptions only fetch when needed
+   - Reduces initial page load time
+
+2. **MEMOIZATION**:
+   - Columns definitions should be computed or memoized
+   - Prevent re-renders of table on parent changes
+   - Extract getLinkedSub, getLinkedSubType to computed functions
+
+3. **PAGINATION**:
+   - Table pagination: 10 per page (InvoicesTable)
+   - Reduces DOM nodes rendered
+   - Built-in Ant Design optimization
+
+4. **DEBOUNCING**:
+   - Phone input should debounce onChange (optional)
+   - Consider if frequent updates cause performance issues
+   - dayjs formatting should be memoized
+
+5. **IMAGE OPTIMIZATION**:
+   - Profile page may display user avatar
+   - Use lazy loading for images (if implemented)
+   - Consider blur-up technique for better perceived performance
+
+6. **AVOID MEMORY LEAKS**:
+   - InvoicesTable: URL.revokeObjectURL() after download (prevents blob URL memory leak)
+   - Clean up event listeners in component unmount
+   - Cancel pending requests when component unmounts (if using axios)
+
+================================================================================
+SECURITY CONSIDERATIONS
+================================================================================
+
+1. **EMAIL FIELD DISABLED**:
+   - User cannot change email (business rule)
+   - Input disabled={true} prevents user from typing
+   - Still sanitize on change (defensive programming)
+
+2. **PHONE INPUT VALIDATION**:
+   - vue-tel-input validates international format
+   - Backend should validate phone format
+   - Consider adding front-end validation for user feedback
+
+3. **SANITIZATION**:
+   - sanitize() utility used on email input
+   - Should be applied to all text inputs
+   - Prevent XSS attacks via fullName, firstName, lastName
+
+4. **AGREEMENT CHECKBOXES**:
+   - marketingAgreement/whatsappAgreement control communication opt-in/opt-out
+   - Business rule: checked = user does NOT want communications
+   - Backend respects this flag (do not send marketing emails if false)
+
+5. **API AUTHENTICATION**:
+   - All endpoints require Bearer token (JWT)
+   - Access token should be in Authorization header
+   - Refresh token should be HttpOnly cookie (not accessible from JS)
+
+6. **LIBRAPAY ID STRIPPING**:
+   - Librapay IDs are stored as "librapay_{id}" in database
+   - Must strip prefix before calling cancel API
+   - If prefix not stripped, API will fail (good error handling)
+
+7. **BLOB DOWNLOADS**:
+   - PDF downloads trigger browser download
+   - URL.createObjectURL creates temporary URL
+   - URL.revokeObjectURL prevents further access
+   - PDF should be encrypted/password-protected if sensitive
+
+8. **FUTURE SUBSCRIPTION LOGIC**:
+   - Checks if future subscription starts >= current subscription ends
+   - Prevents cancelling a subscription that will be replaced
+   - Protects user from service interruption
+
+================================================================================
+DEPLOYMENT CHECKLIST
+================================================================================
+
+PRE-DEPLOYMENT:
+
+1. Code Review:
+   - [ ] All TypeScript/Vue 3 syntax correct
+   - [ ] No console.error() or console.warn() in production
+   - [ ] Removed all @ts-ignore comments
+   - [ ] No hardcoded URLs or secrets
+
+2. Testing:
+   - [ ] Unit tests passing (90%+ coverage)
+   - [ ] Integration tests passing
+   - [ ] E2E tests passing (all flows)
+   - [ ] Manual testing on multiple browsers
+   - [ ] Responsive design (mobile, tablet, desktop)
+
+3. Performance:
+   - [ ] Lighthouse score > 90 (Performance)
+   - [ ] No memory leaks (DevTools profiler)
+   - [ ] Bundle size acceptable
+   - [ ] Images optimized (SVG for icons, WebP for photos)
+
+4. Accessibility:
+   - [ ] All form inputs have associated labels
+   - [ ] ARIA attributes where needed
+   - [ ] Keyboard navigation working
+   - [ ] Screen reader compatible
+
+5. Browser Compatibility:
+   - [ ] Chrome/Edge (latest 2 versions)
+   - [ ] Firefox (latest 2 versions)
+   - [ ] Safari (latest 2 versions)
+   - [ ] Mobile browsers (iOS Safari, Chrome Android)
+
+6. Security:
+   - [ ] No hardcoded API keys or secrets
+   - [ ] CORS headers configured correctly
+   - [ ] HTTPS only (no HTTP)
+   - [ ] CSP headers set correctly
+
+7. Dependencies:
+   - [ ] All npm packages up to date
+   - [ ] No known vulnerabilities (npm audit)
+   - [ ] Removed unused dependencies
+
+DEPLOYMENT:
+
+1. Frontend Build:
+   - [ ] `npm run build` passes (no errors)
+   - [ ] Build output optimized
+   - [ ] Source maps excluded from production
+
+2. Environment Setup:
+   - [ ] API_BASE_URL configured for production
+   - [ ] Feature flags set correctly
+   - [ ] Analytics tracking enabled
+
+3. Deploy:
+   - [ ] Deploy to staging first
+   - [ ] Smoke testing on staging
+   - [ ] Database migrations (if any) applied
+   - [ ] Cache invalidated (CDN, browser cache)
+   - [ ] Monitor error tracking (Sentry)
+
+4. Post-Deployment:
+   - [ ] Monitor Core Web Vitals
+   - [ ] Monitor API response times
+   - [ ] Monitor error rates
+   - [ ] Check user feedback/support tickets
+   - [ ] Rollback plan ready if issues
+
+================================================================================
+MIGRATION COMPLETION CHECKLIST
+================================================================================
+
+Profile Module Migration Status:
+
+COMPLETED:
+- [ ] Profile Edit Page (main view) - Task 1
+- [ ] InvoicesTable Component - Task 2
+- [ ] EditSubscriptions Component - Task 3
+- [ ] Module integration & documentation - Task 4
+
+CODE MIGRATION:
+- [ ] Convert TypeScript types to Vue 3 compatible
+- [ ] Migrate Redux to Pinia store
+- [ ] Implement vue-tel-input for phone input
+- [ ] Update API service calls (if endpoints changed)
+- [ ] Migrate all styles (SCSS/CSS)
+
+TESTING:
+- [ ] Unit tests written for all components
+- [ ] Integration tests written
+- [ ] E2E tests written
+- [ ] Manual testing completed
+- [ ] Cross-browser testing completed
+
+DOCUMENTATION:
+- [ ] API documentation updated
+- [ ] Component documentation added
+- [ ] Changelog updated
+- [ ] Migration guide created
+
+REVIEW & SIGN-OFF:
+- [ ] Code review passed
+- [ ] QA sign-off
+- [ ] Product owner sign-off
+- [ ] Ready for deployment
+
+================================================================================
+FINAL NOTES
+================================================================================
+
+**MIGRATION HIGHLIGHTS:**
+
+1. Profile module is critical user-facing feature
+   - Users manage account details, subscriptions, invoices
+   - High-frequency interactions expected
+   - Performance and UX are priorities
+
+2. Complex business logic in subscriptions
+   - cancel_at_period_end flag management
+   - Future subscription interruption prevention
+   - Gateway-specific handling (Stripe vs Librapay)
+
+3. Careful attention to data mapping
+   - subscriptionId → productName mapping via subscriptionTypes
+   - Linked subscription lookup via metadata.internalSubscriptionId
+   - Fallback handling (e.g., "N/A" for missing subscriptions)
+
+4. User-facing messaging is important
+   - Checkpoint warning messages for subscription cancellation
+   - Romanian language support (dayjs locale)
+   - Clear CTAs and navigation paths
+
+5. Performance optimization opportunities
+   - Lazy load view states (done by default with v-if)
+   - Memoize computed values (subscription mapping)
+   - Implement skeleton loaders (recommended)
+
+**RECOMMENDED NEXT STEPS:**
+
+1. Complete Profile Edit Page migration (Task 1)
+2. Complete InvoicesTable migration (Task 2)
+3. Complete EditSubscriptions migration (Task 3)
+4. Test all three components together
+5. Integrate with other web client modules (dashboard, etc.)
+6. Performance testing and optimization
+7. QA testing and sign-off
+8. Deploy to staging, then production
+
+**POTENTIAL BLOCKERS:**
+
+1. vue-tel-input component availability and customization
+2. Pinia store structure for subscriptions
+3. API response structure differences between staging/prod
+4. UserBoard component reusability (needs to be from Vue 3 dashboard)
+
+================================================================================
+END OF PROFILE MODULE DOCUMENTATION
+================================================================================
+
+
+
+
+================================================================================
+TASK 1: PROFILE EDIT PAGE (MAIN VIEW)
+================================================================================
+
+TASK TYPE: Page Migration
+PRIORITY: High
+ESTIMATED EFFORT: 2 story points
+
+================================================================================
+BUSINESS LOGIC
+================================================================================
+
+Pagina principală de profil (profil-editare) este hub-ul de management al contului utilizatorului:
+
+1. LA ÎNCĂRCARE:
+   - Verifică dacă utilizatorul este autentificat (authUser?.id)
+   - Dacă NU → redirect la pagina 404
+   - Dacă DA → fetch user details by ID pentru a prelua date actualizate din server
+   - Setează phone din răspuns pentru react-phone-input-2
+   - Afișează UserBoard component (același din dashboard)
+
+2. VIEW STATES (3 stări exclusive):
+   - displayProducts = false, displayInvoices = false → PROFILE EDIT FORM (default)
+   - displayProducts = true → SUBSCRIPTIONS MANAGEMENT VIEW
+   - displayInvoices = true → INVOICES TABLE VIEW
+
+3. NAVIGATION ÎNTRE VIEW-URI:
+   - UserBoard are 2 butoane: "Abonamente" și "Facturi"
+   - Click "Abonamente":
+     * toggleProduct() → setDisplayProducts(true) + setDisplayInvoices(false)
+   - Click "Facturi":
+     * toggleInvoices() → setDisplayInvoices(true) + setDisplayProducts(false)
+   - Back buttons în fiecare view → setDisplay...(false)
+
+4. USERBOARD INTEGRATION:
+   - Prop editingProfile={true} → afișează butoane "Abonamente" și "Facturi"
+   - Prop toggleProduct={callback}
+   - Prop toggleInvoices={callback}
+   - Prop setMainSubscriptionTypes={setSubscriptionTypes} → callback pentru a popula subscriptionTypes în parent
+
+5. SUBSCRIPTION TYPES SHARING:
+   - InvoicesTable needs subscriptionTypes pentru mapping subscriptionId → productName
+   - subscriptionTypes state definit în parent (Profile page)
+   - Passed via setMainSubscriptionTypes callback from UserBoard
+   - Passed as prop to InvoicesTable
+
+6. LAYOUT:
+   - AppLayout cu authority={UserRoles.CUSTOMER}
+   - PageHelmet cu title="{authUser.fullName} • Profil"
+   - FloatButton.BackTop pentru scroll to top
+   - Responsive grid (Col span={24})
+
+================================================================================
+CURRENT IMPLEMENTATION (NEXT.JS + REACT)
+================================================================================
+
+FILE: web/src/pages/profil-editare/index.tsx (373 lines)
+
+```tsx
+import {
+  FloatButton,
+  Row,
+  Col,
+  Typography,
+  Form,
+  Input,
+  message,
+  Checkbox,
+  Select,
+  DatePicker,
+} from "antd/lib";
+import {
+  LoadingOutlined,
+  MailFilled,
+  PhoneFilled,
+} from "@ant-design/icons/lib";
+
+import React, { useEffect, useState } from "react";
+import { useDispatch, useSelector } from "react-redux";
+import { NextPage } from "next";
+import dayjs from "dayjs";
+import PhoneInput from "react-phone-input-2";
+
+import { sanitize } from "@/lib/sanitize";
+import { FormDataType } from "../auth/inregistrare";
+import { UserRoles } from "@/@types/enums/user-role.enum";
+import { readableRoles } from "../../../config/constants";
+import { fetchUserById, updateUser } from "@/services/api/api";
+
+import { PageHelmet } from "@/components/global/PageHelmet";
+import { AppLayout } from "@/layouts/AppLayout";
+import { Content } from "antd/es/layout/layout";
+
+import NotFoundPage from "../404";
+import UserBoard from "@/components/pages/dashboard/UserBoard/UserBoard";
+import CustomButton from "@/components/global/Button/button";
+import EditSubscriptions from "@/components/pages/profil-editare/EditSubscriptions";
+import InvoicesTable from "./InvoicesTable";
+
+const { Title, Paragraph } = Typography;
+
+const Profile: NextPage<any> = (): JSX.Element => {
+  const dispatch = useDispatch();
+  const authUser = useSelector((state: any) => state.user);
+  const roleName =
+    readableRoles[authUser?.role.toString() as keyof typeof readableRoles];
+  const { subscriptions } = useSelector((state: any) => state.subscriptions);
+  const [form] = Form.useForm();
+
+  const [displayProducts, setDisplayProducts] = useState(false);
+  const [displayInvoices, setDisplayInvoices] = useState(false);
+
+  const [user, setUser] = useState<any>(authUser);
+  const [phone, setPhone] = useState("");
+  const [requestOnGoing, setRequestOnGoing] = useState(false);
+
+  const [subscriptionTypes, setSubscriptionTypes] = useState([]);
+
+  useEffect(() => {
+    if (!authUser?.id) return;
+    const fetchUser = async () => {
+      try {
+        const res = await fetchUserById(authUser.id);
+        if (res?.status === 200) {
+          setUser(res.data);
+          setPhone(res.data?.phone);
+        }
+      } catch (error) {
+        message.error("Eroare la preluarea utilizatorului.");
+      }
+    };
+    fetchUser();
+  }, [authUser?.id]);
+
+  const onSubmit = async (values: FormDataType) => {
+    setRequestOnGoing(true);
+
+    const sanitizedEmail = sanitize(values.email);
+
+    try {
+      const res = await updateUser({
+        fullName: `${values.firstName} ${values.lastName}`,
+        phone,
+        email: sanitizedEmail,
+        gender: values.gender,
+        birthdate: values.birthdate
+          ? dayjs(values.birthdate).format("YYYY-MM-DD")
+          : undefined,
+        marketingAgreement: !values.marketingAgreement,
+        whatsappAgreement: !values.whatsappAgreement,
+      });
+
+      if ([200, 201].includes(res?.status)) {
+        dispatch({ type: "UPDATE_USER", payload: res.data });
+        message.success("Cont actualizat cu succes.");
+        setRequestOnGoing(false);
+      } else {
+        setRequestOnGoing(false);
+        throw new Error("Înregistrare eșuată. Verifică datele.");
+      }
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        message.error(error.message);
+      } else {
+        message.error("A apărut o eroare necunoscută.");
+      }
+      setRequestOnGoing(false);
+    }
+  };
+
+  if (!authUser?.id) return <NotFoundPage />;
+
+  return (
+    <AppLayout
+      authority={UserRoles.CUSTOMER}
+      layoutClass={roleName + "-page profile-page"}
+    >
+      <PageHelmet title={`${authUser.fullName} • Profil`} />
+      <FloatButton.BackTop />
+
+      <Row>
+        <Col xl={24} lg={24} md={24} sm={24} xs={24}>
+          <Row>
+            <Col xl={24} lg={24} md={24} sm={24} xs={24}>
+              <UserBoard
+                authUser={authUser}
+                subscriptions={subscriptions}
+                editingProfile={true}
+                toggleProduct={() => {
+                  if (displayInvoices) setDisplayInvoices(false);
+                  setDisplayProducts(!displayProducts);
+                }}
+                toggleInvoices={() => {
+                  if (displayProducts) setDisplayProducts(false);
+                  setDisplayInvoices(!displayInvoices);
+                }}
+                setMainSubscriptionTypes={setSubscriptionTypes}
+              />
+            </Col>
+          </Row>
+
+          {/* VIEW SWITCHING */}
+          <div id="profile" className="profile-page-wrapper">
+            {displayProducts ? (
+              <Content className="main">
+                <EditSubscriptions
+                  setDisplayProducts={setDisplayProducts}
+                  subscriptions={subscriptions}
+                  paymentSubscriptions={[]}
+                />
+              </Content>
+            ) : displayInvoices ? (
+              <Content className="main">
+                <Title level={4} className="title">
+                  Facturile tale
+                </Title>
+                <InvoicesTable subscriptionTypes={subscriptionTypes} />
+                <CustomButton
+                  type="primary"
+                  onClick={() => setDisplayInvoices(false)}
+                >
+                  Înapoi la profil
+                </CustomButton>
+              </Content>
+            ) : (
+              <Content className={"main profile-edit-content"}>
+                <Title level={4} className="title">
+                  Date personale
+                </Title>
+                <Form
+                  form={form}
+                  name="sign-up"
+                  initialValues={{
+                    firstName: user.fullName?.split(" ")[0],
+                    lastName: user.fullName?.split(" ")[1],
+                    gender: user.gender?.toString(),
+                    email: user.email,
+                    phone: user.phone,
+                    birthdate: user.birthdate ? dayjs(user.birthdate) : null,
+                    marketingAgreement: !user.marketingAgreement,
+                    whatsappAgreement: !user.whatsappAgreement,
+                  }}
+                  onFinish={onSubmit}
+                  size="middle"
+                  scrollToFirstError
+                >
+                  <Row className="row-item">
+                    <Col lg={24} md={24} xs={24}>
+                      <Row gutter={15}>
+                        <Col lg={12} md={12} xs={24}>
+                          <Form.Item
+                            label="Nume"
+                            name="firstName"
+                            rules={[
+                              {
+                                required: true,
+                                message: "Camp obligatoriu.",
+                                whitespace: true,
+                              },
+                            ]}
+                          >
+                            <Input placeholder="Popescu" />
+                          </Form.Item>
+                        </Col>
+                        <Col lg={12} md={12} xs={24}>
+                          <Form.Item
+                            label="Prenume"
+                            name="lastName"
+                            rules={[
+                              {
+                                required: true,
+                                message: "Camp obligatoriu.",
+                                whitespace: true,
+                              },
+                            ]}
+                          >
+                            <Input placeholder="Ionut" />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+
+                      <Row gutter={15}>
+                        <Col lg={12} md={24} xs={12}>
+                          <Form.Item label="Sex" name="gender">
+                            <Select placeholder="Selectează sexul">
+                              <Select.Option value="1">Masculin</Select.Option>
+                              <Select.Option value="2">Feminin</Select.Option>
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                        <Col lg={12} md={24} xs={12}>
+                          <Form.Item label="Data nașterii" name="birthdate">
+                            <DatePicker
+                              format="DD/MM/YYYY"
+                              placeholder="Selectează data nașterii"
+                            />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+
+                      <Row gutter={15}>
+                        <Col lg={12} md={24} xs={24}>
+                          <Form.Item
+                            className={"phone-input"}
+                            label="Telefon"
+                            name="phone"
+                            rules={[
+                              {
+                                required: false,
+                                message: "Telefonul este obligatoriu.",
+                              },
+                            ]}
+                          >
+                            <>
+                              <PhoneFilled className="prefix-icon" />
+                              <PhoneInput
+                                country={"ro"}
+                                value={phone}
+                                onChange={(value) => setPhone(value)}
+                                placeholder="0712 123 123"
+                              />
+                            </>
+                          </Form.Item>
+                        </Col>
+                        <Col lg={12} md={24} xs={24}>
+                          <Form.Item name="email" label="Email">
+                            <Input
+                              prefix={<MailFilled />}
+                              placeholder="exemplu@email.com"
+                              aria-label="Adresa de email"
+                              disabled={true}
+                              onChange={(e) => {
+                                form.setFieldsValue({
+                                  email: sanitize(e.target.value),
+                                });
+                              }}
+                            />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                    </Col>
+                  </Row>
+
+                  <Title level={4} className="title">
+                    Tu ești în control
+                  </Title>
+
+                  <Row className="type-button-link">
+                    <Col lg={24} md={24} xs={24}>
+                      <Paragraph>
+                        Știm cât de important este să ai un spațiu liniștit și
+                        să primești doar informațiile care contează cu adevărat
+                        pentru tine. Te invităm să alegi cum vrei să comunicăm:
+                      </Paragraph>
+                      <Form.Item
+                        className="align-left marketing-agreement"
+                        name="marketingAgreement"
+                        valuePropName="checked"
+                      >
+                        <Checkbox>
+                          <strong>Nu vreau să primesc email-uri:</strong> Ne
+                          oprim din a-ți trimite noutăți sau actualizări. Îți
+                          vom trimite doar ce e esențial pentru contul tău.
+                        </Checkbox>
+                      </Form.Item>
+                    </Col>
+
+                    <Col lg={24} md={24} xs={24}>
+                      <Form.Item
+                        className="align-left"
+                        name="whatsappAgreement"
+                        valuePropName="checked"
+                      >
+                        <Checkbox>
+                          <strong>
+                            Nu vreau să primesc mesaje pe WhatsApp:
+                          </strong>{" "}
+                          Îți respectăm timpul și spațiul, așa că nu vei mai
+                          primi notificări rapide despre cursuri și activități.
+                        </Checkbox>
+                      </Form.Item>
+
+                      <Paragraph>
+                        🌱 Amintește-ți că aceste setări nu sunt definitive.
+                        Poți reveni oricând aici și să le ajustezi, exact așa
+                        cum ai nevoie.
+                      </Paragraph>
+                    </Col>
+                  </Row>
+
+                  <Form.Item className="item-container-submit">
+                    <CustomButton
+                      type="primary"
+                      size="small"
+                      htmlType="submit"
+                      className="submit"
+                      loading={requestOnGoing}
+                    >
+                      {requestOnGoing ? (
+                        <LoadingOutlined />
+                      ) : (
+                        "Salvează modificările"
+                      )}
+                    </CustomButton>
+                  </Form.Item>
+                </Form>
+              </Content>
+            )}
+          </div>
+        </Col>
+      </Row>
+    </AppLayout>
+  );
+};
+
+export default Profile;
+```
+
+KEY PATTERNS:
+- Three exclusive view states (profile/subscriptions/invoices)
+- View toggle callbacks passed to UserBoard
+- subscriptionTypes state shared between UserBoard and InvoicesTable
+- User fetched on mount to sync latest data
+- Phone managed separately from form (react-phone-input-2)
+- Form pre-filled with user data (fullName split to firstName/lastName)
+- Marketing/WhatsApp checkboxes inverted (!values.marketingAgreement)
+- Email disabled (cannot be changed)
+- FloatButton.BackTop for scroll to top
+- NotFoundPage if !authUser?.id
+
+================================================================================
+TARGET IMPLEMENTATION (NUXT 3 + VUE 3)
+================================================================================
+
+FILE: web/pages/profil-editare/index.vue
+
+```vue
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue';
+import { useRouter } from '#app';
+import { useUserStore } from '~/stores/user';
+import { useSubscriptionsStore } from '~/stores/subscriptions';
+import {
+  Row,
+  Col,
+  Typography,
+  Form,
+  Input,
+  message,
+  FloatButton,
+  Checkbox,
+  Select,
+  DatePicker,
+} from 'ant-design-vue';
+import {
+  LoadingOutlined,
+  MailFilled,
+  PhoneFilled,
+} from '@ant-design/icons-vue';
+import dayjs from 'dayjs';
+import { VueTelInput } from 'vue-tel-input';
+import 'vue-tel-input/vue-tel-input.css';
+
+import { sanitize } from '~/lib/sanitize';
+import { UserRoles } from '~/@types/enums/user-role.enum';
+import { readableRoles } from '~/config/constants';
+import { fetchUserById, updateUser } from '~/services/api/api';
+
+import PageHelmet from '~/components/global/PageHelmet.vue';
+import AppLayout from '~/layouts/AppLayout.vue';
+import UserBoard from '~/components/pages/dashboard/UserBoard/UserBoard.vue';
+import CustomButton from '~/components/global/Button/button.vue';
+import EditSubscriptions from '~/components/pages/profil-editare/EditSubscriptions.vue';
+import InvoicesTable from './components/InvoicesTable.vue';
+
+const { Title, Paragraph } = Typography;
+
+// Stores
+const userStore = useUserStore();
+const subscriptionsStore = useSubscriptionsStore();
+const router = useRouter();
+
+// Computed
+const authUser = computed(() => userStore.user);
+const roleName = computed(() => {
+  const role = authUser.value?.role?.toString();
+  return readableRoles[role as keyof typeof readableRoles];
+});
+const subscriptions = computed(() => subscriptionsStore.subscriptions);
+
+// Refs
+const formRef = ref();
+const displayProducts = ref(false);
+const displayInvoices = ref(false);
+const user = ref<any>(authUser.value);
+const phone = ref('');
+const requestOnGoing = ref(false);
+const subscriptionTypes = ref([]);
+
+// Form initial values
+const formState = computed(() => ({
+  firstName: user.value.fullName?.split(' ')[0],
+  lastName: user.value.fullName?.split(' ')[1],
+  gender: user.value.gender?.toString(),
+  email: user.value.email,
+  phone: user.value.phone,
+  birthdate: user.value.birthdate ? dayjs(user.value.birthdate) : null,
+  marketingAgreement: !user.value.marketingAgreement,
+  whatsappAgreement: !user.value.whatsappAgreement,
+}));
+
+// Lifecycle
+onMounted(async () => {
+  if (!authUser.value?.id) {
+    await navigateTo('/404');
+    return;
+  }
+
+  try {
+    const res = await fetchUserById(authUser.value.id);
+    if (res?.status === 200) {
+      user.value = res.data;
+      phone.value = res.data?.phone || '';
+    }
+  } catch (error) {
+    message.error('Eroare la preluarea utilizatorului.');
+  }
+});
+
+// Methods
+const onSubmit = async (values: any) => {
+  requestOnGoing.value = true;
+
+  const sanitizedEmail = sanitize(values.email);
+
+  try {
+    const res = await updateUser({
+      fullName: `${values.firstName} ${values.lastName}`,
+      phone: phone.value,
+      email: sanitizedEmail,
+      gender: values.gender,
+      birthdate: values.birthdate
+        ? dayjs(values.birthdate).format('YYYY-MM-DD')
+        : undefined,
+      marketingAgreement: !values.marketingAgreement,
+      whatsappAgreement: !values.whatsappAgreement,
+    });
+
+    if ([200, 201].includes(res?.status)) {
+      userStore.updateUser(res.data);
+      message.success('Cont actualizat cu succes.');
+      requestOnGoing.value = false;
+    } else {
+      requestOnGoing.value = false;
+      throw new Error('Înregistrare eșuată. Verifică datele.');
+    }
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      message.error(error.message);
+    } else {
+      message.error('A apărut o eroare necunoscută.');
+    }
+    requestOnGoing.value = false;
+  }
+};
+
+const toggleProduct = () => {
+  if (displayInvoices.value) displayInvoices.value = false;
+  displayProducts.value = !displayProducts.value;
+};
+
+const toggleInvoices = () => {
+  if (displayProducts.value) displayProducts.value = false;
+  displayInvoices.value = !displayInvoices.value;
+};
+
+const handlePhoneInput = (phoneObject: any) => {
+  phone.value = phoneObject.number;
+};
+
+// Page meta
+useHead({
+  title: `${authUser.value?.fullName || 'Profil'} • Profil`,
+});
+
+definePageMeta({
+  middleware: 'auth',
+  layout: 'default',
+});
+</script>
+
+<template>
+  <AppLayout
+    :authority="UserRoles.CUSTOMER"
+    :layout-class="`${roleName}-page profile-page`"
+  >
+    <PageHelmet :title="`${authUser?.fullName} • Profil`" />
+    <FloatButton.BackTop />
+
+    <Row>
+      <Col :xl="24" :lg="24" :md="24" :sm="24" :xs="24">
+        <Row>
+          <Col :xl="24" :lg="24" :md="24" :sm="24" :xs="24">
+            <UserBoard
+              :auth-user="authUser"
+              :subscriptions="subscriptions"
+              :editing-profile="true"
+              :toggle-product="toggleProduct"
+              :toggle-invoices="toggleInvoices"
+              :set-main-subscription-types="(types: any) => subscriptionTypes = types"
+            />
+          </Col>
+        </Row>
+
+        <!-- VIEW SWITCHING -->
+        <div id="profile" class="profile-page-wrapper">
+          <!-- SUBSCRIPTIONS VIEW -->
+          <div v-if="displayProducts" class="main">
+            <EditSubscriptions
+              :subscriptions="subscriptions"
+              :payment-subscriptions="[]"
+              :set-display-products="(val: boolean) => displayProducts = val"
+            />
+          </div>
+
+          <!-- INVOICES VIEW -->
+          <div v-else-if="displayInvoices" class="main">
+            <Title :level="4" class="title">Facturile tale</Title>
+            <InvoicesTable :subscription-types="subscriptionTypes" />
+            <CustomButton
+              type="primary"
+              @click="displayInvoices = false"
+            >
+              Înapoi la profil
+            </CustomButton>
+          </div>
+
+          <!-- PROFILE EDIT VIEW (DEFAULT) -->
+          <div v-else class="main profile-edit-content">
+            <Title :level="4" class="title">Date personale</Title>
+            <Form
+              ref="formRef"
+              name="sign-up"
+              :model="formState"
+              @finish="onSubmit"
+              size="middle"
+              :scroll-to-first-error="true"
+            >
+              <Row class="row-item">
+                <Col :lg="24" :md="24" :xs="24">
+                  <Row :gutter="15">
+                    <Col :lg="12" :md="12" :xs="24">
+                      <Form.Item
+                        label="Nume"
+                        name="firstName"
+                        :rules="[
+                          {
+                            required: true,
+                            message: 'Camp obligatoriu.',
+                            whitespace: true,
+                          },
+                        ]"
+                      >
+                        <Input placeholder="Popescu" />
+                      </Form.Item>
+                    </Col>
+                    <Col :lg="12" :md="12" :xs="24">
+                      <Form.Item
+                        label="Prenume"
+                        name="lastName"
+                        :rules="[
+                          {
+                            required: true,
+                            message: 'Camp obligatoriu.',
+                            whitespace: true,
+                          },
+                        ]"
+                      >
+                        <Input placeholder="Ionut" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+
+                  <Row :gutter="15">
+                    <Col :lg="12" :md="24" :xs="12">
+                      <Form.Item label="Sex" name="gender">
+                        <Select placeholder="Selectează sexul">
+                          <Select.Option value="1">Masculin</Select.Option>
+                          <Select.Option value="2">Feminin</Select.Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col :lg="12" :md="24" :xs="12">
+                      <Form.Item label="Data nașterii" name="birthdate">
+                        <DatePicker
+                          format="DD/MM/YYYY"
+                          placeholder="Selectează data nașterii"
+                        />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+
+                  <Row :gutter="15">
+                    <Col :lg="12" :md="24" :xs="24">
+                      <Form.Item
+                        class="phone-input"
+                        label="Telefon"
+                        name="phone"
+                        :rules="[
+                          {
+                            required: false,
+                            message: 'Telefonul este obligatoriu.',
+                          },
+                        ]"
+                      >
+                        <div>
+                          <PhoneFilled class="prefix-icon" />
+                          <VueTelInput
+                            v-model="phone"
+                            default-country="RO"
+                            @input="handlePhoneInput"
+                            :input-options="{ placeholder: '0712 123 123' }"
+                          />
+                        </div>
+                      </Form.Item>
+                    </Col>
+                    <Col :lg="12" :md="24" :xs="24">
+                      <Form.Item name="email" label="Email">
+                        <Input
+                          :prefix="h(MailFilled)"
+                          placeholder="exemplu@email.com"
+                          aria-label="Adresa de email"
+                          :disabled="true"
+                        />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                </Col>
+              </Row>
+
+              <Title :level="4" class="title">Tu ești în control</Title>
+
+              <Row class="type-button-link">
+                <Col :lg="24" :md="24" :xs="24">
+                  <Paragraph>
+                    Știm cât de important este să ai un spațiu liniștit și să
+                    primești doar informațiile care contează cu adevărat pentru
+                    tine. Te invităm să alegi cum vrei să comunicăm:
+                  </Paragraph>
+                  <Form.Item
+                    class="align-left marketing-agreement"
+                    name="marketingAgreement"
+                    value-prop-name="checked"
+                  >
+                    <Checkbox>
+                      <strong>Nu vreau să primesc email-uri:</strong> Ne oprim
+                      din a-ți trimite noutăți sau actualizări. Îți vom trimite
+                      doar ce e esențial pentru contul tău.
+                    </Checkbox>
+                  </Form.Item>
+                </Col>
+
+                <Col :lg="24" :md="24" :xs="24">
+                  <Form.Item
+                    class="align-left"
+                    name="whatsappAgreement"
+                    value-prop-name="checked"
+                  >
+                    <Checkbox>
+                      <strong>Nu vreau să primesc mesaje pe WhatsApp:</strong>
+                      Îți respectăm timpul și spațiul, așa că nu vei mai primi
+                      notificări rapide despre cursuri și activități.
+                    </Checkbox>
+                  </Form.Item>
+
+                  <Paragraph>
+                    🌱 Amintește-ți că aceste setări nu sunt definitive. Poți
+                    reveni oricând aici și să le ajustezi, exact așa cum ai
+                    nevoie.
+                  </Paragraph>
+                </Col>
+              </Row>
+
+              <Form.Item class="item-container-submit">
+                <CustomButton
+                  type="primary"
+                  size="small"
+                  html-type="submit"
+                  class="submit"
+                  :loading="requestOnGoing"
+                >
+                  <LoadingOutlined v-if="requestOnGoing" />
+                  <span v-else>Salvează modificările</span>
+                </CustomButton>
+              </Form.Item>
+            </Form>
+          </div>
+        </div>
+      </Col>
+    </Row>
+  </AppLayout>
+</template>
+
+<style scoped>
+/* Import existing profile styles */
+@import '~/assets/styles/pages/profile.scss';
+</style>
+```
+
+KEY CHANGES:
+1. **useSelector → computed()**:
+   - `useSelector((state) => state.user)` → `computed(() => userStore.user)`
+2. **useDispatch → Pinia actions**:
+   - `dispatch({ type: 'UPDATE_USER' })` → `userStore.updateUser(payload)`
+3. **react-phone-input-2 → vue-tel-input**:
+   - `<PhoneInput country="ro" value={phone} onChange={setPhone} />` → `<VueTelInput v-model="phone" default-country="RO" @input="handlePhoneInput" />`
+4. **Form handling**:
+   - `:model="formState"` binds form values
+   - `@finish="onSubmit"` handles submit
+5. **View state**:
+   - `v-if="displayProducts"` / `v-else-if="displayInvoices"` / `v-else`
+6. **Router**:
+   - `useRouter()` from '#app'
+   - `await navigateTo('/404')` instead of `return <NotFoundPage />`
+
+================================================================================
+API REQUEST/RESPONSE
+================================================================================
+
+REQUEST: GET /v1/users/:id
+Headers: {
+  Authorization: "Bearer {accessToken}"
+}
+
+RESPONSE: 200 OK
+{
+  "id": 123,
+  "fullName": "Popescu Ionut",
+  "email": "user@example.com",
+  "phone": "40712123123",
+  "gender": 1,
+  "birthdate": "1990-05-15",
+  "marketingAgreement": false,
+  "whatsappAgreement": true,
+  "role": 2,
+  "hasPicture": true,
+  "picVersion": 3
+}
+
+---
+
+REQUEST: PUT /v1/users/update
+Headers: {
+  Authorization: "Bearer {accessToken}",
+  Content-Type: "application/json"
+}
+Body: {
+  "fullName": "Popescu Ionut",
+  "phone": "40712123123",
+  "email": "user@example.com",
+  "gender": "1",
+  "birthdate": "1990-05-15",
+  "marketingAgreement": true,
+  "whatsappAgreement": false
+}
+
+RESPONSE: 200 OK
+{
+  "id": 123,
+  "fullName": "Popescu Ionut",
+  "email": "user@example.com",
+  "phone": "40712123123",
+  "gender": 1,
+  "birthdate": "1990-05-15",
+  "marketingAgreement": true,
+  "whatsappAgreement": false,
+  "updatedAt": "2023-11-15T10:30:00Z"
+}
+
+================================================================================
+DEPENDENCIES
+================================================================================
+
+CURRENT (REACT):
+- next (15.2.4)
+- react (18.2.0)
+- react-redux (9.1.0)
+- antd (5.24.2)
+- dayjs (1.11.13)
+- react-phone-input-2 (2.15.1)
+- @ant-design/icons (5.5.2)
+- UserBoard component (dashboard)
+- EditSubscriptions component
+- InvoicesTable component
+- PageHelmet component
+- AppLayout component
+- CustomButton component
+- sanitize utility
+- NotFoundPage
+
+TARGET (VUE):
+- nuxt (3.15+)
+- vue (3.4+)
+- pinia (2.1+)
+- ant-design-vue (4.x)
+- dayjs (1.11.13) - same
+- vue-tel-input (8.1+)
+- @ant-design/icons-vue (7.x)
+- UserBoard component (dashboard)
+- EditSubscriptions component
+- InvoicesTable component
+- PageHelmet composable
+- AppLayout component
+- CustomButton component
+- sanitize utility
+- useRouter from '#app'
+
+================================================================================
+AUTHORIZATION
+================================================================================
+
+- Page requires authentication (middleware: 'auth')
+- AppLayout authority: UserRoles.CUSTOMER
+- If !authUser?.id → navigateTo('/404')
+
+================================================================================
+NOTES
+================================================================================
+
+1. USER FETCH ON MOUNT:
+   - Always fetch user by ID to get latest data from server
+   - Don't rely solely on Redux/Pinia store (may be stale)
+   - Sync phone state from API response
+
+2. VIEW STATE EXCLUSIVITY:
+   - Only ONE view active at a time (profile/subscriptions/invoices)
+   - Toggle functions ensure mutual exclusivity
+   - displayInvoices → false when displayProducts → true (and vice versa)
+
+3. SUBSCRIPTION TYPES CALLBACK:
+   - UserBoard fetches subscriptionTypes in its own lifecycle
+   - Passes back to parent via setMainSubscriptionTypes callback
+   - Parent stores in subscriptionTypes state
+   - Passed down to InvoicesTable as prop
+
+4. FORM PRE-FILL:
+   - fullName split to firstName/lastName (assumes "FirstName LastName" format)
+   - gender converted to string (API expects string in form)
+   - birthdate converted to dayjs object for DatePicker
+   - marketingAgreement/whatsappAgreement INVERTED (form checkbox = "do NOT send")
+
+5. PHONE INPUT:
+   - Managed separately from form state (react-phone-input-2 / vue-tel-input)
+   - Country code default: RO (Romania)
+   - Full international format sent to API (e.g., "40712123123")
+
+6. EMAIL DISABLED:
+   - Email cannot be changed (business rule)
+   - Input has disabled={true}
+   - onChange still sanitizes (but never triggered due to disabled)
+
+7. CHECKBOX INVERSION:
+   - marketingAgreement: checked = user does NOT want emails
+   - whatsappAgreement: checked = user does NOT want WhatsApp
+   - On submit: send INVERTED value (!values.marketingAgreement)
+   - Initial value: also INVERTED (!user.marketingAgreement)
+
+8. LOADING STATES:
+   - requestOnGoing during form submit
+   - Submit button shows LoadingOutlined icon
+
+9. FLOAT BUTTON:
+   - FloatButton.BackTop allows scroll to top (long form)
+
+10. ERROR HANDLING:
+    - Try-catch on user fetch (message.error)
+    - Try-catch on user update (message.error)
+    - Check res.status [200, 201] for success
+
+================================================================================
+RECOMMENDATIONS
+================================================================================
+
+1. Add form dirty tracking (unsaved changes warning)
+2. Consider optimistic UI update (update store before API response)
+3. Add field-level validation for phone format (validatePhone composable)
+4. Extract phone input to separate component (ProfilePhoneInput.vue)
+5. Add loading skeleton while fetching user data
+6. Implement debounce on phone input change
+7. Add Sentry error tracking for API failures
+8. Consider adding "Cancel" button to revert form changes
+9. Add "Last updated" timestamp display
+10. Implement accessibility labels for all form inputs
+
+================================================================================

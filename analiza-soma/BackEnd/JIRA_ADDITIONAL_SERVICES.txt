@@ -1,0 +1,916 @@
+================================================================================
+JIRA STORY: ADDITIONAL SHARED SERVICES
+================================================================================
+
+Story Title: Additional Shared Services (MailerLite, FirstPromoter, Librapay, Postmark)
+
+Story Type: Story (Shared Service Layer - No Direct Endpoints)
+
+Epic: Somaway Backend Migration to .NET
+
+Story Description:
+------------------
+Acest story documentează cele 4 servicii partajate adiționale folosite across
+multiple module pentru funcționalități critice: email marketing automation
+(MailerLite), affiliate tracking (FirstPromoter), alternative payment gateway
+(Librapay), și transactional emails (Postmark).
+
+Serviciile sunt folosite pentru:
+- **MailerLite**: Email marketing, newsletter subscriptions, segmentare utilizatori
+- **FirstPromoter**: Affiliate tracking pentru program de referral
+- **Librapay**: Alternative payment gateway pentru piața românească (backup la Stripe)
+- **Postmark**: Transactional emails (welcome, recovery, purchase confirmation)
+
+Locație cod sursă:
+- MailerLite: server/src/shared/Services/mailerlite.service.ts
+- FirstPromoter: server/src/shared/Services/first-promoter.service.ts
+- Librapay: server/src/modules/payments/gateways/librapay/librapay.service.ts
+- Postmark: Configured in MailerModule (@nestjs-modules/mailer)
+
+================================================================================
+SERVICE 1: MAILERLITE - EMAIL MARKETING AUTOMATION
+================================================================================
+
+**Service Type**: External API Integration (Email Marketing)
+
+**SDK**: @mailerlite/mailerlite-nodejs
+
+**Configuration**:
+- API Key: from environment MAILERLITE_API_KEY
+- Base URL: https://connect.mailerlite.com/api
+
+**Methods**: 9
+1. subscribeToMarketing() - subscribe user to MailerLite + group
+2. unSubscribeFromMarketing() - delete subscriber
+3. addBulkSubscribersToGroup() - bulk import (batch 200)
+4. getGroupIdByName() - find group by name
+5. createGroup() - create new MailerLite group
+6. retrieveOrCreateGroup() - get or create group
+7. removeSubscriberFromGroup() - unassign subscriber from group
+8. addSubscriberToGroup() - assign subscriber to group
+9. parseFullName() - private helper (split fullName → firstName + lastName)
+
+**Used by**:
+- UserService (bulk export to MailerLite)
+- SubscriptionService (subscribe after purchase)
+- CampaignsService (create campaigns with groups)
+- PaymentsService (subscribe after payment)
+- AuthService (subscribe on signup)
+
+**Integration Points**:
+- User signup → subscribe to general list
+- Purchase subscription → subscribe to product-specific group
+- Bulk user export → addBulkSubscribersToGroup (CSV export)
+- Campaign creation → create group + bulk subscribe
+
+--------------------------------------------------------------------------------
+METHOD 1: subscribeToMarketing() - Subscribe User to MailerLite
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Subscrie un utilizator la MailerLite pentru email marketing. Utilizatorul este
+adăugat în lista generală și opțional într-un grup specific (ex: după purchase).
+
+Flow:
+1. Parse fullName → firstName + lastName
+2. Generate subscribed_at timestamp (UTC format)
+3. Build subscriber params:
+   - email, name, last_name, phone (optional)
+   - status: 'active'
+   - subscribed_at: UTC timestamp
+   - groups: [groupId] (optional)
+   - ip_address: remoteAddress (optional, for compliance)
+4. Call mailerLite.subscribers.createOrUpdate()
+5. Log success/error
+6. Return response data
+
+Cod sursă:
+- Service: src/shared/Services/mailerlite.service.ts:46-82
+
+Method Signature:
+async subscribeToMarketing(
+  authUser: User,
+  groupId?: string,
+  remoteAddress?: string
+)
+
+MailerLite SDK Call:
+mailerLite.subscribers.createOrUpdate({
+  email: "user@example.com",
+  fields: {
+    name: "John",
+    last_name: "Doe",
+    phone: "+40721234567"
+  },
+  status: "active",
+  subscribed_at: "2024-11-02 12:00:00",
+  groups: ["123456"],
+  ip_address: "192.168.1.1"
+})
+
+Response:
+{
+  "data": {
+    "id": "123456",
+    "email": "user@example.com",
+    "status": "active",
+    "groups": [...]
+  }
+}
+
+Dependencies:
+- MailerLite SDK
+- dayjs (UTC formatting)
+
+Notes:
+- createOrUpdate: updates if subscriber exists
+- status always set to 'active'
+- IP address for GDPR compliance
+- Error handling: logs error but doesn't throw
+
+Recommendations for .NET:
+- Use MailerLite .NET SDK or HttpClient
+- Add validation for email format
+- Store MailerLite subscriber ID in database
+- Add retry logic for API failures (Polly)
+- Log all subscribe/unsubscribe for audit trail
+
+--------------------------------------------------------------------------------
+METHOD 2: unSubscribeFromMarketing() - Delete Subscriber
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Șterge un subscriber din MailerLite (GDPR compliance - user requests deletion).
+
+Flow:
+1. Call mailerLite.subscribers.delete(email)
+2. Log success/error
+3. Return response data
+
+Cod sursă:
+- Service: src/shared/Services/mailerlite.service.ts:84-100
+
+Method Signature:
+async unSubscribeFromMarketing(authUser: User)
+
+MailerLite SDK Call:
+mailerLite.subscribers.delete("user@example.com")
+
+Notes:
+- Permanent deletion (NOT just unsubscribe)
+- Error handling: logs but doesn't throw
+
+Recommendations for .NET:
+- Add confirmation step before deletion
+- Log deletion event for compliance audit
+- Consider marking as unsubscribed instead of delete
+
+--------------------------------------------------------------------------------
+METHOD 3: addBulkSubscribersToGroup() - Bulk Import Subscribers
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Importă subscribers în batch-uri către un grup MailerLite. Folosit pentru
+export CSV utilizatori → import în campanie de marketing.
+
+Flow:
+1. Split importedUsers în batch-uri de 200 (avoid URI too long)
+2. Pentru fiecare batch:
+   - POST /groups/{groupId}/import-subscribers
+   - Body: { subscribers: [...], resubscribe: true }
+   - Log progress: "Batch X/Y imported successfully"
+3. Continue cu următorul batch chiar dacă unul failed
+4. Return când toate batch-urile procesate
+
+Cod sursă:
+- Service: src/shared/Services/mailerlite.service.ts:102-140
+
+Method Signature:
+async addBulkSubscribersToGroup(
+  groupId: string,
+  importedUsers: Array<any>
+): Promise<void>
+
+MailerLite API Call:
+POST https://connect.mailerlite.com/api/groups/{groupId}/import-subscribers
+Headers:
+  Authorization: Bearer {MAILERLITE_API_KEY}
+  Content-Type: application/json
+Body:
+{
+  "subscribers": [
+    { "email": "user1@example.com", "fields": { "name": "John" } },
+    { "email": "user2@example.com", "fields": { "name": "Jane" } },
+    ...
+  ],
+  "resubscribe": true
+}
+
+Dependencies:
+- axios (direct HTTP call, not SDK)
+
+Notes:
+- Batch size: 200 subscribers (configurable)
+- resubscribe: true → reactivate unsubscribed users
+- Continues on error (doesn't fail entire import)
+- Uses direct axios call (not SDK)
+
+Recommendations for .NET:
+- Use HttpClient with batching
+- Add progress reporting (IProgress<T>)
+- Add cancellation token support
+- Return batch results (success/failed counts)
+- Add validation for email format before import
+
+--------------------------------------------------------------------------------
+METHOD 4-6: Group Management (retrieveOrCreateGroup, getGroupIdByName, createGroup)
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Gestionează grupuri MailerLite pentru segmentare utilizatori (ex: "Buyers",
+"Premium Subscribers", "Campaign A participants").
+
+retrieveOrCreateGroup():
+1. Call getGroupIdByName(groupName)
+2. If found: return groupId
+3. If not found: createGroup(groupName) → return new groupId
+
+getGroupIdByName():
+1. Call mailerLite.groups.get({ filter: { name }, sort: 'name' })
+2. Find exact match by name
+3. Return groupId or null
+
+createGroup():
+1. Call mailerLite.groups.create({ name: groupName })
+2. Return new groupId
+
+Cod sursă:
+- Service: src/shared/Services/mailerlite.service.ts:142-174
+
+Method Signatures:
+async retrieveOrCreateGroup(groupName: string): Promise<string>
+async getGroupIdByName(groupName: string): Promise<string | null>
+async createGroup(groupName: string): Promise<string>
+
+MailerLite SDK Calls:
+mailerLite.groups.get({ filter: { name: "Premium" }, sort: 'name' })
+mailerLite.groups.create({ name: "Premium" })
+
+Notes:
+- Group names must be unique
+- Error handling: logs and throws
+
+Recommendations for .NET:
+- Cache group IDs in Redis (reduce API calls)
+- Add validation for group name format
+- Return typed DTO: MailerLiteGroup
+
+--------------------------------------------------------------------------------
+METHOD 7-8: Group Subscription Management
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Adaugă sau elimină subscribers din grupuri specifice.
+
+removeSubscriberFromGroup():
+1. Find subscriber by email
+2. Check if subscriber is in group
+3. Unassign subscriber from group
+
+addSubscriberToGroup():
+1. Assign subscriber to group by email + groupId
+
+Cod sursă:
+- Service: src/shared/Services/mailerlite.service.ts:176-217
+
+Method Signatures:
+async removeSubscriberFromGroup(email: string, groupId: string): Promise<void>
+async addSubscriberToGroup(email: string, groupId: string): Promise<void>
+
+MailerLite SDK Calls:
+mailerLite.subscribers.find(email)
+mailerLite.groups.unAssignSubscriber(subscriberId, groupId)
+mailerLite.groups.assignSubscriber(email, groupId)
+
+Notes:
+- Error handling: throws with user-friendly message
+- removeSubscriberFromGroup: validates subscriber is in group first
+
+Recommendations for .NET:
+- Add bulk assign/unassign methods
+- Return success/failure for each operation
+- Add logging for audit trail
+
+================================================================================
+SERVICE 2: FIRSTPROMOTER - AFFILIATE TRACKING
+================================================================================
+
+**Service Type**: External API Integration (Affiliate Tracking)
+
+**Configuration**:
+- Base URL: from config app.firstPromoter.baseUrl
+- Account ID: yovpn9bi (from config)
+- API Token: from config app.firstPromoter.apiKey
+
+**Methods**: 2
+1. trackSignUp() - track user signup for affiliate attribution
+2. trackSale() - track sale/commission for affiliate
+
+**Used by**:
+- AuthService (track signup with referral tracking ID)
+- PaymentsService (track sale after payment)
+
+**Integration Flow**:
+1. User clicks affiliate link → lands on site with `tid` query param
+2. Frontend saves `tid` in localStorage/cookie
+3. User signs up → AuthService.trackSignUp(email, tid)
+4. User purchases → PaymentsService.trackSale(email, transactionId, amount)
+5. FirstPromoter calculates commission for affiliate
+
+--------------------------------------------------------------------------------
+METHOD 1: trackSignUp() - Track User Signup
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Trimite eveniment de signup către FirstPromoter pentru tracking affiliate.
+Asociază user-ul cu affiliate-ul care l-a referit.
+
+Flow:
+1. Validate configuration (baseUrl, accountId, apiToken)
+2. POST /track/signup cu:
+   - email: user email
+   - tid: tracking ID from affiliate link
+   - ip: user IP (optional, for fraud detection)
+   - skip_email_notification: true (don't send email to affiliate yet)
+3. Return response data
+4. Error handling: log + throw HttpException
+
+Cod sursă:
+- Service: src/shared/Services/first-promoter.service.ts:28-61
+
+Method Signature:
+async trackSignUp(
+  email: string,
+  trackingId: string,
+  ip?: string
+): Promise<any>
+
+FirstPromoter API Call:
+POST https://firstpromoter.com/api/v1/track/signup
+Headers:
+  Account-ID: yovpn9bi
+  Authorization: Bearer {apiToken}
+  Content-Type: application/json
+Body:
+{
+  "email": "user@example.com",
+  "tid": "fp_ref_xxxxx",
+  "ip": "192.168.1.1",
+  "skip_email_notification": true
+}
+
+Response:
+{
+  "id": "lead_xxxxx",
+  "email": "user@example.com",
+  "promoter_id": "prm_xxxxx",
+  "created_at": "2024-11-02T12:00:00Z"
+}
+
+Dependencies:
+- HttpService (@nestjs/axios)
+- ConfigService
+
+Notes:
+- tid (tracking ID) captured from referral link
+- skip_email_notification: true (avoid spam to affiliates)
+- Error handling: throws HttpException with API error
+
+Recommendations for .NET:
+- Use HttpClient with Polly retry policy
+- Validate tracking ID format before API call
+- Store FirstPromoter lead ID in database
+- Add webhook handler for commission updates
+
+--------------------------------------------------------------------------------
+METHOD 2: trackSale() - Track Sale for Affiliate
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Trimite eveniment de vânzare către FirstPromoter pentru calculare comision affiliate.
+
+Flow:
+1. POST /track/sale cu:
+   - email: buyer email
+   - event_id: transaction ID (unique)
+   - amount: sale amount in cents (multiply by 100)
+   - currency: sale currency
+   - skip_email_notification: true
+2. Return response data
+3. Error handling: log + throw HttpException
+
+Cod sursă:
+- Service: src/shared/Services/first-promoter.service.ts:63-98
+
+Method Signature:
+async trackSale(
+  email: string,
+  transactionId: string,
+  amount: number,
+  currency: string
+): Promise<any>
+
+FirstPromoter API Call:
+POST https://firstpromoter.com/api/v1/track/sale
+Headers:
+  Account-ID: yovpn9bi
+  Authorization: Bearer {apiToken}
+  Content-Type: application/json
+Body:
+{
+  "email": "user@example.com",
+  "event_id": "order_123456",
+  "amount": 9900,
+  "currency": "RON",
+  "skip_email_notification": true
+}
+
+Response:
+{
+  "id": "sale_xxxxx",
+  "email": "user@example.com",
+  "amount": 9900,
+  "commission": 990,
+  "promoter_id": "prm_xxxxx",
+  "status": "pending"
+}
+
+Dependencies:
+- HttpService (@nestjs/axios)
+- ConfigService
+
+Notes:
+- amount converted to cents (multiply by 100)
+- event_id must be unique (use transaction ID)
+- Commission calculated automatically by FirstPromoter
+
+Recommendations for .NET:
+- Use HttpClient with retry policy
+- Store sale ID in database for tracking
+- Add webhook handler for commission status updates
+- Add validation for amount > 0
+
+================================================================================
+SERVICE 3: LIBRAPAY - ALTERNATIVE PAYMENT GATEWAY
+================================================================================
+
+**Service Type**: Payment Gateway Implementation (Romanian Market)
+
+**Configuration**:
+- Merchant Name: BINE IN CORP SRL (from config)
+- Merchant URL: https://somaway.ro
+- Terminal ID: from config
+- Signature Key: from config (HMAC-SHA1)
+- Post Action URL: gateway URL for payment forms
+- Order ID Offset: offset for order numbering
+
+**Methods**: 14+ (implements PaymentGateway interface)
+1. initiatePayment() - create payment form (one-time or subscription)
+2. processRecurringPayment() - process recurring billing
+3. cancelRecurringPayment() - cancel recurring subscription
+4. parseWebhookPayload() - parse IPN (Instant Payment Notification)
+5. mapPaymentStatus() - map response code to PaymentStatus enum
+6. supportsPaymentType() - check if payment type supported
+7. + 8 private helper methods
+
+**Supported Payment Types**:
+- ONE_TIME: single payment
+- SUBSCRIPTION: recurring payments (monthly billing)
+
+**Currency**: RON only
+
+**Transaction Types (TRTYPE)**:
+- 0: Authorization (initial payment)
+- 171: Recurring payment (auto-billing)
+- 172: Cancel recurring
+
+**Used by**:
+- OrderService (payment initiation)
+- PaymentGatewayFactory (gateway selection)
+- LibrapayWebhookController (IPN processing)
+
+**Integration Flow**:
+1. User selects Librapay as payment method
+2. Backend generates HTML form with signature
+3. Frontend auto-submits form → redirects to Librapay
+4. User completes payment on Librapay page
+5. Librapay sends IPN webhook → backend processes
+6. Backend updates order status
+
+--------------------------------------------------------------------------------
+METHOD 1: initiatePayment() - Create Payment Form
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Generează un HTML form pentru redirect către Librapay payment gateway.
+Suportă atât plăți unice cât și subscriptions recurente.
+
+Flow:
+1. Validate payment request (orderId, amount, currency, paymentType)
+2. Route to handler based on paymentType:
+   - ONE_TIME → handleOneTimePayment()
+   - SUBSCRIPTION → handleSubscriptionPayment()
+3. Build form data with required fields
+4. Calculate HMAC-SHA1 signature
+5. Generate HTML form with hidden inputs
+6. Return PaymentInitiationResponse cu htmlForm
+
+Cod sursă:
+- Service: src/modules/payments/gateways/librapay/librapay.service.ts:54-81
+
+Method Signature:
+async initiatePayment(
+  request: PaymentInitiationRequest
+): Promise<PaymentInitiationResponse>
+
+Form Fields (ONE_TIME):
+- AMOUNT: formatted to 2 decimals
+- CURRENCY: "RON"
+- ORDER: orderId + offset (to avoid conflicts)
+- DESC: order description
+- TERMINAL: terminal ID from config
+- TIMESTAMP: YYYYMMDDHHmmss format
+- NONCE: MD5 hash of random number
+- BACKREF: return URL after payment
+- DATA_CUSTOM: base64 encoded customer + product data
+- P_SIGN: HMAC-SHA1 signature of all fields
+
+Additional Fields (SUBSCRIPTION):
+- RECUR_FREQ: "1" (monthly)
+- RECUR_EXP: YYYYMMDD (end date, default +3 years)
+
+HTML Form Generated:
+<form id="librapay-form" method="post" action="{gatewayUrl}/pay_auth.php">
+  <input type="hidden" name="AMOUNT" value="99.00" />
+  <input type="hidden" name="CURRENCY" value="RON" />
+  <input type="hidden" name="ORDER" value="1000123" />
+  <input type="hidden" name="DESC" value="Comanda #123" />
+  <input type="hidden" name="TERMINAL" value="xxxxx" />
+  <input type="hidden" name="TIMESTAMP" value="20241102120000" />
+  <input type="hidden" name="NONCE" value="a1b2c3d4e5f6..." />
+  <input type="hidden" name="BACKREF" value="https://somaway.ro/payment/return" />
+  <input type="hidden" name="DATA_CUSTOM" value="eyJ..." />
+  <input type="hidden" name="P_SIGN" value="ABC123..." />
+</form>
+
+Dependencies:
+- crypto (HMAC-SHA1 signature)
+
+Notes:
+- Signature calculation is CRITICAL for security
+- Order ID offset prevents conflicts with other merchants
+- DATA_CUSTOM contains customer billing info (base64 encoded)
+- Currency hardcoded to RON only
+
+Recommendations for .NET:
+- Use System.Security.Cryptography for HMAC-SHA1
+- Create strongly-typed DTOs for form data
+- Add comprehensive unit tests for signature calculation
+- Validate all input data before form generation
+- Add logging for all payment initiations
+
+--------------------------------------------------------------------------------
+METHOD 2: processRecurringPayment() - Process Recurring Billing
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Procesează o plată recurentă (auto-billing) pentru un subscription activ.
+Apelat de background job pentru billing lunar.
+
+Flow:
+1. Build recurring payment data (TRTYPE = '171')
+2. Calculate signature pentru recurring transaction
+3. POST /pay_req.php cu URL-encoded params
+4. Check response:
+   - Success: status 200 + valid response
+   - Error: "OrderId inexistent/nevalidat/expirat!"
+5. Return RecurringPaymentResponse
+
+Cod sursă:
+- Service: src/modules/payments/gateways/librapay/librapay.service.ts:83-162
+
+Method Signature:
+async processRecurringPayment(
+  request: RecurringPaymentRequest
+): Promise<RecurringPaymentResponse>
+
+Librapay API Call:
+POST {gatewayUrl}/pay_req.php
+Headers:
+  Content-Type: application/x-www-form-urlencoded
+Body (URLSearchParams):
+  AMOUNT=99.00
+  CURRENCY=RON
+  ORDER=1000123
+  DESC=Recurring payment
+  TERMINAL=xxxxx
+  TRTYPE=171
+  TIMESTAMP=20241102120000
+  NONCE=a1b2c3...
+  BACKREF=https://somaway.ro/payment/return
+  P_SIGN=ABC123...
+
+Response:
+Success: HTTP 200 (empty or success message)
+Error: "OrderId inexistent/nevalidat/expirat!"
+
+Dependencies:
+- HttpService (@nestjs/axios)
+
+Notes:
+- TRTYPE = '171' for recurring payments
+- Signature calculation different from authorization
+- Error message in Romanian from Librapay
+- Timeout: 30 seconds
+
+Recommendations for .NET:
+- Use HttpClient with FormUrlEncodedContent
+- Add retry logic with exponential backoff (Polly)
+- Log all recurring payment attempts
+- Add dead letter queue for failed payments
+- Parse Romanian error messages to PaymentError enum
+
+--------------------------------------------------------------------------------
+METHOD 3: cancelRecurringPayment() - Cancel Subscription
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Anulează un subscription recurent activ în Librapay.
+
+Flow:
+1. Build cancellation data (TRTYPE = '172')
+2. Calculate signature pentru cancellation transaction
+3. POST /pay_req.php cu URL-encoded params
+4. Check response:
+   - Success: status 200
+   - Error: "Nu exista o recurenta activa cu acest OrderId!"
+5. Return CancelRecurringPaymentResponse
+
+Cod sursă:
+- Service: src/modules/payments/gateways/librapay/librapay.service.ts:164-243
+
+Method Signature:
+async cancelRecurringPayment(
+  request: CancelRecurringPaymentRequest
+): Promise<CancelRecurringPaymentResponse>
+
+Librapay API Call:
+POST {gatewayUrl}/pay_req.php
+Body:
+  AMOUNT=99.00
+  CURRENCY=RON
+  ORDER=1000123
+  DESC=Cancel subscription
+  TERMINAL=xxxxx
+  TRTYPE=172
+  TIMESTAMP=20241102120000
+  NONCE=a1b2c3...
+  BACKREF=https://somaway.ro/payment/return
+  P_SIGN=ABC123...
+
+Response:
+Success: HTTP 200
+Error: "Nu exista o recurenta activa cu acest OrderId!"
+
+Notes:
+- TRTYPE = '172' for cancellation
+- Error message in Romanian from Librapay
+
+Recommendations for .NET:
+- Add logging for all cancellation requests
+- Send cancellation confirmation email to user
+- Update internal subscription status
+
+--------------------------------------------------------------------------------
+METHOD 4: parseWebhookPayload() - Parse IPN
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Parsează Instant Payment Notification (IPN) de la Librapay după finalizare plată.
+
+Flow:
+1. Extract data from request (LibraPayIpnResponse)
+2. Decode ORDER field → subtract offset → get internal orderId
+3. Extract response code (RC) și transaction type (TRTYPE)
+4. Return WebhookPayload cu:
+   - orderId: internal order ID
+   - responseCode: RC (e.g., "00" = success)
+   - transactionType: "authorization", "recurring", "cancellation"
+
+Cod sursă:
+- Service: src/modules/payments/gateways/librapay/librapay.service.ts:245-266
+
+Method Signature:
+async parseWebhookPayload(request: any): Promise<WebhookPayload>
+
+IPN Fields:
+- RC: response code ("00" = approved, "51" = insufficient funds, etc.)
+- ORDER: order ID (with offset)
+- TRTYPE: transaction type ("0", "171", "172")
+- AMOUNT, CURRENCY, TIMESTAMP, etc.
+
+Transaction Types:
+- TRTYPE = "0" → "authorization" (initial payment)
+- TRTYPE = "171" → "recurring" (auto-billing)
+- TRTYPE = "172" → "cancellation"
+
+Dependencies:
+- None (pure parsing logic)
+
+Notes:
+- Order ID offset must be subtracted to get internal ID
+- Response codes map to PaymentStatus + PaymentError
+
+Recommendations for .NET:
+- Add signature verification for IPN (security)
+- Create strongly-typed IPN DTO
+- Add validation for all fields
+- Log all IPN events for audit trail
+
+--------------------------------------------------------------------------------
+METHOD 5: mapPaymentStatus() - Map Response Code to Status
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Mapează response code de la Librapay la PaymentStatus și PaymentError enums.
+
+Flow:
+1. Map RC to PaymentStatus:
+   - "00" → COMPLETED
+   - all others → FAILED
+2. Map RC to PaymentError:
+   - "-19" → SECURITY_FAILED
+   - "51" → INSUFFICIENT_FUNDS
+   - "54" → EXPIRED_CARD
+   - others → CONTACT_BANK
+3. Return tuple [PaymentStatus, PaymentError | null]
+
+Cod sursă:
+- Service: src/modules/payments/gateways/librapay/librapay.service.ts:268-296
+
+Method Signature:
+mapPaymentStatus(responseCode: string): [PaymentStatus, PaymentError | null]
+
+Response Codes:
+- "00": Approved
+- "-19": Security failed (fraud detection)
+- "51": Insufficient funds
+- "54": Expired card
+- Others: Contact bank
+
+Notes:
+- Only "00" is success, all others are failures
+- PaymentError provides specific reason for failure
+
+Recommendations for .NET:
+- Use Dictionary<string, (PaymentStatus, PaymentError?)> for mapping
+- Add comprehensive list of all Librapay response codes
+- Add logging for unknown response codes
+
+================================================================================
+SERVICE 4: POSTMARK - TRANSACTIONAL EMAILS
+================================================================================
+
+**Service Type**: SMTP Transport Configuration (via @nestjs-modules/mailer)
+
+**Configuration**:
+- SMTP Host: smtp.postmarkapp.com
+- SMTP Port: 587
+- SMTP User: (from config)
+- SMTP Pass: (from config - Postmark API token)
+
+**Not a Custom Service**: Configured in MailerModule with Postmark as transport
+
+**Email Templates**: Handlebars templates in server/src/templates/
+- success-registration.hbs
+- success-purchase-mai.hbs
+- welcome.hbs
+- recovery.hbs
+- email-validation.hbs
+
+**Used by**:
+- AuthService (welcome email, recovery email, email validation)
+- PaymentsService (purchase confirmation)
+- SubscriptionService (subscription activation)
+- UserService (account notifications)
+
+**Integration Flow**:
+1. Service calls mailerService.sendMail()
+2. MailerModule uses Postmark SMTP transport
+3. Email sent via Postmark API
+4. Postmark handles delivery, bounce, spam reports
+
+**Configuration Example**:
+```typescript
+MailerModule.forRoot({
+  transport: {
+    host: 'smtp.postmarkapp.com',
+    port: 587,
+    secure: false,
+    auth: {
+      user: process.env.POSTMARK_USER,
+      pass: process.env.POSTMARK_API_TOKEN
+    }
+  },
+  defaults: {
+    from: '"Somaway" <noreply@somaway.ro>'
+  },
+  template: {
+    dir: __dirname + '/templates',
+    adapter: new HandlebarsAdapter(),
+    options: {
+      strict: true
+    }
+  }
+})
+```
+
+**Email Types**:
+1. **Welcome Email** (success-registration.hbs)
+   - Sent after user signup
+   - Contains: welcome message, next steps
+
+2. **Purchase Confirmation** (success-registration.hbs)
+   - Sent after successful payment
+   - Contains: order details, access instructions
+
+3. **Password Recovery** (recovery.hbs)
+   - Sent when user requests password reset
+   - Contains: recovery link with token
+
+4. **Email Validation** (email-validation.hbs)
+   - Sent after signup for email verification
+   - Contains: validation link with token
+
+**Recommendations for .NET**:
+- Use MailKit or FluentEmail for .NET
+- Configure Postmark API instead of SMTP (better deliverability)
+- Use Razor templates instead of Handlebars
+- Add email queuing with background job (Hangfire)
+- Add retry logic for failed emails
+- Store email send history in database
+- Add unsubscribe links for marketing emails
+- Monitor bounce rates and spam reports
+
+**Postmark Features to Leverage**:
+- Message Streams (transactional vs broadcast)
+- Templates (server-side template management)
+- Webhooks (bounce, spam complaint, delivery)
+- Click tracking
+- Open tracking
+- Link tracking
+
+================================================================================
+END OF ADDITIONAL SERVICES DOCUMENTATION
+================================================================================
+
+Summary:
+- Total Services: 4
+- MailerLite: 9 methods (email marketing automation)
+- FirstPromoter: 2 methods (affiliate tracking)
+- Librapay: 14+ methods (alternative payment gateway for Romanian market)
+- Postmark: SMTP configuration (transactional emails via MailerModule)
+
+Integration Matrix:
+| Service | Used By | Critical For |
+|---------|---------|--------------|
+| MailerLite | User, Subscription, Campaigns, Payments, Auth | Email marketing, segmentation |
+| FirstPromoter | Auth, Payments | Affiliate program |
+| Librapay | Payments, Order | Alternative payment method |
+| Postmark | Auth, Payments, Subscription, User | All transactional emails |
+
+Critical Dependencies:
+- MailerLite: @mailerlite/mailerlite-nodejs
+- FirstPromoter: HTTP API (no SDK)
+- Librapay: HTTP API + HMAC-SHA1 signature
+- Postmark: @nestjs-modules/mailer with nodemailer
+
+Recommendations for .NET Migration:
+1. **MailerLite**: Use MailerLite .NET SDK or HttpClient, cache group IDs
+2. **FirstPromoter**: Use HttpClient with Polly, add webhook handlers
+3. **Librapay**: Implement PaymentGateway interface, comprehensive signature tests
+4. **Postmark**: Use Postmark .NET SDK, Razor templates, background job queue
+
+Ready for JIRA import! 🎯

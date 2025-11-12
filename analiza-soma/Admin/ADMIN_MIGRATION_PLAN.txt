@@ -1,0 +1,1422 @@
+================================================================================
+SOMAWAY ADMIN DASHBOARD - MIGRATION PLAN
+================================================================================
+
+Project: Migrate Admin Dashboard from React to Vue.js 3
+
+Migration Type: Frontend Framework Migration
+Source: React 18 + Vite + Ant Design 5
+Target: Vue 3 + Vite + Ant Design Vue 4
+
+================================================================================
+CURRENT ADMIN DASHBOARD ANALYSIS
+================================================================================
+
+## Tech Stack (Current)
+
+**Framework & Build Tool:**
+- React 18.2.0 (frontend framework)
+- Vite 4.5.3 (build tool + dev server)
+- TypeScript 5.0.2
+
+**UI Library:**
+- Ant Design 5.20.1 (enterprise UI components)
+- Ant Design Icons 5.4.0
+- Ant Design Charts 2.1.2
+
+**State Management:**
+- Redux Toolkit 2.2.3 (@reduxjs/toolkit)
+- React Redux 9.1.2
+- Redux Persist 6.0.0 (persistent state)
+
+**Routing:**
+- React Router DOM 6.15.0
+
+**Utilities:**
+- lodash 4.17.21 (utility functions)
+- dayjs 1.11.9 (date formatting)
+- moment 2.29.4 (date formatting - legacy)
+- react-countup 6.4.2 (number animations)
+- react-player 2.16.0 (video player component)
+
+**Development Tools:**
+- Storybook 7.5.2 (component documentation)
+- ESLint + Prettier (code quality)
+- Sass 1.66.1 (CSS preprocessor)
+
+**Authentication:**
+- Custom auth context (context/auth.tsx)
+- JWT token storage (access token + remember me)
+
+**Environment:**
+- ENVX env variable (LOCAL, development, production)
+- Dynamic API endpoints based on environment
+
+================================================================================
+PROJECT STRUCTURE
+================================================================================
+
+admin/
+├── src/
+│   ├── components/                  # Reusable components
+│   │   ├── dashboard/               # Dashboard-specific components
+│   │   │   ├── learning/            # Learning module (Courses, Lessons, Users)
+│   │   │   ├── categories/          # Categories management
+│   │   │   ├── subscriptions/       # Subscriptions management
+│   │   │   └── projects/            # Projects dashboard
+│   │   ├── Card/                    # Card component
+│   │   ├── PageHeader/              # Page header with breadcrumbs
+│   │   ├── Loader/                  # Loading spinner
+│   │   ├── Logo/                    # Logo component
+│   │   └── ...                      # Other shared components
+│   ├── pages/                       # Page components
+│   │   ├── authentication/          # Auth pages (SignIn, SignUp, etc.)
+│   │   ├── dashboards/              # Dashboard pages
+│   │   │   ├── Courses.tsx          # Courses management page
+│   │   │   ├── Lessons.tsx          # Lessons management page
+│   │   │   ├── Users.tsx            # Users management page
+│   │   │   ├── Categories.tsx       # Categories management page
+│   │   │   ├── Subscriptions.tsx   # Subscriptions page
+│   │   │   ├── Campaigns.tsx        # Campaigns page
+│   │   │   └── Orders.tsx           # Orders page
+│   │   ├── userAccount/             # User account pages
+│   │   └── errors/                  # Error pages (400, 403, 404, 500, 503)
+│   ├── layouts/                     # Layout components
+│   │   ├── dashboards/              # Dashboard layout (sidebar + header)
+│   │   ├── app/                     # App layout with HeaderNav
+│   │   └── guest/                   # Guest layout (auth pages)
+│   ├── context/                     # React contexts
+│   │   ├── auth.tsx                 # Authentication context
+│   │   └── styles.tsx               # Styles context (theme, grid)
+│   ├── hooks/                       # Custom hooks
+│   │   ├── useFetchData.tsx         # Data fetching hook
+│   │   └── usePageContext.tsx       # Page context hook
+│   ├── constants/                   # Constants
+│   │   ├── routes.ts                # Route definitions + API endpoints
+│   │   └── index.ts                 # Other constants
+│   ├── utils/                       # Utility functions
+│   │   └── apiService.ts            # API service (fetch wrappers)
+│   ├── types/                       # TypeScript types/interfaces
+│   ├── routes/                      # Route configuration
+│   ├── assets/                      # Static assets (images, fonts, etc.)
+│   └── App.tsx                      # Main app component
+├── public/                          # Public assets
+│   └── mocks/                       # Mock data
+├── .storybook/                      # Storybook configuration
+├── package.json
+├── tsconfig.json
+├── vite.config.js
+└── README.md
+
+================================================================================
+ADMIN DASHBOARD FEATURES
+================================================================================
+
+## Core Pages (7 main dashboards)
+
+1. **Courses Management** (/dashboards/courses)
+   - List all courses with pagination
+   - Create/Edit/Delete courses
+   - Upload course thumbnail images
+   - Upload course video (Vimeo integration)
+   - Set display order
+   - View video preview in modal
+   - Statistics: total courses count
+
+2. **Lessons Management** (/dashboards/lessons/:courseId)
+   - List all lessons for a specific course
+   - Create/Edit/Delete lessons
+   - Set lesson display order
+   - Manage lesson content
+
+3. **Users Management** (/dashboards/users)
+   - List all users with pagination (40 per page)
+   - Search users by email/name
+   - Create/Edit/Delete users
+   - Export users to CSV
+   - View user subscriptions
+   - Statistics: total users count
+
+4. **Categories Management** (/dashboards/categories)
+   - List all categories
+   - Create/Edit/Delete categories
+   - Hierarchical category structure support
+   - Main categories vs subcategories
+
+5. **Subscriptions Management** (/dashboards/subscriptions)
+   - List all subscriptions
+   - View subscription status
+   - Subscription types management
+   - User subscription history
+
+6. **Campaigns Management** (/dashboards/campaigns)
+   - List all marketing campaigns
+   - Create/Edit/Delete campaigns
+   - MailerLite integration
+   - Target user selection
+
+7. **Orders Management** (/dashboards/orders)
+   - View all orders
+   - Order status tracking
+   - Payment information
+
+## Authentication Pages
+
+1. **Sign In** (/auth/signin)
+   - Admin login (email + password)
+   - Remember me functionality
+   - JWT token storage
+   - Redirect to /dashboards/users after login
+
+2. **Sign Up** (/auth/signup)
+   - New admin registration (disabled?)
+
+3. **Password Reset** (/auth/password-reset)
+   - Password recovery flow
+
+4. **Verify Email** (/auth/verify-email)
+   - Email confirmation
+
+5. **Welcome** (/auth/welcome)
+   - Welcome page after registration
+
+6. **Account Deactivate** (/auth/account-delete)
+   - Account deletion flow
+
+## User Account Pages
+
+1. **Details** (/user-profile/details)
+   - User profile details
+
+2. **Preferences** (/user-profile/preferences)
+   - User preferences settings
+
+3. **Information** (/user-profile/personal-information)
+   - Personal information edit
+
+4. **Actions** (/user-profile/actions)
+   - Account actions
+
+5. **Feedback** (/user-profile/feedback)
+   - User feedback form
+
+## Error Pages
+
+- 400 Bad Request
+- 403 Forbidden
+- 404 Not Found
+- 500 Internal Server Error
+- 503 Service Unavailable
+
+================================================================================
+API INTEGRATION
+================================================================================
+
+## API Endpoints Used
+
+**Base URLs** (environment-based):
+- LOCAL: http://localhost:3005/api
+- development: https://dev-api.somaway.ro/api
+- production: https://api.somaway.ro/api
+
+**Authentication:**
+- POST /v1/auth/admin-signin - Admin login
+
+**Courses:**
+- GET /v1/course/all?level=admin - Get all courses
+- POST /v1/course - Create course
+- PUT /v1/course/:id - Update course
+- DELETE /v1/course/:id - Delete course
+- POST /v1/course/upload-image - Upload course image
+- POST /v1/course/upload-video - Upload course video
+
+**Users:**
+- GET /v1/user/all?offset=X&limit=Y - Get users (paginated)
+- POST /v1/user/create-by-admin - Create user
+- PUT /v1/user/:id - Update user
+- DELETE /v1/user/:id - Delete user
+- POST /v1/user/search - Search users
+- GET /v1/user/export-to-csv - Export users to CSV
+
+**Lessons:**
+- GET /v1/lesson/by-course/:courseId/all - Get lessons by course
+- POST /v1/lesson - Create lesson
+- PUT /v1/lesson/:id - Update lesson
+- DELETE /v1/lesson/:id - Delete lesson
+
+**Categories:**
+- GET /v1/category/main - Get main categories
+- GET /v1/category/all - Get all categories
+- POST /v1/category - Create category
+- PUT /v1/category/:id - Update category
+- DELETE /v1/category/:id - Delete category
+
+**Subscriptions:**
+- GET /v1/subscription/all - Get all subscriptions
+- GET /v1/subscription/types/all - Get subscription types
+
+**Campaigns:**
+- GET /v1/campaigns/all - Get all campaigns
+- GET /v1/campaigns/user/all - Get users for campaigns
+- POST /v1/campaigns - Create campaign
+- PUT /v1/campaigns/:id - Update campaign
+- DELETE /v1/campaigns/:id - Delete campaign
+
+**Orders:**
+- GET /orders - Get all orders
+
+**SmartBill Integration:**
+- https://ws.smartbill.ro/SBORO/api/ - SmartBill API (external)
+
+================================================================================
+STATE MANAGEMENT
+================================================================================
+
+## Redux Store Structure
+
+**Current Redux Slices:**
+1. **theme** - Theme configuration (light/dark mode)
+   - mytheme: 'light' | 'dark'
+
+**Authentication State:**
+- Managed in context/auth.tsx (React Context)
+- authUser: { accessToken, email, id, role }
+- countUsers: number (total users count)
+- login(user): void
+- logout(): void
+
+**Local State (per page):**
+- Courses: coursesData[], loading, modalAction, courseToUpdate
+- Users: usersData[], loading, modalAction, userToUpdate, pageNumber
+- Lessons: lessonsData[], loading, modalAction, lessonToUpdate
+- Categories: categoriesData[], loading, modalAction, categoryToUpdate
+
+**Persistence:**
+- Redux Persist used for theme state
+- Auth state persisted in localStorage (manual implementation)
+
+================================================================================
+MIGRATION STRATEGY
+================================================================================
+
+## Target Tech Stack
+
+**Framework & Build Tool:**
+- Vue 3.4+ (Composition API preferred)
+- Vite 5+ (keep current build tool)
+- TypeScript 5+ (maintain TypeScript)
+
+**UI Library:**
+- Ant Design Vue 4.x (Vue port of Ant Design)
+- @ant-design/icons-vue (icon library)
+- @ant-design-vue/pro-layout (layout components)
+
+**State Management:**
+- Pinia (official Vue store, replaces Redux)
+- pinia-plugin-persistedstate (replace redux-persist)
+
+**Routing:**
+- Vue Router 4.x (official Vue routing)
+
+**Utilities:**
+- lodash (keep same)
+- dayjs (keep, remove moment)
+- @vueuse/core (Vue composables utility library)
+- vue-countup-v3 (replace react-countup)
+- @videojs-player/vue or similar (replace react-player)
+
+**Development Tools:**
+- Histoire (Storybook alternative for Vue) OR keep Storybook with Vue support
+- ESLint + Prettier (keep same)
+- Sass (keep same)
+
+**HTTP Client:**
+- axios or fetch API (similar to current fetch wrappers)
+
+================================================================================
+MIGRATION PHASES
+================================================================================
+
+### Phase 1: Project Setup & Infrastructure (Week 1)
+
+1. **Initialize Vue 3 + Vite Project**
+   - Create new Vue project with Vite
+   - Configure TypeScript
+   - Setup folder structure matching React app
+   - Configure path aliases (@/, @components/, etc.)
+
+2. **Install Dependencies**
+   - Ant Design Vue 4.x
+   - Vue Router 4.x
+   - Pinia + persistence plugin
+   - Utility libraries (lodash, dayjs, @vueuse/core)
+   - Development tools (ESLint, Prettier, Sass)
+
+3. **Setup Build Configuration**
+   - Configure vite.config.ts
+   - Environment variables (.env files)
+   - TypeScript configuration
+   - Path aliases
+   - Build optimization
+
+4. **Setup Linting & Formatting**
+   - ESLint configuration for Vue
+   - Prettier configuration
+   - Git hooks (husky + lint-staged)
+
+### Phase 2: Core Infrastructure (Week 1-2)
+
+1. **Routing Setup**
+   - Create router configuration (src/router/index.ts)
+   - Define all routes (auth, dashboards, user account, errors)
+   - Route guards for authentication
+   - Breadcrumb configuration
+
+2. **State Management (Pinia)**
+   - Setup Pinia store
+   - Create stores:
+     - useAuthStore (replace auth context)
+     - useThemeStore (replace theme redux slice)
+     - useUserStore (for users data)
+     - useCourseStore (for courses data)
+   - Configure persistence for auth and theme
+
+3. **API Service Layer**
+   - Create composables/useApi.ts
+   - HTTP client configuration (axios or fetch)
+   - Request/response interceptors
+   - Error handling
+   - Auth token injection
+   - Environment-based base URLs
+
+4. **Type Definitions**
+   - Port all TypeScript interfaces from React app
+   - types/models.ts (User, Course, Lesson, Category, etc.)
+   - types/api.ts (API request/response types)
+   - types/enums.ts (enums for statuses, roles, etc.)
+
+### Phase 3: Layout Components (Week 2)
+
+1. **Guest Layout**
+   - Components/GuestLayout.vue
+   - Used for authentication pages
+   - Logo, simple layout
+
+2. **Dashboard Layout**
+   - Components/DashboardLayout.vue
+   - Sidebar navigation
+   - Header with user menu
+   - Breadcrumbs
+   - Responsive design (mobile, tablet, desktop)
+   - Theme toggle (light/dark)
+
+3. **App Layout**
+   - Components/AppLayout.vue
+   - Header navigation
+   - Footer (if needed)
+
+4. **Shared Components**
+   - Logo.vue
+   - PageHeader.vue (with breadcrumbs)
+   - Loader.vue (loading spinner)
+   - Card.vue (custom card wrapper)
+   - BackBtn.vue
+   - RefreshBtn.vue
+   - UserAvatar.vue
+   - NotificationsCard.vue
+
+### Phase 4: Authentication Pages (Week 2-3)
+
+1. **Sign In Page**
+   - pages/auth/SignIn.vue
+   - Email + password form
+   - Remember me checkbox
+   - Form validation
+   - API integration
+   - Redirect after login
+
+2. **Other Auth Pages**
+   - SignUp.vue
+   - PasswordReset.vue
+   - VerifyEmail.vue
+   - Welcome.vue
+   - AccountDeactivate.vue
+
+3. **Auth Guard**
+   - router/guards/auth.ts
+   - Check if user is authenticated
+   - Redirect to /auth/signin if not authenticated
+   - Redirect to /dashboards/users if already authenticated
+
+### Phase 5: Dashboard Pages (Week 3-5)
+
+**Priority Order:**
+
+1. **Users Dashboard** (Week 3)
+   - pages/dashboards/Users.vue
+   - UsersCard.vue (table with CRUD actions)
+   - UsersForm.vue (create/edit modal)
+   - Pagination (40 per page)
+   - Search functionality
+   - Export to CSV
+   - Delete confirmation modal
+
+2. **Courses Dashboard** (Week 3-4)
+   - pages/dashboards/Courses.vue
+   - CoursesCard.vue (table with CRUD actions)
+   - CoursesForm.vue (create/edit modal)
+   - Image upload (course thumbnail)
+   - Video upload (Vimeo integration)
+   - Video preview modal (video player)
+   - Display order management
+
+3. **Lessons Dashboard** (Week 4)
+   - pages/dashboards/Lessons.vue
+   - LessonsCard.vue (table with CRUD actions)
+   - LessonsForm.vue (create/edit modal)
+   - Display order management
+   - Course-specific lessons (by :courseId)
+
+4. **Categories Dashboard** (Week 4)
+   - pages/dashboards/Categories.vue
+   - CategoriesCard.vue (table/tree view)
+   - CategoriesForm.vue (create/edit modal)
+   - Hierarchical structure support
+
+5. **Subscriptions Dashboard** (Week 4-5)
+   - pages/dashboards/Subscriptions.vue
+   - SubscriptionsCard.vue (table view)
+   - Subscription types display
+   - Status indicators
+
+6. **Campaigns Dashboard** (Week 5)
+   - pages/dashboards/Campaigns.vue
+   - CampaignsCard.vue (table with CRUD actions)
+   - User selection for campaigns
+   - MailerLite integration
+
+7. **Orders Dashboard** (Week 5)
+   - pages/dashboards/Orders.vue
+   - OrdersCard.vue (table view)
+   - Order status display
+
+### Phase 6: User Account Pages (Week 5)
+
+1. **User Profile Pages**
+   - pages/user-profile/Details.vue
+   - pages/user-profile/Preferences.vue
+   - pages/user-profile/Information.vue
+   - pages/user-profile/Actions.vue
+   - pages/user-profile/Feedback.vue
+
+### Phase 7: Error Pages (Week 5)
+
+1. **Error Pages**
+   - pages/errors/Error400.vue
+   - pages/errors/Error403.vue
+   - pages/errors/Error404.vue
+   - pages/errors/Error500.vue
+   - pages/errors/Error503.vue
+
+### Phase 8: Testing & Optimization (Week 6)
+
+1. **Unit Testing**
+   - Setup Vitest (Vite-native test framework)
+   - Test composables (useApi, useAuth, etc.)
+   - Test utility functions
+
+2. **Component Testing**
+   - Setup Vue Test Utils
+   - Test critical components (forms, tables, modals)
+
+3. **E2E Testing (Optional)**
+   - Setup Playwright or Cypress
+   - Test critical user flows (login, create course, etc.)
+
+4. **Performance Optimization**
+   - Code splitting (lazy loading routes)
+   - Image optimization
+   - Bundle size analysis
+   - Lighthouse audit
+
+5. **Accessibility**
+   - ARIA labels
+   - Keyboard navigation
+   - Screen reader support
+
+### Phase 9: Documentation & Deployment (Week 6-7)
+
+1. **Documentation**
+   - Update README.md
+   - Component documentation (Storybook or Histoire)
+   - API integration guide
+   - Deployment guide
+
+2. **Deployment Setup**
+   - Build configuration for production
+   - Environment variables setup
+   - CI/CD pipeline (if applicable)
+   - Deploy to dev environment
+   - Testing on dev
+   - Deploy to production
+
+================================================================================
+MIGRATION MAPPING: REACT → VUE
+================================================================================
+
+## Component Patterns
+
+**React (Functional Components):**
+```tsx
+import { useState, useEffect } from 'react';
+
+const MyComponent = () => {
+  const [data, setData] = useState([]);
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  return <div>{data.map(item => <div key={item.id}>{item.name}</div>)}</div>;
+};
+```
+
+**Vue 3 (Composition API):**
+```vue
+<script setup lang="ts">
+import { ref, onMounted } from 'vue';
+
+const data = ref([]);
+
+onMounted(async () => {
+  await fetchData();
+});
+</script>
+
+<template>
+  <div>
+    <div v-for="item in data" :key="item.id">{{ item.name }}</div>
+  </div>
+</template>
+```
+
+## State Management
+
+**React (Redux Toolkit):**
+```ts
+// store/themeSlice.ts
+import { createSlice } from '@reduxjs/toolkit';
+
+const themeSlice = createSlice({
+  name: 'theme',
+  initialState: { mytheme: 'light' },
+  reducers: {
+    setTheme: (state, action) => {
+      state.mytheme = action.payload;
+    }
+  }
+});
+```
+
+**Vue (Pinia):**
+```ts
+// stores/theme.ts
+import { defineStore } from 'pinia';
+
+export const useThemeStore = defineStore('theme', {
+  state: () => ({
+    mytheme: 'light'
+  }),
+  actions: {
+    setTheme(theme: string) {
+      this.mytheme = theme;
+    }
+  },
+  persist: true // pinia-plugin-persistedstate
+});
+```
+
+## Context → Composables
+
+**React Context:**
+```tsx
+// context/auth.tsx
+const AuthContext = createContext();
+
+export const AuthProvider = ({ children }) => {
+  const [authUser, setAuthUser] = useState(null);
+
+  const login = (user) => setAuthUser(user);
+  const logout = () => setAuthUser(null);
+
+  return (
+    <AuthContext.Provider value={{ authUser, login, logout }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => useContext(AuthContext);
+```
+
+**Vue Composable:**
+```ts
+// composables/useAuth.ts
+import { useAuthStore } from '@/stores/auth';
+
+export function useAuth() {
+  const authStore = useAuthStore();
+
+  return {
+    authUser: computed(() => authStore.user),
+    login: authStore.login,
+    logout: authStore.logout
+  };
+}
+```
+
+## Routing
+
+**React Router:**
+```tsx
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+
+<Routes>
+  <Route path="/auth/signin" element={<SignIn />} />
+  <Route path="/dashboards/users" element={<Users />} />
+</Routes>
+```
+
+**Vue Router:**
+```ts
+import { createRouter, createWebHistory } from 'vue-router';
+
+const routes = [
+  { path: '/auth/signin', component: () => import('@/pages/auth/SignIn.vue') },
+  { path: '/dashboards/users', component: () => import('@/pages/dashboards/Users.vue') }
+];
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes
+});
+```
+
+## Forms
+
+**React (Ant Design):**
+```tsx
+<Form onFinish={onFinish}>
+  <Form.Item name="email" rules={[{ required: true }]}>
+    <Input />
+  </Form.Item>
+  <Button htmlType="submit">Submit</Button>
+</Form>
+```
+
+**Vue (Ant Design Vue):**
+```vue
+<template>
+  <a-form @finish="onFinish">
+    <a-form-item name="email" :rules="[{ required: true }]">
+      <a-input />
+    </a-form-item>
+    <a-button html-type="submit">Submit</a-button>
+  </a-form>
+</template>
+```
+
+## Props & Events
+
+**React:**
+```tsx
+// Parent
+<ChildComponent data={data} onUpdate={(newData) => setData(newData)} />
+
+// Child
+const ChildComponent = ({ data, onUpdate }) => {
+  return <button onClick={() => onUpdate(newData)}>Update</button>;
+};
+```
+
+**Vue:**
+```vue
+<!-- Parent -->
+<ChildComponent :data="data" @update="handleUpdate" />
+
+<!-- Child -->
+<script setup lang="ts">
+const props = defineProps<{ data: any }>();
+const emit = defineEmits<{ update: [data: any] }>();
+
+const handleClick = () => emit('update', newData);
+</script>
+```
+
+================================================================================
+CRITICAL MIGRATION CONSIDERATIONS
+================================================================================
+
+## 1. Ant Design React → Ant Design Vue Differences
+
+**Component Name Changes:**
+- React: `<Button />` → Vue: `<a-button />`
+- React: `<Form.Item />` → Vue: `<a-form-item />`
+- React: `Form.useForm()` → Vue: `const formRef = ref()`
+
+**API Differences:**
+- React: `message.open({ type, content })` → Vue: `message.success(content)` or `message.error(content)`
+- React: `Modal.confirm()` → Vue: `Modal.confirm()`
+- React: `Table columns with render` → Vue: `Table columns with customRender`
+
+**Event Handling:**
+- React: `onClick` → Vue: `@click`
+- React: `onChange` → Vue: `@change`
+- React: `onFinish` → Vue: `@finish`
+
+## 2. State Management Migration
+
+**Redux → Pinia:**
+- useSelector → computed (from Pinia store)
+- useDispatch → direct store method calls
+- Redux middleware → Pinia plugins
+- Redux DevTools → Pinia DevTools (browser extension)
+
+**Persistence:**
+- redux-persist → pinia-plugin-persistedstate
+- localStorage management → automatic with plugin
+
+## 3. Lifecycle Hooks
+
+**React → Vue:**
+- useEffect(() => {}, []) → onMounted()
+- useEffect(() => {}, [dep]) → watch(() => dep, callback)
+- useEffect cleanup → onUnmounted()
+- useCallback → computed (for reactive values) or regular functions
+- useMemo → computed
+- useRef → ref (for reactive values) or shallowRef
+
+## 4. Conditional Rendering
+
+**React:**
+```tsx
+{loading && <Loader />}
+{data.length > 0 ? <List /> : <Empty />}
+```
+
+**Vue:**
+```vue
+<Loader v-if="loading" />
+<List v-if="data.length > 0" />
+<Empty v-else />
+```
+
+## 5. List Rendering
+
+**React:**
+```tsx
+{data.map(item => <div key={item.id}>{item.name}</div>)}
+```
+
+**Vue:**
+```vue
+<div v-for="item in data" :key="item.id">{{ item.name }}</div>
+```
+
+## 6. API Integration
+
+**Current (React):**
+```ts
+// utils/apiService.ts
+export const getAllCoursesApi = async (setLoading, token) => {
+  setLoading(true);
+  const response = await fetch(ALL_COURSES_API, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  const data = await response.json();
+  setLoading(false);
+  return data;
+};
+```
+
+**Target (Vue):**
+```ts
+// composables/useApi.ts
+import { ref } from 'vue';
+import { useAuthStore } from '@/stores/auth';
+
+export function useApi() {
+  const authStore = useAuthStore();
+  const loading = ref(false);
+
+  const request = async (url: string, options = {}) => {
+    loading.value = true;
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          ...options.headers,
+          Authorization: `Bearer ${authStore.user?.accessToken}`
+        }
+      });
+      return await response.json();
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  return { loading, request };
+}
+
+// In component
+const { loading, request } = useApi();
+const data = await request(ALL_COURSES_API);
+```
+
+## 7. Modal Management
+
+**React Pattern:**
+```tsx
+const [modalVisible, setModalVisible] = useState(false);
+const [modalAction, setModalAction] = useState('close');
+
+<Modal visible={modalVisible} onCancel={() => setModalVisible(false)}>
+  <CoursesForm action={modalAction} />
+</Modal>
+```
+
+**Vue Pattern:**
+```vue
+<script setup lang="ts">
+const modalVisible = ref(false);
+const modalAction = ref('close');
+</script>
+
+<template>
+  <a-modal :open="modalVisible" @cancel="modalVisible = false">
+    <CoursesForm :action="modalAction" />
+  </a-modal>
+</template>
+```
+
+## 8. File Upload
+
+**React (current):**
+```tsx
+// Uses custom FileUploadMiddleware on backend
+const uploadImage = async (file) => {
+  const formData = new FormData();
+  formData.append('image', file);
+
+  const response = await fetch('/v1/course/upload-image', {
+    method: 'POST',
+    body: formData,
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+```
+
+**Vue (target):**
+```vue
+<script setup lang="ts">
+import { ref } from 'vue';
+import { useApi } from '@/composables/useApi';
+
+const { request } = useApi();
+
+const uploadImage = async (file: File) => {
+  const formData = new FormData();
+  formData.append('image', file);
+
+  const response = await request('/v1/course/upload-image', {
+    method: 'POST',
+    body: formData
+  });
+};
+</script>
+
+<template>
+  <a-upload
+    :before-upload="uploadImage"
+    :show-upload-list="false"
+  >
+    <a-button>Upload Image</a-button>
+  </a-upload>
+</template>
+```
+
+## 9. Video Player Integration
+
+**React (react-player):**
+```tsx
+import ReactPlayer from 'react-player';
+
+<ReactPlayer
+  playing={!!videoUrl}
+  controls
+  url={videoUrl}
+/>
+```
+
+**Vue (vue3-video-player or @videojs-player/vue):**
+```vue
+<script setup lang="ts">
+import { VideoPlayer } from '@videojs-player/vue';
+import 'video.js/dist/video-js.css';
+</script>
+
+<template>
+  <video-player
+    :src="videoUrl"
+    :controls="true"
+    :autoplay="!!videoUrl"
+  />
+</template>
+```
+
+## 10. Environment Variables
+
+**React (Vite):**
+```ts
+// Access via process.env.ENVX
+const API_URL = process.env.ENVX === 'production'
+  ? 'https://api.somaway.ro/api'
+  : 'http://localhost:3005/api';
+```
+
+**Vue (Vite):**
+```ts
+// Access via import.meta.env.VITE_ENVX
+const API_URL = import.meta.env.VITE_ENVX === 'production'
+  ? 'https://api.somaway.ro/api'
+  : 'http://localhost:3005/api';
+
+// .env files
+// .env.local
+VITE_ENVX=LOCAL
+
+// .env.development
+VITE_ENVX=development
+
+// .env.production
+VITE_ENVX=production
+```
+
+================================================================================
+TESTING STRATEGY
+================================================================================
+
+## Unit Tests (Vitest)
+
+**Test Composables:**
+- useApi.ts (API request logic)
+- useAuth.ts (authentication logic)
+- useForm.ts (form validation helpers)
+
+**Test Utils:**
+- Date formatting functions
+- Data transformation functions
+- Validation functions
+
+## Component Tests (Vue Test Utils)
+
+**Priority Components:**
+- CoursesForm.vue (create/edit form)
+- UsersForm.vue (create/edit form)
+- CategoriesForm.vue (create/edit form)
+- LessonsForm.vue (create/edit form)
+
+**Critical Flows:**
+- Login flow
+- Create course flow
+- Edit user flow
+- Delete with confirmation
+
+## E2E Tests (Optional - Playwright)
+
+**Critical User Journeys:**
+1. Admin Login → View Users → Create User → Logout
+2. Admin Login → View Courses → Upload Course Image → Create Course
+3. Admin Login → View Lessons → Create Lesson for Course
+4. Admin Login → Export Users to CSV
+
+================================================================================
+DEPLOYMENT STRATEGY
+================================================================================
+
+## Build Configuration
+
+**Development:**
+```bash
+npm run dev
+# Runs on http://localhost:5173 (Vite default)
+# API: http://localhost:3005/api OR https://dev-api.somaway.ro/api
+```
+
+**Production Build:**
+```bash
+npm run build
+# Output: dist/
+# Static files ready for deployment
+```
+
+**Preview Production Build:**
+```bash
+npm run preview
+# Test production build locally
+```
+
+## Environment Setup
+
+**.env.local** (not committed):
+```
+VITE_ENVX=LOCAL
+VITE_API_BASE_URL=http://localhost:3005/api
+```
+
+**.env.development**:
+```
+VITE_ENVX=development
+VITE_API_BASE_URL=https://dev-api.somaway.ro/api
+```
+
+**.env.production**:
+```
+VITE_ENVX=production
+VITE_API_BASE_URL=https://api.somaway.ro/api
+```
+
+## Deployment Targets
+
+**Current (React):**
+- Presumably deployed on Netlify or similar (based on README badges)
+- URL: https://admin.somaway.ro (production)
+- URL: https://dev-admin.somaway.ro (development)
+
+**Target (Vue):**
+- Same deployment infrastructure
+- Same URLs
+- CI/CD pipeline for automatic deployments
+- Branch-based deployments (main → production, develop → development)
+
+## CI/CD Pipeline (Suggested)
+
+**GitHub Actions / GitLab CI:**
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy Admin Dashboard
+
+on:
+  push:
+    branches: [main, develop]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build for production
+        run: npm run build
+        env:
+          VITE_ENVX: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
+
+      - name: Deploy to hosting
+        # Deploy dist/ folder to hosting provider
+```
+
+================================================================================
+ROLLBACK STRATEGY
+================================================================================
+
+## Phased Rollout
+
+**Phase 1: Internal Testing**
+- Deploy Vue app to dev-admin.somaway.ro
+- Internal team testing (1 week)
+- Bug fixes and improvements
+
+**Phase 2: Beta Testing**
+- Deploy to beta.admin.somaway.ro (if available)
+- Selected admin users test new interface
+- Collect feedback (1 week)
+
+**Phase 3: Production Deployment**
+- Deploy to admin.somaway.ro
+- Monitor for issues (first 24 hours)
+- Keep React app available at admin-legacy.somaway.ro for 1 month
+
+**Phase 4: Cleanup**
+- Remove React app after 1 month if no issues
+- Archive React codebase (git tag: v1-react-final)
+
+## Rollback Plan
+
+**If critical issues found:**
+1. Immediately revert DNS to point to React app
+2. Investigate and fix issues in Vue app
+3. Redeploy fixed Vue app when ready
+
+**Monitoring:**
+- Error tracking (Sentry or similar)
+- User feedback channel (email, Slack, etc.)
+- Performance monitoring (Google Analytics, Lighthouse)
+
+================================================================================
+TIMELINE SUMMARY
+================================================================================
+
+**Total Estimated Time: 6-7 weeks**
+
+**Week 1**: Project Setup + Core Infrastructure
+- Vue 3 + Vite setup
+- Dependencies installation
+- Routing setup
+- State management (Pinia)
+- API service layer
+
+**Week 2**: Layouts + Authentication
+- Guest layout
+- Dashboard layout
+- Shared components
+- Sign In page
+- Other auth pages
+
+**Week 3**: Users + Courses Dashboards
+- Users management page (highest priority)
+- Courses management page
+- CRUD operations
+- Image/video upload
+
+**Week 4**: Lessons + Categories Dashboards
+- Lessons management page
+- Categories management page
+- Hierarchical structure support
+
+**Week 5**: Subscriptions + Campaigns + Orders + User Account
+- Subscriptions dashboard
+- Campaigns dashboard
+- Orders dashboard
+- User profile pages
+- Error pages
+
+**Week 6**: Testing + Optimization
+- Unit tests
+- Component tests
+- Performance optimization
+- Accessibility improvements
+
+**Week 7**: Documentation + Deployment
+- Documentation updates
+- Deploy to dev environment
+- Testing on dev
+- Deploy to production
+
+================================================================================
+SUCCESS CRITERIA
+================================================================================
+
+## Functional Requirements
+- ✅ All pages from React app migrated to Vue
+- ✅ All CRUD operations working (Create, Read, Update, Delete)
+- ✅ Authentication flow working (login, logout, token refresh)
+- ✅ File uploads working (images, videos)
+- ✅ Pagination working
+- ✅ Search functionality working
+- ✅ Export to CSV working
+- ✅ Video player working
+- ✅ Responsive design (mobile, tablet, desktop)
+- ✅ Dark/light theme toggle working
+
+## Performance Requirements
+- ✅ Initial page load < 3 seconds (production build)
+- ✅ Lighthouse score > 90 (Performance, Accessibility, Best Practices)
+- ✅ Bundle size < 500KB (gzipped)
+- ✅ Time to Interactive < 3.5 seconds
+
+## Quality Requirements
+- ✅ TypeScript with strict mode
+- ✅ ESLint with no errors
+- ✅ Prettier formatted code
+- ✅ Unit test coverage > 70% (for composables and utils)
+- ✅ Component test coverage for critical components
+- ✅ No console errors in production
+
+## User Experience Requirements
+- ✅ UI matches current React app (Ant Design consistency)
+- ✅ All user workflows work as before
+- ✅ No breaking changes to admin workflows
+- ✅ Improved performance (faster load times)
+
+================================================================================
+RISKS & MITIGATION
+================================================================================
+
+## Risk 1: Ant Design React → Ant Design Vue API Differences
+**Impact**: Medium
+**Likelihood**: High
+**Mitigation**:
+- Thoroughly review Ant Design Vue documentation
+- Create migration guide for common component patterns
+- Test components incrementally
+- Create wrapper components for complex patterns
+
+## Risk 2: State Management Complexity (Redux → Pinia)
+**Impact**: Medium
+**Likelihood**: Medium
+**Mitigation**:
+- Start with simple stores (theme, auth)
+- Migrate complex state incrementally
+- Test state persistence thoroughly
+- Create clear documentation for state management patterns
+
+## Risk 3: Third-Party Library Compatibility
+**Impact**: Low-Medium
+**Likelihood**: Medium
+**Mitigation**:
+- Research Vue alternatives for React-specific libraries before starting
+- Test critical libraries early (video player, charts)
+- Have fallback options for each library
+
+## Risk 4: Timeline Overrun
+**Impact**: High
+**Likelihood**: Medium
+**Mitigation**:
+- Prioritize critical pages first (Users, Courses)
+- Implement in phases
+- Have buffer time in timeline
+- Regular progress reviews
+
+## Risk 5: Production Bugs After Deployment
+**Impact**: High
+**Likelihood**: Medium
+**Mitigation**:
+- Comprehensive testing on dev environment
+- Beta testing with select users
+- Phased rollout strategy
+- Quick rollback plan
+- Error monitoring (Sentry)
+
+================================================================================
+POST-MIGRATION TASKS
+================================================================================
+
+1. **Documentation Updates**
+   - Update README.md with Vue setup instructions
+   - Create component documentation (Storybook/Histoire)
+   - Document state management patterns
+   - Document API integration patterns
+
+2. **Team Training**
+   - Vue 3 Composition API training
+   - Pinia state management training
+   - Ant Design Vue component library training
+   - Code review guidelines for Vue
+
+3. **Monitoring Setup**
+   - Error tracking (Sentry or similar)
+   - Performance monitoring (Google Analytics)
+   - User feedback collection
+
+4. **Continuous Improvement**
+   - Performance optimization based on metrics
+   - Accessibility improvements
+   - User feedback implementation
+   - Technical debt reduction
+
+================================================================================
+APPENDIX: KEY DIFFERENCES REACT VS VUE
+================================================================================
+
+## Philosophy
+
+**React:**
+- "Just JavaScript" - everything is JavaScript
+- Functional programming approach
+- Unidirectional data flow
+- Hooks for stateful logic
+- JSX for templates
+
+**Vue:**
+- "Progressive Framework" - can be adopted incrementally
+- Template-based approach (but supports JSX)
+- Reactivity system (Vue 3 uses Proxies)
+- Composition API (similar to React Hooks)
+- Single File Components (.vue files)
+
+## Learning Curve
+
+**React:**
+- Steeper learning curve for beginners
+- Requires understanding of JavaScript (ES6+)
+- Requires understanding of hooks
+- More boilerplate for state management (Redux)
+
+**Vue:**
+- Gentler learning curve
+- Template syntax is familiar to HTML
+- Reactivity is more intuitive
+- Simpler state management (Pinia)
+
+## Ecosystem
+
+**React:**
+- Larger ecosystem
+- More third-party libraries
+- More job opportunities
+- Backed by Meta (Facebook)
+
+**Vue:**
+- Growing ecosystem
+- Official libraries (Vue Router, Pinia)
+- Strong community
+- Independent (not backed by large corporation)
+
+## Performance
+
+**React:**
+- Virtual DOM diffing
+- Requires manual optimization (memo, useMemo, useCallback)
+- Reconciliation algorithm
+
+**Vue:**
+- Virtual DOM + reactivity system
+- Automatic dependency tracking
+- More optimized out of the box
+- Fine-grained reactivity
+
+================================================================================
+CONCLUSION
+================================================================================
+
+This migration from React to Vue.js 3 is a significant undertaking but will result in:
+
+1. **Better Performance**: Vue's reactivity system is more optimized
+2. **Simpler State Management**: Pinia is simpler than Redux
+3. **Better Developer Experience**: Vue's template syntax and composition API
+4. **Consistency**: If web app is also migrating to Vue, admin will match
+
+**Estimated Effort**: 6-7 weeks for a single full-time developer
+**Recommended Team Size**: 1-2 developers
+**Risk Level**: Medium (well-documented migration path)
+
+**Next Steps**:
+1. Review and approve this migration plan
+2. Set up Vue 3 + Vite project
+3. Start with Phase 1: Infrastructure
+4. Implement pages in priority order (Users → Courses → Lessons → Categories → etc.)
+5. Test thoroughly on dev environment
+6. Deploy to production with rollback plan
+
+================================================================================
+END OF ADMIN MIGRATION PLAN
+================================================================================

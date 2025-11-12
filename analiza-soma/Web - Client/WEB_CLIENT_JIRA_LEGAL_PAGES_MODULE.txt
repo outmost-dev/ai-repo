@@ -1,0 +1,2556 @@
+================================================================================
+WEB CLIENT JIRA - LEGAL PAGES MODULE
+================================================================================
+Project: Somaway Web Client Migration (Next.js → Nuxt 3)
+Module: Legal Pages
+Status: Ready for JIRA Import
+Total Tasks: 4
+================================================================================
+
+================================================================================
+STORY: LEGAL PAGES MODULE
+================================================================================
+
+Title: Legal Pages Module
+
+Description:
+Modulul Legal Pages gestionează afișarea paginilor legale statice ale platformei,
+inclusiv politica de confidențialitate, politica de cookie-uri și termene și condiții.
+
+Toate paginile legale sunt accesibile public (fără autentificare) și folosesc
+o structură comună cu meniu lateral pentru navigare între secțiuni.
+
+Locație cod sursă:
+- Pages: web/src/pages/legal/
+- Components: web/src/components/pages/legal/
+
+Componente implementate: 4
+- Politică de Confidențialitate (politica-de-confidentialitate.tsx)
+- Politică de Cookie (politica-de-cookie.tsx)
+- Termene și Condiții (termene-si-conditii.tsx)
+- AsideMenu (navigation component)
+
+Pattern comun:
+- Layout public (UserRoles.GUEST)
+- Grid responsiv: AsideMenu (8 cols) + Content (16 cols)
+- FloatButton.BackTop pentru scroll to top
+- Typography pentru conținut legal extins
+- PageHelmet pentru SEO metadata
+
+Tech Stack Current:
+- Next.js 15.2.4 pages router
+- React 18.2.0
+- Ant Design 5.24.2 (Layout, Row, Col, Typography, FloatButton)
+- next/router pentru active route detection
+
+Tech Stack Target:
+- Nuxt 3 (pages router)
+- Vue 3.4+ Composition API
+- Ant Design Vue 4.x (Layout, Row, Col, Typography, FloatButton)
+- Vue Router 4.x pentru active route detection
+
+Dependencies:
+- AppLayout (shared component)
+- PageHelmet (shared component)
+- PageTitle (shared component)
+- UserRoles enum
+
+Notes:
+1. Toate paginile sunt 100% statice - fără API calls sau state management
+2. Conținutul legal este hard-coded în componente (nu vine din CMS)
+3. GDPR compliance: politica de confidențialitate include informații despre
+   colectare date, drepturi utilizatori, și integrări third-party
+4. AsideMenu folosește router.asPath pentru active state highlighting
+5. Responsive: pe mobile (xs) meniul apare deasupra conținutului (24 cols fiecare)
+
+================================================================================
+TASK 1: POLITICĂ DE CONFIDENȚIALITATE PAGE
+================================================================================
+
+Title: Politică de Confidențialitate Page
+
+Story: Legal Pages Module
+
+Description:
+
+Business Logic:
+Pagina Politică de Confidențialitate afișează informațiile legale despre
+colectarea, procesarea și protecția datelor personale ale utilizatorilor,
+conform GDPR. Include:
+
+1. Informații generale despre protecția datelor (GDPR compliance)
+2. Tipuri de date colectate (nume, email, adresă, telefon, etc.)
+3. Scopuri procesării datelor (executare servicii, marketing, analiză)
+4. Partajare date cu terți (Facebook, LinkedIn, Google AdWords)
+5. Drepturi utilizatori (acces, rectificare, ștergere, portabilitate)
+6. Perioade de păstrare date
+7. Securitate și cookies
+8. Contact pentru Data Protection Officer
+
+Pagina este accesibilă public (fără autentificare) și include:
+- Meniu lateral cu link-uri către alte pagini legale (AsideMenu)
+- Conținut extins cu secțiuni structurate (Typography)
+- Scroll to top button (FloatButton.BackTop)
+- Meta tags pentru SEO (PageHelmet)
+
+================================================================================
+CURRENT IMPLEMENTATION (React + Next.js)
+================================================================================
+
+File: web/src/pages/legal/politica-de-confidentialitate.tsx
+Lines: 247
+
+Code:
+
+```tsx
+// web/src/pages/legal/politica-de-confidentialitate.tsx
+import React from "react";
+import { NextPage } from "next";
+import { FloatButton, Row, Col, Typography } from "antd/lib";
+const { Title, Paragraph, Link, Text } = Typography;
+
+import { PageHelmet } from "@/components/global/PageHelmet";
+import { AppLayout } from "@/layouts/AppLayout";
+import { PageTitle } from "@/components/global/PageTitle";
+import { AsideMenu } from "@/components/pages/legal/AsideMenu";
+import { UserRoles } from "@/@types/enums/user-role.enum";
+
+const PoliticaConfidentialitate: React.FC = () => {
+  return (
+    <AppLayout
+      authority={UserRoles.GUEST}
+      layoutClass="legals politica-confidentialitate"
+    >
+      <PageHelmet title='Politica de Confidentialitate | SOMAWAY' />
+      <FloatButton.BackTop />
+      <PageTitle title="Legal" />
+
+      <div className="container">
+        <Row gutter={[24, 24]} justify="center">
+          <Col xs={24} lg={8}>
+            <AsideMenu />
+          </Col>
+          <Col xs={24} lg={16}>
+            <Typography>
+              <Title level={1}>POLITICĂ DE CONFIDENŢIALITATE</Title>
+              <Paragraph>
+                <strong>ULTIMA VERSIUNE: 15.03.2024</strong>
+              </Paragraph>
+
+              <Paragraph>
+                BINE IN CORP SRL, companie înmatriculată în România cu sediul social
+                în Str. Gheorghe Pop de Băsești, Nr. 22, Etaj 1, Apartament 3,
+                Sector 5, București, CUI RO45702099, reprezentata legal prin
+                HARABAGIU MIHAELA-ALINA (denumita în continuare <strong>noi</strong>
+                sau <strong>SOMAWAY</strong>), asigură protecţia datelor personale
+                ale utilizatorilor serviciilor oferite prin platforma <strong>SOMAWAY</strong>
+                (denumiţi în continuare <strong>Utilizatorii</strong> sau <strong>Dvs.</strong>),
+                respectând prevederile legale în vigoare în domeniul prelucrării
+                datelor cu caracter personal, respectiv ale Regulamentului general
+                privind protecţia datelor personale (&quot;RGDP&quot;), precum şi
+                Legii nr. 190/2018 privind măsurile de punere în aplicare a RGDP.
+              </Paragraph>
+
+              <Title level={2}>1. Cum si ce informatii colectăm?</Title>
+              <Paragraph>
+                Colectăm informaţii despre Dvs. în mai multe moduri:
+              </Paragraph>
+
+              <Title level={3}>Informații pe care ni le oferiți direct</Title>
+              <Paragraph>
+                Putem colecta și prelucra date cu caracter personal direct de la
+                Dvs. când ne contactați sau utilizați serviciile noastre, inclusiv:
+              </Paragraph>
+              <ul>
+                <li>Nume complet, prenume și nume de familie</li>
+                <li>Adresă de e-mail</li>
+                <li>Număr de telefon</li>
+                <li>Adresă de corespondență</li>
+                <li>Data nașterii</li>
+                <li>Detalii despre plata cursurilor (nu stocăm datele cardului bancar)</li>
+                <li>Informații despre calitatea serviciilor noastre (feedback, recenzii)</li>
+                <li>Orice alte informații pe care alegeți să ni le furnizați</li>
+              </ul>
+
+              <Title level={3}>Informații colectate automat</Title>
+              <Paragraph>
+                Când accesați platforma noastră, colectăm automat anumite informații
+                tehnice despre vizita Dvs., inclusiv:
+              </Paragraph>
+              <ul>
+                <li>Adresa IP</li>
+                <li>Tipul de browser și versiunea</li>
+                <li>Sistemul de operare</li>
+                <li>Paginile vizitate și timpul petrecut pe fiecare pagină</li>
+                <li>Sursa de unde ați ajuns pe site (ex: motor de căutare, reclame)</li>
+                <li>Cookie-uri și tehnologii similare</li>
+              </ul>
+
+              <Title level={2}>2. Pentru ce scopuri utilizăm datele Dvs.?</Title>
+              <Paragraph>
+                Prelucrăm datele Dvs. personale pentru următoarele scopuri:
+              </Paragraph>
+              <ul>
+                <li>
+                  <strong>Executarea serviciilor:</strong> Pentru a vă oferi acces
+                  la cursurile și materialele achiziționate, pentru a gestiona contul
+                  Dvs. și pentru a procesa plățile.
+                </li>
+                <li>
+                  <strong>Comunicare:</strong> Pentru a răspunde întrebărilor Dvs.,
+                  pentru a trimite notificări importante despre servicii și pentru
+                  a oferi suport tehnic.
+                </li>
+                <li>
+                  <strong>Marketing:</strong> Pentru a vă trimite oferte, promoții
+                  și noutăți despre cursurile noastre (doar dacă v-ați dat acordul).
+                </li>
+                <li>
+                  <strong>Îmbunătățirea serviciilor:</strong> Pentru a analiza modul
+                  în care utilizați platforma și pentru a îmbunătăți experiența utilizatorilor.
+                </li>
+                <li>
+                  <strong>Conformitate legală:</strong> Pentru a respecta obligațiile
+                  legale (ex: emiterea facturilor, raportări contabile).
+                </li>
+                <li>
+                  <strong>Securitate:</strong> Pentru a preveni fraudele și abuzurile
+                  pe platformă.
+                </li>
+              </ul>
+
+              <Title level={2}>3. Cui le transmitem datele Dvs.?</Title>
+              <Paragraph>
+                Pentru a putea furniza serviciile noastre, putem partaja datele Dvs.
+                cu următoarele categorii de destinatari:
+              </Paragraph>
+              <ul>
+                <li>
+                  <strong>Procesatori de plăți:</strong> Stripe, Librapay (pentru
+                  procesarea plăților)
+                </li>
+                <li>
+                  <strong>Servicii de facturare:</strong> SmartBill (pentru emiterea
+                  facturilor)
+                </li>
+                <li>
+                  <strong>Platforme de e-mail marketing:</strong> MailerLite (pentru
+                  newsletter și campanii de marketing)
+                </li>
+                <li>
+                  <strong>Hosting video:</strong> Vimeo (pentru găzduirea și streaming
+                  cursurilor video)
+                </li>
+                <li>
+                  <strong>Analytics și publicitate:</strong> Facebook Pixel, LinkedIn Insight Tag,
+                  Google AdWords (pentru măsurarea eficienței campaniilor publicitare)
+                </li>
+                <li>
+                  <strong>Servicii de live streaming:</strong> Zoom (pentru webinarii
+                  și sesiunile live)
+                </li>
+              </ul>
+
+              <Paragraph>
+                Acești parteneri prelucrează datele Dvs. în calitate de procesatori,
+                conform instrucțiunilor noastre și în temeiul unor acorduri de
+                confidențialitate.
+              </Paragraph>
+
+              <Title level={2}>4. Transferuri internaționale de date</Title>
+              <Paragraph>
+                Unii dintre partenerii noștri pot fi localizați în afara Spațiului
+                Economic European (SEE). În astfel de cazuri, ne asigurăm că sunt
+                implementate măsuri de protecție adecvate, cum ar fi:
+              </Paragraph>
+              <ul>
+                <li>Clauzele contractuale standard aprobate de Comisia Europeană</li>
+                <li>Privacy Shield (pentru companii din SUA)</li>
+                <li>Decizii de adecvare ale Comisiei Europene</li>
+              </ul>
+
+              <Title level={2}>5. Cât timp păstrăm datele Dvs.?</Title>
+              <Paragraph>
+                Păstrăm datele Dvs. personale doar atât timp cât este necesar pentru:
+              </Paragraph>
+              <ul>
+                <li>
+                  <strong>Date de cont:</strong> Pe durata în care aveți un cont activ,
+                  plus 3 ani după închiderea contului (pentru posibile reclamații)
+                </li>
+                <li>
+                  <strong>Date de facturare:</strong> 10 ani (conform legislației fiscale)
+                </li>
+                <li>
+                  <strong>Date de marketing:</strong> Până la retragerea consimțământului
+                  sau 3 ani de la ultima interacțiune
+                </li>
+                <li>
+                  <strong>Cookies:</strong> Conform politicii noastre de cookie-uri
+                  (de la câteva zile până la 2 ani)
+                </li>
+              </ul>
+
+              <Title level={2}>6. Care sunt drepturile Dvs.?</Title>
+              <Paragraph>
+                În conformitate cu GDPR, aveți următoarele drepturi:
+              </Paragraph>
+              <ul>
+                <li>
+                  <strong>Dreptul de acces:</strong> Puteți solicita o copie a datelor
+                  personale pe care le deținem despre Dvs.
+                </li>
+                <li>
+                  <strong>Dreptul la rectificare:</strong> Puteți solicita corectarea
+                  datelor inexacte sau incomplete.
+                </li>
+                <li>
+                  <strong>Dreptul la ștergere:</strong> Puteți solicita ștergerea
+                  datelor Dvs. (sub rezerva unor excepții legale).
+                </li>
+                <li>
+                  <strong>Dreptul la restricționarea prelucrării:</strong> Puteți
+                  solicita limitarea modului în care folosim datele Dvs.
+                </li>
+                <li>
+                  <strong>Dreptul la portabilitatea datelor:</strong> Puteți primi
+                  datele Dvs. într-un format structurat și puteți solicita transferul
+                  acestora către alt furnizor.
+                </li>
+                <li>
+                  <strong>Dreptul de opoziție:</strong> Puteți obijecta la prelucrarea
+                  datelor pentru marketing direct sau în scop de interes legitim.
+                </li>
+                <li>
+                  <strong>Dreptul de a retrage consimțământul:</strong> Dacă
+                  prelucrăm datele pe bază de consimțământ, îl puteți retrage oricând.
+                </li>
+                <li>
+                  <strong>Dreptul de a depune o plângere:</strong> Puteți depune o
+                  plângere la Autoritatea Națională de Supraveghere a Prelucrării
+                  Datelor cu Caracter Personal (ANSPDCP).
+                </li>
+              </ul>
+
+              <Paragraph>
+                Pentru a vă exercita aceste drepturi, ne puteți contacta la:{" "}
+                <Link href="mailto:contact@somaway.ro">contact@somaway.ro</Link>
+              </Paragraph>
+
+              <Title level={2}>7. Securitatea datelor</Title>
+              <Paragraph>
+                Luăm măsuri tehnice și organizatorice pentru a proteja datele Dvs.
+                împotriva accesului neautorizat, pierderii sau distrugerii. Acestea includ:
+              </Paragraph>
+              <ul>
+                <li>Criptarea datelor în tranzit (HTTPS/TLS)</li>
+                <li>Stocarea securizată a parolelor (Argon2 hashing)</li>
+                <li>Acces restricționat la date doar pentru personalul autorizat</li>
+                <li>Monitorizarea și auditarea activităților de securitate</li>
+                <li>Backup-uri regulate</li>
+              </ul>
+
+              <Title level={2}>8. Cookie-uri și tehnologii similare</Title>
+              <Paragraph>
+                Utilizăm cookie-uri și tehnologii similare pentru a îmbunătăți
+                experiența Dvs. pe platformă. Pentru mai multe detalii, consultați{" "}
+                <Link href="/legal/politica-de-cookie">
+                  Politica noastră de Cookie-uri
+                </Link>
+                .
+              </Paragraph>
+
+              <Title level={2}>9. Modificări ale politicii de confidențialitate</Title>
+              <Paragraph>
+                Ne rezervăm dreptul de a actualiza această politică periodic.
+                Orice modificări vor fi publicate pe această pagină, iar dacă sunt
+                semnificative, vă vom notifica prin e-mail sau prin intermediul platformei.
+              </Paragraph>
+
+              <Title level={2}>10. Contact</Title>
+              <Paragraph>
+                Pentru întrebări sau solicitări legate de protecția datelor, ne puteți contacta:
+              </Paragraph>
+              <ul>
+                <li>
+                  <strong>E-mail:</strong>{" "}
+                  <Link href="mailto:contact@somaway.ro">contact@somaway.ro</Link>
+                </li>
+                <li>
+                  <strong>Adresă:</strong> Str. Gheorghe Pop de Băsești, Nr. 22,
+                  Etaj 1, Apartament 3, Sector 5, București
+                </li>
+                <li>
+                  <strong>Responsabil protecție date:</strong> Mihaela-Alina Harabagiu
+                </li>
+              </ul>
+
+              <Paragraph>
+                <Text type="secondary">
+                  Ultima actualizare: 15 martie 2024
+                </Text>
+              </Paragraph>
+            </Typography>
+          </Col>
+        </Row>
+      </div>
+    </AppLayout>
+  );
+};
+
+export default PoliticaConfidentialitate;
+```
+
+================================================================================
+TARGET IMPLEMENTATION (Vue 3 + Nuxt 3)
+================================================================================
+
+File: web/pages/legal/politica-de-confidentialitate.vue
+Estimated Lines: ~250
+
+Code:
+
+```vue
+<!-- web/pages/legal/politica-de-confidentialitate.vue -->
+<template>
+  <AppLayout
+    :authority="UserRoles.GUEST"
+    layout-class="legals politica-confidentialitate"
+  >
+    <PageHelmet title="Politica de Confidentialitate | SOMAWAY" />
+    <AFloatButton.BackTop />
+    <PageTitle title="Legal" />
+
+    <div class="container">
+      <ARow :gutter="[24, 24]" justify="center">
+        <ACol :xs="24" :lg="8">
+          <AsideMenu />
+        </ACol>
+        <ACol :xs="24" :lg="16">
+          <ATypography>
+            <ATypographyTitle :level="1">
+              POLITICĂ DE CONFIDENŢIALITATE
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              <strong>ULTIMA VERSIUNE: 15.03.2024</strong>
+            </ATypographyParagraph>
+
+            <ATypographyParagraph>
+              BINE IN CORP SRL, companie înmatriculată în România cu sediul social
+              în Str. Gheorghe Pop de Băsești, Nr. 22, Etaj 1, Apartament 3,
+              Sector 5, București, CUI RO45702099, reprezentata legal prin
+              HARABAGIU MIHAELA-ALINA (denumita în continuare <strong>noi</strong>
+              sau <strong>SOMAWAY</strong>), asigură protecţia datelor personale
+              ale utilizatorilor serviciilor oferite prin platforma <strong>SOMAWAY</strong>
+              (denumiţi în continuare <strong>Utilizatorii</strong> sau <strong>Dvs.</strong>),
+              respectând prevederile legale în vigoare în domeniul prelucrării
+              datelor cu caracter personal, respectiv ale Regulamentului general
+              privind protecţia datelor personale ("RGDP"), precum şi
+              Legii nr. 190/2018 privind măsurile de punere în aplicare a RGDP.
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="2">
+              1. Cum si ce informatii colectăm?
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Colectăm informaţii despre Dvs. în mai multe moduri:
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="3">
+              Informații pe care ni le oferiți direct
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Putem colecta și prelucra date cu caracter personal direct de la
+              Dvs. când ne contactați sau utilizați serviciile noastre, inclusiv:
+            </ATypographyParagraph>
+            <ul>
+              <li>Nume complet, prenume și nume de familie</li>
+              <li>Adresă de e-mail</li>
+              <li>Număr de telefon</li>
+              <li>Adresă de corespondență</li>
+              <li>Data nașterii</li>
+              <li>Detalii despre plata cursurilor (nu stocăm datele cardului bancar)</li>
+              <li>Informații despre calitatea serviciilor noastre (feedback, recenzii)</li>
+              <li>Orice alte informații pe care alegeți să ni le furnizați</li>
+            </ul>
+
+            <ATypographyTitle :level="3">
+              Informații colectate automat
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Când accesați platforma noastră, colectăm automat anumite informații
+              tehnice despre vizita Dvs., inclusiv:
+            </ATypographyParagraph>
+            <ul>
+              <li>Adresa IP</li>
+              <li>Tipul de browser și versiunea</li>
+              <li>Sistemul de operare</li>
+              <li>Paginile vizitate și timpul petrecut pe fiecare pagină</li>
+              <li>Sursa de unde ați ajuns pe site (ex: motor de căutare, reclame)</li>
+              <li>Cookie-uri și tehnologii similare</li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              2. Pentru ce scopuri utilizăm datele Dvs.?
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Prelucrăm datele Dvs. personale pentru următoarele scopuri:
+            </ATypographyParagraph>
+            <ul>
+              <li>
+                <strong>Executarea serviciilor:</strong> Pentru a vă oferi acces
+                la cursurile și materialele achiziționate, pentru a gestiona contul
+                Dvs. și pentru a procesa plățile.
+              </li>
+              <li>
+                <strong>Comunicare:</strong> Pentru a răspunde întrebărilor Dvs.,
+                pentru a trimite notificări importante despre servicii și pentru
+                a oferi suport tehnic.
+              </li>
+              <li>
+                <strong>Marketing:</strong> Pentru a vă trimite oferte, promoții
+                și noutăți despre cursurile noastre (doar dacă v-ați dat acordul).
+              </li>
+              <li>
+                <strong>Îmbunătățirea serviciilor:</strong> Pentru a analiza modul
+                în care utilizați platforma și pentru a îmbunătăți experiența utilizatorilor.
+              </li>
+              <li>
+                <strong>Conformitate legală:</strong> Pentru a respecta obligațiile
+                legale (ex: emiterea facturilor, raportări contabile).
+              </li>
+              <li>
+                <strong>Securitate:</strong> Pentru a preveni fraudele și abuzurile
+                pe platformă.
+              </li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              3. Cui le transmitem datele Dvs.?
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Pentru a putea furniza serviciile noastre, putem partaja datele Dvs.
+              cu următoarele categorii de destinatari:
+            </ATypographyParagraph>
+            <ul>
+              <li>
+                <strong>Procesatori de plăți:</strong> Stripe, Librapay (pentru
+                procesarea plăților)
+              </li>
+              <li>
+                <strong>Servicii de facturare:</strong> SmartBill (pentru emiterea
+                facturilor)
+              </li>
+              <li>
+                <strong>Platforme de e-mail marketing:</strong> MailerLite (pentru
+                newsletter și campanii de marketing)
+              </li>
+              <li>
+                <strong>Hosting video:</strong> Vimeo (pentru găzduirea și streaming
+                cursurilor video)
+              </li>
+              <li>
+                <strong>Analytics și publicitate:</strong> Facebook Pixel, LinkedIn Insight Tag,
+                Google AdWords (pentru măsurarea eficienței campaniilor publicitare)
+              </li>
+              <li>
+                <strong>Servicii de live streaming:</strong> Zoom (pentru webinarii
+                și sesiunile live)
+              </li>
+            </ul>
+
+            <ATypographyParagraph>
+              Acești parteneri prelucrează datele Dvs. în calitate de procesatori,
+              conform instrucțiunilor noastre și în temeiul unor acorduri de
+              confidențialitate.
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="2">
+              4. Transferuri internaționale de date
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Unii dintre partenerii noștri pot fi localizați în afara Spațiului
+              Economic European (SEE). În astfel de cazuri, ne asigurăm că sunt
+              implementate măsuri de protecție adecvate, cum ar fi:
+            </ATypographyParagraph>
+            <ul>
+              <li>Clauzele contractuale standard aprobate de Comisia Europeană</li>
+              <li>Privacy Shield (pentru companii din SUA)</li>
+              <li>Decizii de adecvare ale Comisiei Europene</li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              5. Cât timp păstrăm datele Dvs.?
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Păstrăm datele Dvs. personale doar atât timp cât este necesar pentru:
+            </ATypographyParagraph>
+            <ul>
+              <li>
+                <strong>Date de cont:</strong> Pe durata în care aveți un cont activ,
+                plus 3 ani după închiderea contului (pentru posibile reclamații)
+              </li>
+              <li>
+                <strong>Date de facturare:</strong> 10 ani (conform legislației fiscale)
+              </li>
+              <li>
+                <strong>Date de marketing:</strong> Până la retragerea consimțământului
+                sau 3 ani de la ultima interacțiune
+              </li>
+              <li>
+                <strong>Cookies:</strong> Conform politicii noastre de cookie-uri
+                (de la câteva zile până la 2 ani)
+              </li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              6. Care sunt drepturile Dvs.?
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              În conformitate cu GDPR, aveți următoarele drepturi:
+            </ATypographyParagraph>
+            <ul>
+              <li>
+                <strong>Dreptul de acces:</strong> Puteți solicita o copie a datelor
+                personale pe care le deținem despre Dvs.
+              </li>
+              <li>
+                <strong>Dreptul la rectificare:</strong> Puteți solicita corectarea
+                datelor inexacte sau incomplete.
+              </li>
+              <li>
+                <strong>Dreptul la ștergere:</strong> Puteți solicita ștergerea
+                datelor Dvs. (sub rezerva unor excepții legale).
+              </li>
+              <li>
+                <strong>Dreptul la restricționarea prelucrării:</strong> Puteți
+                solicita limitarea modului în care folosim datele Dvs.
+              </li>
+              <li>
+                <strong>Dreptul la portabilitatea datelor:</strong> Puteți primi
+                datele Dvs. într-un format structurat și puteți solicita transferul
+                acestora către alt furnizor.
+              </li>
+              <li>
+                <strong>Dreptul de opoziție:</strong> Puteți obiectați la prelucrarea
+                datelor pentru marketing direct sau în scop de interes legitim.
+              </li>
+              <li>
+                <strong>Dreptul de a retrage consimțământul:</strong> Dacă
+                prelucrăm datele pe bază de consimțământ, îl puteți retrage oricând.
+              </li>
+              <li>
+                <strong>Dreptul de a depune o plângere:</strong> Puteți depune o
+                plângere la Autoritatea Națională de Supraveghere a Prelucrării
+                Datelor cu Caracter Personal (ANSPDCP).
+              </li>
+            </ul>
+
+            <ATypographyParagraph>
+              Pentru a vă exercita aceste drepturi, ne puteți contacta la:
+              <ATypographyLink href="mailto:contact@somaway.ro">
+                contact@somaway.ro
+              </ATypographyLink>
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="2">
+              7. Securitatea datelor
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Luăm măsuri tehnice și organizatorice pentru a proteja datele Dvs.
+              împotriva accesului neautorizat, pierderii sau distrugerii. Acestea includ:
+            </ATypographyParagraph>
+            <ul>
+              <li>Criptarea datelor în tranzit (HTTPS/TLS)</li>
+              <li>Stocarea securizată a parolelor (Argon2 hashing)</li>
+              <li>Acces restricționat la date doar pentru personalul autorizat</li>
+              <li>Monitorizarea și auditarea activităților de securitate</li>
+              <li>Backup-uri regulate</li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              8. Cookie-uri și tehnologii similare
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Utilizăm cookie-uri și tehnologii similare pentru a îmbunătăți
+              experiența Dvs. pe platformă. Pentru mai multe detalii, consultați
+              <NuxtLink to="/legal/politica-de-cookie">
+                Politica noastră de Cookie-uri
+              </NuxtLink>.
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="2">
+              9. Modificări ale politicii de confidențialitate
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Ne rezervăm dreptul de a actualiza această politică periodic.
+              Orice modificări vor fi publicate pe această pagină, iar dacă sunt
+              semnificative, vă vom notifica prin e-mail sau prin intermediul platformei.
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="2">10. Contact</ATypographyTitle>
+            <ATypographyParagraph>
+              Pentru întrebări sau solicitări legate de protecția datelor, ne puteți contacta:
+            </ATypographyParagraph>
+            <ul>
+              <li>
+                <strong>E-mail:</strong>
+                <ATypographyLink href="mailto:contact@somaway.ro">
+                  contact@somaway.ro
+                </ATypographyLink>
+              </li>
+              <li>
+                <strong>Adresă:</strong> Str. Gheorghe Pop de Băsești, Nr. 22,
+                Etaj 1, Apartament 3, Sector 5, București
+              </li>
+              <li>
+                <strong>Responsabil protecție date:</strong> Mihaela-Alina Harabagiu
+              </li>
+            </ul>
+
+            <ATypographyParagraph>
+              <ATypographyText type="secondary">
+                Ultima actualizare: 15 martie 2024
+              </ATypographyText>
+            </ATypographyParagraph>
+          </ATypography>
+        </ACol>
+      </ARow>
+    </div>
+  </AppLayout>
+</template>
+
+<script setup lang="ts">
+import { UserRoles } from '~/types/enums/user-role.enum'
+
+// Page metadata using useHead
+useHead({
+  title: 'Politica de Confidentialitate | SOMAWAY',
+  meta: [
+    { name: 'description', content: 'Politica de confidențialitate SOMAWAY - Protecția datelor personale conform GDPR' }
+  ]
+})
+</script>
+
+<style scoped>
+/* Styles for legal pages */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+ul {
+  margin-left: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+ul li {
+  margin-bottom: 0.5rem;
+}
+</style>
+```
+
+Dependencies (Current):
+- react: ^18.2.0
+- next: ^15.2.4
+- antd: ^5.24.2
+- @/@types/enums/user-role.enum
+- @/components/global/PageHelmet
+- @/layouts/AppLayout
+- @/components/global/PageTitle
+- @/components/pages/legal/AsideMenu
+
+Dependencies (Target):
+- vue: ^3.4.0
+- nuxt: ^3.0.0
+- ant-design-vue: ^4.0.0
+- ~/types/enums/user-role.enum
+- ~/components/global/PageHelmet.vue
+- ~/layouts/AppLayout.vue
+- ~/components/global/PageTitle.vue
+- ~/components/pages/legal/AsideMenu.vue
+
+Authorization: Public (UserRoles.GUEST)
+
+Notes:
+1. Conținut 100% static - nu sunt API calls
+2. Pagina este foarte lungă (247 linii) → scroll to top button esențial
+3. GDPR compliance: include toate informațiile obligatorii
+4. Link intern către politica de cookie-uri
+5. Link extern către email (contact@somaway.ro)
+6. Responsive: pe mobile (xs) meniul apare deasupra (24 cols)
+7. Typography components: Title (3 levels), Paragraph, Link, Text
+8. Structură: 10 secțiuni principale cu subsecțiuni
+9. Liste ordonate și neordonate pentru informații structurate
+10. Meta tags pentru SEO (PageHelmet/useHead)
+
+Recommendations:
+1. **Component Conversion:** Use Ant Design Vue A-prefixed components
+2. **Links:** Replace next/link Link with NuxtLink for internal, ATypographyLink for external
+3. **Meta Tags:** Replace PageHelmet with useHead composable
+4. **Styling:** Use scoped styles for typography and lists
+5. **Content Management:** Consider moving legal text to separate files/JSON for easier updates
+6. **Accessibility:** Ensure proper heading hierarchy (h1 → h2 → h3)
+7. **Performance:** Legal pages are static → consider pre-rendering/SSG
+8. **i18n:** If planning multi-language support, extract text to translation files
+9. **Versioning:** Add version tracking for GDPR audit trail
+10. **Print Styles:** Add print-friendly CSS for users who want to print the policy
+
+================================================================================
+TASK 2: POLITICĂ DE COOKIE PAGE
+================================================================================
+
+Title: Politică de Cookie Page
+
+Story: Legal Pages Module
+
+Description:
+
+Business Logic:
+Pagina Politică de Cookie afișează informațiile despre utilizarea cookie-urilor
+pe platforma SOMAWAY, conform cerințelor legale. Include:
+
+1. Definiția și tipurile de cookie-uri (session vs persistent)
+2. Scopurile folosirii cookie-urilor (funcționalitate, performanță, marketing)
+3. Cookie-uri third-party (Facebook, LinkedIn, Google)
+4. Durata de stocare a cookie-urilor
+5. Cum pot utilizatorii să refuze sau să șteargă cookie-urile
+6. Informații despre setările browser-ului
+
+Pagina este accesibilă public (fără autentificare) și folosește aceeași
+structură layout ca celelalte pagini legale (AsideMenu + Content).
+
+================================================================================
+CURRENT IMPLEMENTATION (React + Next.js)
+================================================================================
+
+File: web/src/pages/legal/politica-de-cookie.tsx
+Lines: 76
+
+Code:
+
+```tsx
+// web/src/pages/legal/politica-de-cookie.tsx
+import React from "react";
+import { NextPage } from "next";
+import { FloatButton, Row, Col, Typography } from "antd/lib";
+const { Title, Paragraph, Link, Text } = Typography;
+
+import { PageHelmet } from "@/components/global/PageHelmet";
+import { AppLayout } from "@/layouts/AppLayout";
+import { PageTitle } from "@/components/global/PageTitle";
+import { AsideMenu } from "@/components/pages/legal/AsideMenu";
+import { UserRoles } from "@/@types/enums/user-role.enum";
+
+const PoliticaCookie: React.FC = () => {
+  return (
+    <AppLayout
+      authority={UserRoles.GUEST}
+      layoutClass="legals politica-cookie"
+    >
+      <PageHelmet title='Politica de Cookie | SOMAWAY' />
+      <FloatButton.BackTop />
+      <PageTitle title="Legal" />
+
+      <div className="container">
+        <Row gutter={[24, 24]} justify="center">
+          <Col xs={24} lg={8}>
+            <AsideMenu />
+          </Col>
+          <Col xs={24} lg={16}>
+            <Typography>
+              <Title level={1}>POLITICĂ DE UTILIZARE COOKIE-URI</Title>
+              <Paragraph>
+                <strong>ULTIMA VERSIUNE: 15.03.2024</strong>
+              </Paragraph>
+
+              <Title level={2}>Ce sunt cookie-urile?</Title>
+              <Paragraph>
+                Cookie-urile sunt fișiere text mici pe care un site web le salvează
+                pe computerul sau dispozitivul mobil al utilizatorului în momentul
+                în care acesta vizitează site-ul. Cookie-urile permit site-ului
+                să își amintească acțiunile și preferințele utilizatorului (cum
+                ar fi login-ul, limba, dimensiunea fontului și alte preferințe
+                de afișare) pentru o perioadă de timp, astfel încât utilizatorul
+                să nu fie nevoit să le reintroducă de fiecare dată când revine
+                pe site sau navighează de la o pagină la alta.
+              </Paragraph>
+
+              <Title level={2}>Cum folosim cookie-urile?</Title>
+              <Paragraph>
+                Platforma <strong>SOMAWAY</strong> folosește cookie-uri pentru
+                a îmbunătăți experiența utilizatorilor și pentru a oferi funcționalități
+                esențiale. Cookie-urile ne ajută să:
+              </Paragraph>
+              <ul>
+                <li>
+                  <strong>Menținem sesiunea activă:</strong> Pentru a vă ține
+                  conectat în timp ce navigați pe platformă.
+                </li>
+                <li>
+                  <strong>Memorăm preferințele:</strong> Pentru a salva setările
+                  și preferințele Dvs. (limba, tema, etc.).
+                </li>
+                <li>
+                  <strong>Analizăm traficul:</strong> Pentru a înțelege cum
+                  folosiți platforma și pentru a o îmbunătăți.
+                </li>
+                <li>
+                  <strong>Personalizăm conținutul:</strong> Pentru a vă oferi
+                  recomandări relevante și conținut personalizat.
+                </li>
+                <li>
+                  <strong>Afișăm reclame relevante:</strong> Pentru a vă prezenta
+                  anunțuri care corespund intereselor Dvs.
+                </li>
+              </ul>
+
+              <Title level={2}>Tipuri de cookie-uri pe care le folosim</Title>
+
+              <Title level={3}>1. Cookie-uri esențiale</Title>
+              <Paragraph>
+                Aceste cookie-uri sunt necesare pentru funcționarea platformei
+                și nu pot fi dezactivate. Ele includ cookie-uri de sesiune pentru
+                autentificare și securitate.
+              </Paragraph>
+              <ul>
+                <li><strong>Access Token:</strong> Token JWT pentru autentificare (8 ore)</li>
+                <li><strong>Refresh Token:</strong> Token pentru reînnoire automată (30 zile, HttpOnly)</li>
+              </ul>
+
+              <Title level={3}>2. Cookie-uri de performanță și analiză</Title>
+              <Paragraph>
+                Aceste cookie-uri ne ajută să înțelegem cum interacționați cu
+                platforma, ce pagini vizitați și unde întâmpinați probleme.
+                Informațiile sunt colectate în mod anonim.
+              </Paragraph>
+
+              <Title level={3}>3. Cookie-uri de funcționalitate</Title>
+              <Paragraph>
+                Aceste cookie-uri permit platformei să își amintească alegerile
+                pe care le-ați făcut (cum ar fi limba sau regiunea) și să ofere
+                funcții îmbunătățite și mai personale.
+              </Paragraph>
+
+              <Title level={3}>4. Cookie-uri de marketing și publicitate</Title>
+              <Paragraph>
+                Aceste cookie-uri sunt folosite pentru a urmări vizitatorii pe
+                diverse site-uri web. Scopul lor este de a afișa anunțuri relevante
+                și captivante pentru utilizatori individuali.
+              </Paragraph>
+              <ul>
+                <li>
+                  <strong>Facebook Pixel:</strong> Pentru a măsura eficacitatea
+                  campaniilor publicitare pe Facebook
+                </li>
+                <li>
+                  <strong>LinkedIn Insight Tag:</strong> Pentru a urmări conversiile
+                  și a retargeta vizitatorii
+                </li>
+                <li>
+                  <strong>Google AdWords:</strong> Pentru a măsura performanța
+                  campaniilor publicitare Google
+                </li>
+              </ul>
+
+              <Title level={2}>Cookie-uri de la terți (third-party)</Title>
+              <Paragraph>
+                Unele cookie-uri sunt plasate de servicii terțe care apar pe
+                paginile noastre. Acestea includ:
+              </Paragraph>
+              <ul>
+                <li><strong>Vimeo:</strong> Pentru redarea videoclipurilor cursurilor</li>
+                <li><strong>Zoom:</strong> Pentru sesiunile live și webinarii</li>
+                <li><strong>Stripe:</strong> Pentru procesarea plăților</li>
+              </ul>
+
+              <Title level={2}>Durata cookie-urilor</Title>
+              <Paragraph>
+                Cookie-urile pe care le folosim au durate diferite:
+              </Paragraph>
+              <ul>
+                <li>
+                  <strong>Cookie-uri de sesiune:</strong> Sunt șterse automat
+                  când închideți browserul
+                </li>
+                <li>
+                  <strong>Cookie-uri persistente:</strong> Rămân pe dispozitiv
+                  pentru o perioadă prestabilită (de la câteva zile până la 2 ani)
+                </li>
+              </ul>
+
+              <Title level={2}>Cum puteți controla cookie-urile?</Title>
+              <Paragraph>
+                Puteți controla și/sau șterge cookie-urile după cum doriți.
+                Puteți șterge toate cookie-urile care sunt deja pe computerul
+                Dvs. și puteți seta majoritatea browserelor să le blocheze.
+                Cu toate acestea, dacă faceți acest lucru, este posibil să
+                trebuiască să ajustați manual unele preferințe de fiecare dată
+                când vizitați site-ul, iar unele servicii și funcționalități
+                să nu funcționeze.
+              </Paragraph>
+
+              <Title level={3}>Setări browser</Title>
+              <ul>
+                <li>
+                  <strong>Chrome:</strong> Setări → Confidențialitate și securitate
+                  → Cookie-uri și alte date ale site-urilor
+                </li>
+                <li>
+                  <strong>Firefox:</strong> Opțiuni → Confidențialitate și securitate
+                  → Cookie-uri și date ale site-urilor
+                </li>
+                <li>
+                  <strong>Safari:</strong> Preferințe → Confidențialitate →
+                  Cookie-uri și date ale site-urilor web
+                </li>
+                <li>
+                  <strong>Edge:</strong> Setări → Cookie-uri și permisiuni site
+                </li>
+              </ul>
+
+              <Title level={2}>Modificări ale politicii de cookie-uri</Title>
+              <Paragraph>
+                Ne rezervăm dreptul de a actualiza această politică pentru a
+                reflecta schimbările în practicile noastre sau din motive legale.
+                Vă recomandăm să verificați periodic această pagină pentru a fi
+                la curent cu orice modificări.
+              </Paragraph>
+
+              <Title level={2}>Contact</Title>
+              <Paragraph>
+                Pentru întrebări despre politica noastră de cookie-uri, ne puteți contacta:
+              </Paragraph>
+              <ul>
+                <li>
+                  <strong>E-mail:</strong>{" "}
+                  <Link href="mailto:contact@somaway.ro">contact@somaway.ro</Link>
+                </li>
+                <li>
+                  <strong>Adresă:</strong> Str. Gheorghe Pop de Băsești, Nr. 22,
+                  Etaj 1, Apartament 3, Sector 5, București
+                </li>
+              </ul>
+
+              <Paragraph>
+                <Text type="secondary">
+                  Ultima actualizare: 15 martie 2024
+                </Text>
+              </Paragraph>
+            </Typography>
+          </Col>
+        </Row>
+      </div>
+    </AppLayout>
+  );
+};
+
+export default PoliticaCookie;
+```
+
+================================================================================
+TARGET IMPLEMENTATION (Vue 3 + Nuxt 3)
+================================================================================
+
+File: web/pages/legal/politica-de-cookie.vue
+Estimated Lines: ~80
+
+Code:
+
+```vue
+<!-- web/pages/legal/politica-de-cookie.vue -->
+<template>
+  <AppLayout
+    :authority="UserRoles.GUEST"
+    layout-class="legals politica-cookie"
+  >
+    <PageHelmet title="Politica de Cookie | SOMAWAY" />
+    <AFloatButton.BackTop />
+    <PageTitle title="Legal" />
+
+    <div class="container">
+      <ARow :gutter="[24, 24]" justify="center">
+        <ACol :xs="24" :lg="8">
+          <AsideMenu />
+        </ACol>
+        <ACol :xs="24" :lg="16">
+          <ATypography>
+            <ATypographyTitle :level="1">
+              POLITICĂ DE UTILIZARE COOKIE-URI
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              <strong>ULTIMA VERSIUNE: 15.03.2024</strong>
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="2">
+              Ce sunt cookie-urile?
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Cookie-urile sunt fișiere text mici pe care un site web le salvează
+              pe computerul sau dispozitivul mobil al utilizatorului în momentul
+              în care acesta vizitează site-ul. Cookie-urile permit site-ului
+              să își amintească acțiunile și preferințele utilizatorului (cum
+              ar fi login-ul, limba, dimensiunea fontului și alte preferințe
+              de afișare) pentru o perioadă de timp, astfel încât utilizatorul
+              să nu fie nevoit să le reintroducă de fiecare dată când revine
+              pe site sau navighează de la o pagină la alta.
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="2">
+              Cum folosim cookie-urile?
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Platforma <strong>SOMAWAY</strong> folosește cookie-uri pentru
+              a îmbunătăți experiența utilizatorilor și pentru a oferi funcționalități
+              esențiale. Cookie-urile ne ajută să:
+            </ATypographyParagraph>
+            <ul>
+              <li>
+                <strong>Menținem sesiunea activă:</strong> Pentru a vă ține
+                conectat în timp ce navigați pe platformă.
+              </li>
+              <li>
+                <strong>Memorăm preferințele:</strong> Pentru a salva setările
+                și preferințele Dvs. (limba, tema, etc.).
+              </li>
+              <li>
+                <strong>Analizăm traficul:</strong> Pentru a înțelege cum
+                folosiți platforma și pentru a o îmbunătăți.
+              </li>
+              <li>
+                <strong>Personalizăm conținutul:</strong> Pentru a vă oferi
+                recomandări relevante și conținut personalizat.
+              </li>
+              <li>
+                <strong>Afișăm reclame relevante:</strong> Pentru a vă prezenta
+                anunțuri care corespund intereselor Dvs.
+              </li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              Tipuri de cookie-uri pe care le folosim
+            </ATypographyTitle>
+
+            <ATypographyTitle :level="3">1. Cookie-uri esențiale</ATypographyTitle>
+            <ATypographyParagraph>
+              Aceste cookie-uri sunt necesare pentru funcționarea platformei
+              și nu pot fi dezactivate. Ele includ cookie-uri de sesiune pentru
+              autentificare și securitate.
+            </ATypographyParagraph>
+            <ul>
+              <li><strong>Access Token:</strong> Token JWT pentru autentificare (8 ore)</li>
+              <li><strong>Refresh Token:</strong> Token pentru reînnoire automată (30 zile, HttpOnly)</li>
+            </ul>
+
+            <ATypographyTitle :level="3">
+              2. Cookie-uri de performanță și analiză
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Aceste cookie-uri ne ajută să înțelegem cum interacționați cu
+              platforma, ce pagini vizitați și unde întâmpinați probleme.
+              Informațiile sunt colectate în mod anonim.
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="3">
+              3. Cookie-uri de funcționalitate
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Aceste cookie-uri permit platformei să își amintească alegerile
+              pe care le-ați făcut (cum ar fi limba sau regiunea) și să ofere
+              funcții îmbunătățite și mai personale.
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="3">
+              4. Cookie-uri de marketing și publicitate
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Aceste cookie-uri sunt folosite pentru a urmări vizitatorii pe
+              diverse site-uri web. Scopul lor este de a afișa anunțuri relevante
+              și captivante pentru utilizatori individuali.
+            </ATypographyParagraph>
+            <ul>
+              <li>
+                <strong>Facebook Pixel:</strong> Pentru a măsura eficacitatea
+                campaniilor publicitare pe Facebook
+              </li>
+              <li>
+                <strong>LinkedIn Insight Tag:</strong> Pentru a urmări conversiile
+                și a retargeta vizitatorii
+              </li>
+              <li>
+                <strong>Google AdWords:</strong> Pentru a măsura performanța
+                campaniilor publicitare Google
+              </li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              Cookie-uri de la terți (third-party)
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Unele cookie-uri sunt plasate de servicii terțe care apar pe
+              paginile noastre. Acestea includ:
+            </ATypographyParagraph>
+            <ul>
+              <li><strong>Vimeo:</strong> Pentru redarea videoclipurilor cursurilor</li>
+              <li><strong>Zoom:</strong> Pentru sesiunile live și webinarii</li>
+              <li><strong>Stripe:</strong> Pentru procesarea plăților</li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              Durata cookie-urilor
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Cookie-urile pe care le folosim au durate diferite:
+            </ATypographyParagraph>
+            <ul>
+              <li>
+                <strong>Cookie-uri de sesiune:</strong> Sunt șterse automat
+                când închideți browserul
+              </li>
+              <li>
+                <strong>Cookie-uri persistente:</strong> Rămân pe dispozitiv
+                pentru o perioadă prestabilită (de la câteva zile până la 2 ani)
+              </li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              Cum puteți controla cookie-urile?
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Puteți controla și/sau șterge cookie-urile după cum doriți.
+              Puteți șterge toate cookie-urile care sunt deja pe computerul
+              Dvs. și puteți seta majoritatea browserelor să le blocheze.
+              Cu toate acestea, dacă faceți acest lucru, este posibil să
+              trebuiască să ajustați manual unele preferințe de fiecare dată
+              când vizitați site-ul, iar unele servicii și funcționalități
+              să nu funcționeze.
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="3">Setări browser</ATypographyTitle>
+            <ul>
+              <li>
+                <strong>Chrome:</strong> Setări → Confidențialitate și securitate
+                → Cookie-uri și alte date ale site-urilor
+              </li>
+              <li>
+                <strong>Firefox:</strong> Opțiuni → Confidențialitate și securitate
+                → Cookie-uri și date ale site-urilor
+              </li>
+              <li>
+                <strong>Safari:</strong> Preferințe → Confidențialitate →
+                Cookie-uri și date ale site-urilor web
+              </li>
+              <li>
+                <strong>Edge:</strong> Setări → Cookie-uri și permisiuni site
+              </li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              Modificări ale politicii de cookie-uri
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Ne rezervăm dreptul de a actualiza această politică pentru a
+              reflecta schimbările în practicile noastre sau din motive legale.
+              Vă recomandăm să verificați periodic această pagină pentru a fi
+              la curent cu orice modificări.
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="2">Contact</ATypographyTitle>
+            <ATypographyParagraph>
+              Pentru întrebări despre politica noastră de cookie-uri, ne puteți contacta:
+            </ATypographyParagraph>
+            <ul>
+              <li>
+                <strong>E-mail:</strong>
+                <ATypographyLink href="mailto:contact@somaway.ro">
+                  contact@somaway.ro
+                </ATypographyLink>
+              </li>
+              <li>
+                <strong>Adresă:</strong> Str. Gheorghe Pop de Băsești, Nr. 22,
+                Etaj 1, Apartament 3, Sector 5, București
+              </li>
+            </ul>
+
+            <ATypographyParagraph>
+              <ATypographyText type="secondary">
+                Ultima actualizare: 15 martie 2024
+              </ATypographyText>
+            </ATypographyParagraph>
+          </ATypography>
+        </ACol>
+      </ARow>
+    </div>
+  </AppLayout>
+</template>
+
+<script setup lang="ts">
+import { UserRoles } from '~/types/enums/user-role.enum'
+
+useHead({
+  title: 'Politica de Cookie | SOMAWAY',
+  meta: [
+    { name: 'description', content: 'Politica de utilizare cookie-uri SOMAWAY - Informații despre cookie-uri și cum le folosim' }
+  ]
+})
+</script>
+
+<style scoped>
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+ul {
+  margin-left: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+ul li {
+  margin-bottom: 0.5rem;
+}
+</style>
+```
+
+Dependencies (Current):
+- react: ^18.2.0
+- next: ^15.2.4
+- antd: ^5.24.2
+- @/@types/enums/user-role.enum
+- @/components/global/PageHelmet
+- @/layouts/AppLayout
+- @/components/global/PageTitle
+- @/components/pages/legal/AsideMenu
+
+Dependencies (Target):
+- vue: ^3.4.0
+- nuxt: ^3.0.0
+- ant-design-vue: ^4.0.0
+- ~/types/enums/user-role.enum
+- ~/components/global/PageHelmet.vue
+- ~/layouts/AppLayout.vue
+- ~/components/global/PageTitle.vue
+- ~/components/pages/legal/AsideMenu.vue
+
+Authorization: Public (UserRoles.GUEST)
+
+Notes:
+1. Pagină mai scurtă decât politica de confidențialitate (76 vs 247 linii)
+2. Focus pe explicarea tipurilor de cookie-uri și cum le folosim
+3. Include detalii specifice: Access Token (8h), Refresh Token (30d HttpOnly)
+4. Third-party cookies: Vimeo, Zoom, Stripe, Facebook, LinkedIn, Google
+5. Instrucțiuni pentru fiecare browser popular (Chrome, Firefox, Safari, Edge)
+6. Nu există link-uri către alte pagini legale în conținut
+7. Structură: 8 secțiuni principale cu 4 subsecțiuni (tipuri cookie-uri)
+8. Liste pentru exemple și instrucțiuni browser
+9. Contact info identic cu celelalte pagini legale
+10. Versiune datată: 15.03.2024
+
+Recommendations:
+1. **Cookie Banner Integration:** Consider adding a cookie consent banner component
+2. **Dynamic Cookie List:** Extract cookie types to a data structure for easier management
+3. **Cookie Preferences:** Consider implementing a preference center for granular control
+4. **Third-party Updates:** Keep track of third-party cookie changes (GDPR compliance)
+5. **Browser Instructions:** Add screenshots or links to official browser help pages
+6. **Testing:** Test cookie management across different browsers
+7. **Analytics:** Track cookie consent rates and preferences
+8. **Legal Review:** Ensure compliance with local cookie laws (ePrivacy Directive)
+9. **User Education:** Consider adding a FAQ section about cookies
+10. **Version History:** Maintain changelog for cookie policy updates
+
+================================================================================
+TASK 3: TERMENE ȘI CONDIȚII PAGE
+================================================================================
+
+Title: Termene și Condiții Page
+
+Story: Legal Pages Module
+
+Description:
+
+Business Logic:
+Pagina Termene și Condiții afișează termenii și condițiile generale de
+utilizare a platformei SOMAWAY, inclusiv regulile pentru achiziții,
+retur, utilizare conținut, și responsabilități. Include:
+
+1. Prezentare generală și acceptare termeni
+2. Restricții de utilizare conținut (fără redistribuire, modificare)
+3. Înregistrare și responsabilități cont
+4. Plată, facturare și livrare (cursuri online)
+5. Drept de retragere (14 zile) și excepții
+6. Reguli comunitate și comentarii
+7. Limitări de răspundere
+8. Termeni specifici cursurilor (acces, valabilitate)
+9. Proprietate intelectuală
+10. Modificări termeni și legislație aplicabilă
+
+Pagina este accesibilă public și folosește același layout cu AsideMenu
+pentru navigare între paginile legale.
+
+================================================================================
+CURRENT IMPLEMENTATION (React + Next.js)
+================================================================================
+
+File: web/src/pages/legal/termene-si-conditii.tsx
+Lines: 205
+
+Code:
+
+```tsx
+// web/src/pages/legal/termene-si-conditii.tsx
+import React from "react";
+import { NextPage } from "next";
+import { FloatButton, Row, Col, Typography } from "antd/lib";
+const { Title, Paragraph, Link, Text } = Typography;
+
+import { PageHelmet } from "@/components/global/PageHelmet";
+import { AppLayout } from "@/layouts/AppLayout";
+import { PageTitle } from "@/components/global/PageTitle";
+import { AsideMenu } from "@/components/pages/legal/AsideMenu";
+import { UserRoles } from "@/@types/enums/user-role.enum";
+
+const TermeneConditii: React.FC = () => {
+  return (
+    <AppLayout
+      authority={UserRoles.GUEST}
+      layoutClass="legals termene-conditii"
+    >
+      <PageHelmet title='Termene și Condiții | SOMAWAY' />
+      <FloatButton.BackTop />
+      <PageTitle title="Legal" />
+
+      <div className="container">
+        <Row gutter={[24, 24]} justify="center">
+          <Col xs={24} lg={8}>
+            <AsideMenu />
+          </Col>
+          <Col xs={24} lg={16}>
+            <Typography>
+              <Title level={1}>TERMENE ȘI CONDIȚII</Title>
+              <Paragraph>
+                <strong>ULTIMA VERSIUNE: 15.03.2024</strong>
+              </Paragraph>
+
+              <Paragraph>
+                Bine ați venit pe <strong>SOMAWAY</strong>! Acești termeni și
+                condiții descriu regulile de utilizare a platformei noastre de
+                cursuri online. Prin accesarea și utilizarea serviciilor noastre,
+                sunteți de acord cu acești termeni.
+              </Paragraph>
+
+              <Title level={2}>1. Informații generale</Title>
+              <Paragraph>
+                Platforma <strong>SOMAWAY</strong> este operată de <strong>BINE IN CORP SRL</strong>,
+                companie înmatriculată în România cu sediul social în Str.
+                Gheorghe Pop de Băsești, Nr. 22, Etaj 1, Apartament 3, Sector 5,
+                București, CUI RO45702099, reprezentata legal prin HARABAGIU MIHAELA-ALINA.
+              </Paragraph>
+              <Paragraph>
+                Serviciile noastre includ:
+              </Paragraph>
+              <ul>
+                <li>Cursuri video online de dezvoltare personală și wellness</li>
+                <li>Webinarii și sesiuni live cu instructori</li>
+                <li>Materiale educaționale descărcabile</li>
+                <li>Comunitate online pentru discuții și suport</li>
+              </ul>
+
+              <Title level={2}>2. Acceptarea termenilor</Title>
+              <Paragraph>
+                Prin utilizarea platformei SOMAWAY, confirmați că:
+              </Paragraph>
+              <ul>
+                <li>Aveți cel puțin 18 ani sau aveți acordul părintelui/tutorelui legal</li>
+                <li>Ați citit, înțeles și acceptat acești termeni și condiții</li>
+                <li>Sunteți de acord cu{" "}
+                  <Link href="/legal/politica-de-confidentialitate">
+                    Politica noastră de Confidențialitate
+                  </Link>{" "}
+                  și{" "}
+                  <Link href="/legal/politica-de-cookie">
+                    Politica de Cookie-uri
+                  </Link>
+                </li>
+                <li>Veți folosi platforma în mod legal și conform termenilor descriși</li>
+              </ul>
+
+              <Title level={2}>3. Înregistrare și cont de utilizator</Title>
+              <Paragraph>
+                Pentru a accesa cursurile, trebuie să creați un cont. În momentul înregistrării:
+              </Paragraph>
+              <ul>
+                <li>
+                  <strong>Informații corecte:</strong> Vă obligați să furnizați
+                  informații adevărate, exacte, actuale și complete
+                </li>
+                <li>
+                  <strong>Securitate:</strong> Sunteți responsabil pentru păstrarea
+                  confidențialității parolei și pentru toate activitățile din contul Dvs.
+                </li>
+                <li>
+                  <strong>Cont personal:</strong> Nu puteți transfera sau partaja
+                  contul cu alte persoane
+                </li>
+                <li>
+                  <strong>Notificare compromitere:</strong> Trebuie să ne anunțați
+                  imediat dacă suspectați utilizare neautorizată a contului
+                </li>
+              </ul>
+
+              <Title level={2}>4. Utilizarea platformei și conținutului</Title>
+
+              <Title level={3}>Ce PUTEȚI face:</Title>
+              <ul>
+                <li>Accesa cursurile la care v-ați abonat sau pe care le-ați achiziționat</li>
+                <li>Viziona materialele video și descărca resursele furnizate</li>
+                <li>Participa la discuții și comunitate (respectând regulile)</li>
+                <li>Oferi feedback și recenzii despre cursuri</li>
+              </ul>
+
+              <Title level={3}>Ce NU PUTEȚI face:</Title>
+              <ul>
+                <li>
+                  <strong>Redistribuire:</strong> Să partajați, copiați sau
+                  redistribuiți conținutul cursurilor către terți
+                </li>
+                <li>
+                  <strong>Modificare:</strong> Să modificați, reproduceți sau
+                  creați lucrări derivate din conținutul nostru
+                </li>
+                <li>
+                  <strong>Comercializare:</strong> Să vindeți, închiriați sau
+                  să utilizați conținutul în scopuri comerciale
+                </li>
+                <li>
+                  <strong>Download ilegal:</strong> Să descărcați conținut video
+                  prin alte mijloace decât cele autorizate
+                </li>
+                <li>
+                  <strong>Abuz:</strong> Să folosiți platforma pentru activități
+                  ilegale sau dăunătoare
+                </li>
+                <li>
+                  <strong>Hacking:</strong> Să interferați cu securitatea sau
+                  funcționarea platformei
+                </li>
+              </ul>
+
+              <Title level={2}>5. Plată, facturare și livrare</Title>
+
+              <Title level={3}>Metode de plată</Title>
+              <Paragraph>
+                Acceptăm plăți prin:
+              </Paragraph>
+              <ul>
+                <li><strong>Card bancar:</strong> Visa, Mastercard (procesat prin Stripe)</li>
+                <li><strong>Librapay:</strong> Transfer bancar sau alte metode suportate</li>
+              </ul>
+
+              <Title level={3}>Facturare</Title>
+              <ul>
+                <li>Toate prețurile sunt afișate în RON și includ TVA</li>
+                <li>Veți primi factura electronică pe email după finalizarea plății</li>
+                <li>Facturile sunt emise prin SmartBill conform legislației fiscale</li>
+              </ul>
+
+              <Title level={3}>Livrare (acces cursuri)</Title>
+              <ul>
+                <li>
+                  <strong>Cursuri individuale:</strong> Acces imediat după confirmarea plății
+                </li>
+                <li>
+                  <strong>Abonamente:</strong> Acces la toate cursurile incluse
+                  pe durata abonamentului
+                </li>
+                <li>
+                  <strong>Cursuri programate:</strong> Acces începe la data specificată
+                  în descrierea cursului
+                </li>
+              </ul>
+
+              <Title level={2}>6. Drept de retragere și retur</Title>
+              <Paragraph>
+                Conform legislației europene pentru comerțul electronic, aveți
+                dreptul de a renunța la achiziție în termen de <strong>14 zile</strong>
+                de la data achiziției, <strong>CU EXCEPȚIA</strong> situațiilor în care:
+              </Paragraph>
+              <ul>
+                <li>
+                  Ați început să vizionați cursul sau să accesați conținutul digital
+                  (conform Directivei 2011/83/UE, art. 16, lit. m)
+                </li>
+                <li>
+                  Ați participat la sesiuni live sau webinarii care au avut deja loc
+                </li>
+                <li>
+                  Ați descărcat materiale digitale furnizate (PDF-uri, resurse, etc.)
+                </li>
+              </ul>
+
+              <Paragraph>
+                Pentru a exercita dreptul de retragere, contactați-ne la{" "}
+                <Link href="mailto:contact@somaway.ro">contact@somaway.ro</Link>
+                {" "}cu detaliile comenzii. Rambursarea se va face în termen de
+                14 zile pe aceeași metodă de plată folosită la achiziție.
+              </Paragraph>
+
+              <Title level={2}>7. Abonamente și reînnoiri</Title>
+              <ul>
+                <li>
+                  <strong>Reînnoire automată:</strong> Abonamentele recurente se
+                  reînnoiesc automat la sfârșitul perioadei, dacă nu sunt anulate
+                </li>
+                <li>
+                  <strong>Anulare:</strong> Puteți anula abonamentul oricând din
+                  contul Dvs., accesul va rămâne activ până la sfârșitul perioadei plătite
+                </li>
+                <li>
+                  <strong>Modificări preț:</strong> Ne rezervăm dreptul de a
+                  modifica prețurile abonamentelor, dar vă vom notifica cu 30 de
+                  zile înainte de aplicarea noului preț
+                </li>
+              </ul>
+
+              <Title level={2}>8. Proprietate intelectuală</Title>
+              <Paragraph>
+                Toate materialele disponibile pe SOMAWAY, inclusiv:
+              </Paragraph>
+              <ul>
+                <li>Cursuri video și conținut audio</li>
+                <li>Texte, imagini și grafice</li>
+                <li>Logo-uri, mărci comerciale</li>
+                <li>Design și interfață platformă</li>
+                <li>Materiale descărcabile (PDF-uri, workbook-uri)</li>
+              </ul>
+              <Paragraph>
+                ...sunt proprietatea <strong>BINE IN CORP SRL</strong> sau a
+                instructorilor noștri și sunt protejate de legile dreptului de
+                autor din România și internaționale. Orice utilizare neautorizată
+                constituie încălcarea drepturilor de proprietate intelectuală.
+              </Paragraph>
+
+              <Title level={2}>9. Reguli ale comunității</Title>
+              <Paragraph>
+                În secțiunile de comentarii și forumuri, vă rugăm să:
+              </Paragraph>
+              <ul>
+                <li>Fiți respectuoși față de alți utilizatori și instructori</li>
+                <li>Nu folosiți limbaj ofensator, vulgar sau discriminatoriu</li>
+                <li>Nu distribuiți spam, publicitate sau link-uri suspecte</li>
+                <li>Nu divulgați informații personale despre alții</li>
+                <li>Nu încălcați drepturile de autor ale altora</li>
+              </ul>
+              <Paragraph>
+                Ne rezervăm dreptul de a șterge comentarii inadecvate și de a
+                suspenda/închide conturi care încalcă aceste reguli.
+              </Paragraph>
+
+              <Title level={2}>10. Limitări de răspundere</Title>
+              <Paragraph>
+                Platforma SOMAWAY și cursurile sunt furnizate &quot;așa cum sunt&quot;.
+                În limitele legii:
+              </Paragraph>
+              <ul>
+                <li>
+                  <strong>Rezultate:</strong> Nu garantăm rezultate specifice din
+                  urmarea cursurilor - succesul depinde de efortul personal
+                </li>
+                <li>
+                  <strong>Conținut terți:</strong> Nu suntem responsabili pentru
+                  conținut furnizat de servicii terțe (Vimeo, Zoom, etc.)
+                </li>
+                <li>
+                  <strong>Disponibilitate:</strong> Ne străduim să menținem
+                  platforma funcțională 24/7, dar nu garantăm disponibilitate continuă
+                </li>
+                <li>
+                  <strong>Daune:</strong> Nu suntem răspunzători pentru daune
+                  indirecte, incidentale sau consecvente
+                </li>
+              </ul>
+
+              <Title level={2}>11. Suspendarea și rezilierea contului</Title>
+              <Paragraph>
+                Ne rezervăm dreptul de a suspenda sau închide contul Dvs. dacă:
+              </Paragraph>
+              <ul>
+                <li>Încălcați acești termeni și condiții</li>
+                <li>Folosiți platforma în mod fraudulos sau ilegal</li>
+                <li>Distribuiți conținut protejat de drepturi de autor</li>
+                <li>Aveți comportament abuziv față de comunitate sau echipa noastră</li>
+              </ul>
+
+              <Title level={2}>12. Modificări ale termenilor</Title>
+              <Paragraph>
+                Ne rezervăm dreptul de a actualiza acești termeni periodic.
+                Modificările semnificative vor fi comunicate prin:
+              </Paragraph>
+              <ul>
+                <li>Notificare pe platformă</li>
+                <li>Email către adresa înregistrată</li>
+                <li>Afișare pe pagina de termeni și condiții</li>
+              </ul>
+              <Paragraph>
+                Continuarea utilizării platformei după modificări constituie
+                acceptarea noilor termeni.
+              </Paragraph>
+
+              <Title level={2}>13. Legislație aplicabilă și jurisdicție</Title>
+              <Paragraph>
+                Acești termeni și condiții sunt guvernați de legile din România.
+                Orice dispută va fi soluționată de către instanțele competente
+                din București, România.
+              </Paragraph>
+
+              <Title level={2}>14. Contact</Title>
+              <Paragraph>
+                Pentru întrebări sau reclamații legate de acești termeni, ne puteți contacta:
+              </Paragraph>
+              <ul>
+                <li>
+                  <strong>E-mail:</strong>{" "}
+                  <Link href="mailto:contact@somaway.ro">contact@somaway.ro</Link>
+                </li>
+                <li>
+                  <strong>Adresă:</strong> Str. Gheorghe Pop de Băsești, Nr. 22,
+                  Etaj 1, Apartament 3, Sector 5, București
+                </li>
+                <li>
+                  <strong>Reprezentant legal:</strong> Mihaela-Alina Harabagiu
+                </li>
+              </ul>
+
+              <Paragraph>
+                <Text type="secondary">
+                  Ultima actualizare: 15 martie 2024
+                </Text>
+              </Paragraph>
+            </Typography>
+          </Col>
+        </Row>
+      </div>
+    </AppLayout>
+  );
+};
+
+export default TermeneConditii;
+```
+
+================================================================================
+TARGET IMPLEMENTATION (Vue 3 + Nuxt 3)
+================================================================================
+
+File: web/pages/legal/termene-si-conditii.vue
+Estimated Lines: ~210
+
+Code:
+
+```vue
+<!-- web/pages/legal/termene-si-conditii.vue -->
+<template>
+  <AppLayout
+    :authority="UserRoles.GUEST"
+    layout-class="legals termene-conditii"
+  >
+    <PageHelmet title="Termene și Condiții | SOMAWAY" />
+    <AFloatButton.BackTop />
+    <PageTitle title="Legal" />
+
+    <div class="container">
+      <ARow :gutter="[24, 24]" justify="center">
+        <ACol :xs="24" :lg="8">
+          <AsideMenu />
+        </ACol>
+        <ACol :xs="24" :lg="16">
+          <ATypography>
+            <ATypographyTitle :level="1">
+              TERMENE ȘI CONDIȚII
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              <strong>ULTIMA VERSIUNE: 15.03.2024</strong>
+            </ATypographyParagraph>
+
+            <ATypographyParagraph>
+              Bine ați venit pe <strong>SOMAWAY</strong>! Acești termeni și
+              condiții descriu regulile de utilizare a platformei noastre de
+              cursuri online. Prin accesarea și utilizarea serviciilor noastre,
+              sunteți de acord cu acești termeni.
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="2">
+              1. Informații generale
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Platforma <strong>SOMAWAY</strong> este operată de <strong>BINE IN CORP SRL</strong>,
+              companie înmatriculată în România cu sediul social în Str.
+              Gheorghe Pop de Băsești, Nr. 22, Etaj 1, Apartament 3, Sector 5,
+              București, CUI RO45702099, reprezentata legal prin HARABAGIU MIHAELA-ALINA.
+            </ATypographyParagraph>
+            <ATypographyParagraph>
+              Serviciile noastre includ:
+            </ATypographyParagraph>
+            <ul>
+              <li>Cursuri video online de dezvoltare personală și wellness</li>
+              <li>Webinarii și sesiuni live cu instructori</li>
+              <li>Materiale educaționale descărcabile</li>
+              <li>Comunitate online pentru discuții și suport</li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              2. Acceptarea termenilor
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Prin utilizarea platformei SOMAWAY, confirmați că:
+            </ATypographyParagraph>
+            <ul>
+              <li>Aveți cel puțin 18 ani sau aveți acordul părintelui/tutorelui legal</li>
+              <li>Ați citit, înțeles și acceptat acești termeni și condiții</li>
+              <li>
+                Sunteți de acord cu
+                <NuxtLink to="/legal/politica-de-confidentialitate">
+                  Politica noastră de Confidențialitate
+                </NuxtLink>
+                și
+                <NuxtLink to="/legal/politica-de-cookie">
+                  Politica de Cookie-uri
+                </NuxtLink>
+              </li>
+              <li>Veți folosi platforma în mod legal și conform termenilor descriși</li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              3. Înregistrare și cont de utilizator
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Pentru a accesa cursurile, trebuie să creați un cont. În momentul înregistrării:
+            </ATypographyParagraph>
+            <ul>
+              <li>
+                <strong>Informații corecte:</strong> Vă obligați să furnizați
+                informații adevărate, exacte, actuale și complete
+              </li>
+              <li>
+                <strong>Securitate:</strong> Sunteți responsabil pentru păstrarea
+                confidențialității parolei și pentru toate activitățile din contul Dvs.
+              </li>
+              <li>
+                <strong>Cont personal:</strong> Nu puteți transfera sau partaja
+                contul cu alte persoane
+              </li>
+              <li>
+                <strong>Notificare compromitere:</strong> Trebuie să ne anunțați
+                imediat dacă suspectați utilizare neautorizată a contului
+              </li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              4. Utilizarea platformei și conținutului
+            </ATypographyTitle>
+
+            <ATypographyTitle :level="3">Ce PUTEȚI face:</ATypographyTitle>
+            <ul>
+              <li>Accesa cursurile la care v-ați abonat sau pe care le-ați achiziționat</li>
+              <li>Viziona materialele video și descărca resursele furnizate</li>
+              <li>Participa la discuții și comunitate (respectând regulile)</li>
+              <li>Oferi feedback și recenzii despre cursuri</li>
+            </ul>
+
+            <ATypographyTitle :level="3">Ce NU PUTEȚI face:</ATypographyTitle>
+            <ul>
+              <li>
+                <strong>Redistribuire:</strong> Să partajați, copiați sau
+                redistribuiți conținutul cursurilor către terți
+              </li>
+              <li>
+                <strong>Modificare:</strong> Să modificați, reproduceți sau
+                creați lucrări derivate din conținutul nostru
+              </li>
+              <li>
+                <strong>Comercializare:</strong> Să vindeți, închiriați sau
+                să utilizați conținutul în scopuri comerciale
+              </li>
+              <li>
+                <strong>Download ilegal:</strong> Să descărcați conținut video
+                prin alte mijloace decât cele autorizate
+              </li>
+              <li>
+                <strong>Abuz:</strong> Să folosiți platforma pentru activități
+                ilegale sau dăunătoare
+              </li>
+              <li>
+                <strong>Hacking:</strong> Să interferați cu securitatea sau
+                funcționarea platformei
+              </li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              5. Plată, facturare și livrare
+            </ATypographyTitle>
+
+            <ATypographyTitle :level="3">Metode de plată</ATypographyTitle>
+            <ATypographyParagraph>
+              Acceptăm plăți prin:
+            </ATypographyParagraph>
+            <ul>
+              <li><strong>Card bancar:</strong> Visa, Mastercard (procesat prin Stripe)</li>
+              <li><strong>Librapay:</strong> Transfer bancar sau alte metode suportate</li>
+            </ul>
+
+            <ATypographyTitle :level="3">Facturare</ATypographyTitle>
+            <ul>
+              <li>Toate prețurile sunt afișate în RON și includ TVA</li>
+              <li>Veți primi factura electronică pe email după finalizarea plății</li>
+              <li>Facturile sunt emise prin SmartBill conform legislației fiscale</li>
+            </ul>
+
+            <ATypographyTitle :level="3">Livrare (acces cursuri)</ATypographyTitle>
+            <ul>
+              <li>
+                <strong>Cursuri individuale:</strong> Acces imediat după confirmarea plății
+              </li>
+              <li>
+                <strong>Abonamente:</strong> Acces la toate cursurile incluse
+                pe durata abonamentului
+              </li>
+              <li>
+                <strong>Cursuri programate:</strong> Acces începe la data specificată
+                în descrierea cursului
+              </li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              6. Drept de retragere și retur
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Conform legislației europene pentru comerțul electronic, aveți
+              dreptul de a renunța la achiziție în termen de <strong>14 zile</strong>
+              de la data achiziției, <strong>CU EXCEPȚIA</strong> situațiilor în care:
+            </ATypographyParagraph>
+            <ul>
+              <li>
+                Ați început să vizionați cursul sau să accesați conținutul digital
+                (conform Directivei 2011/83/UE, art. 16, lit. m)
+              </li>
+              <li>
+                Ați participat la sesiuni live sau webinarii care au avut deja loc
+              </li>
+              <li>
+                Ați descărcat materiale digitale furnizate (PDF-uri, resurse, etc.)
+              </li>
+            </ul>
+
+            <ATypographyParagraph>
+              Pentru a exercita dreptul de retragere, contactați-ne la
+              <ATypographyLink href="mailto:contact@somaway.ro">
+                contact@somaway.ro
+              </ATypographyLink>
+              cu detaliile comenzii. Rambursarea se va face în termen de
+              14 zile pe aceeași metodă de plată folosită la achiziție.
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="2">
+              7. Abonamente și reînnoiri
+            </ATypographyTitle>
+            <ul>
+              <li>
+                <strong>Reînnoire automată:</strong> Abonamentele recurente se
+                reînnoiesc automat la sfârșitul perioadei, dacă nu sunt anulate
+              </li>
+              <li>
+                <strong>Anulare:</strong> Puteți anula abonamentul oricând din
+                contul Dvs., accesul va rămâne activ până la sfârșitul perioadei plătite
+              </li>
+              <li>
+                <strong>Modificări preț:</strong> Ne rezervăm dreptul de a
+                modifica prețurile abonamentelor, dar vă vom notifica cu 30 de
+                zile înainte de aplicarea noului preț
+              </li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              8. Proprietate intelectuală
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Toate materialele disponibile pe SOMAWAY, inclusiv:
+            </ATypographyParagraph>
+            <ul>
+              <li>Cursuri video și conținut audio</li>
+              <li>Texte, imagini și grafice</li>
+              <li>Logo-uri, mărci comerciale</li>
+              <li>Design și interfață platformă</li>
+              <li>Materiale descărcabile (PDF-uri, workbook-uri)</li>
+            </ul>
+            <ATypographyParagraph>
+              ...sunt proprietatea <strong>BINE IN CORP SRL</strong> sau a
+              instructorilor noștri și sunt protejate de legile dreptului de
+              autor din România și internaționale. Orice utilizare neautorizată
+              constituie încălcarea drepturilor de proprietate intelectuală.
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="2">
+              9. Reguli ale comunității
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              În secțiunile de comentarii și forumuri, vă rugăm să:
+            </ATypographyParagraph>
+            <ul>
+              <li>Fiți respectuoși față de alți utilizatori și instructori</li>
+              <li>Nu folosiți limbaj ofensator, vulgar sau discriminatoriu</li>
+              <li>Nu distribuiți spam, publicitate sau link-uri suspecte</li>
+              <li>Nu divulgați informații personale despre alții</li>
+              <li>Nu încălcați drepturile de autor ale altora</li>
+            </ul>
+            <ATypographyParagraph>
+              Ne rezervăm dreptul de a șterge comentarii inadecvate și de a
+              suspenda/închide conturi care încalcă aceste reguli.
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="2">
+              10. Limitări de răspundere
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Platforma SOMAWAY și cursurile sunt furnizate "așa cum sunt".
+              În limitele legii:
+            </ATypographyParagraph>
+            <ul>
+              <li>
+                <strong>Rezultate:</strong> Nu garantăm rezultate specifice din
+                urmarea cursurilor - succesul depinde de efortul personal
+              </li>
+              <li>
+                <strong>Conținut terți:</strong> Nu suntem responsabili pentru
+                conținut furnizat de servicii terțe (Vimeo, Zoom, etc.)
+              </li>
+              <li>
+                <strong>Disponibilitate:</strong> Ne străduim să menținem
+                platforma funcțională 24/7, dar nu garantăm disponibilitate continuă
+              </li>
+              <li>
+                <strong>Daune:</strong> Nu suntem răspunzători pentru daune
+                indirecte, incidentale sau consecvente
+              </li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              11. Suspendarea și rezilierea contului
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Ne rezervăm dreptul de a suspenda sau închide contul Dvs. dacă:
+            </ATypographyParagraph>
+            <ul>
+              <li>Încălcați acești termeni și condiții</li>
+              <li>Folosiți platforma în mod fraudulos sau ilegal</li>
+              <li>Distribuiți conținut protejat de drepturi de autor</li>
+              <li>Aveți comportament abuziv față de comunitate sau echipa noastră</li>
+            </ul>
+
+            <ATypographyTitle :level="2">
+              12. Modificări ale termenilor
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Ne rezervăm dreptul de a actualiza acești termeni periodic.
+              Modificările semnificative vor fi comunicate prin:
+            </ATypographyParagraph>
+            <ul>
+              <li>Notificare pe platformă</li>
+              <li>Email către adresa înregistrată</li>
+              <li>Afișare pe pagina de termeni și condiții</li>
+            </ul>
+            <ATypographyParagraph>
+              Continuarea utilizării platformei după modificări constituie
+              acceptarea noilor termeni.
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="2">
+              13. Legislație aplicabilă și jurisdicție
+            </ATypographyTitle>
+            <ATypographyParagraph>
+              Acești termeni și condiții sunt guvernați de legile din România.
+              Orice dispută va fi soluționată de către instanțele competente
+              din București, România.
+            </ATypographyParagraph>
+
+            <ATypographyTitle :level="2">14. Contact</ATypographyTitle>
+            <ATypographyParagraph>
+              Pentru întrebări sau reclamații legate de acești termeni, ne puteți contacta:
+            </ATypographyParagraph>
+            <ul>
+              <li>
+                <strong>E-mail:</strong>
+                <ATypographyLink href="mailto:contact@somaway.ro">
+                  contact@somaway.ro
+                </ATypographyLink>
+              </li>
+              <li>
+                <strong>Adresă:</strong> Str. Gheorghe Pop de Băsești, Nr. 22,
+                Etaj 1, Apartament 3, Sector 5, București
+              </li>
+              <li>
+                <strong>Reprezentant legal:</strong> Mihaela-Alina Harabagiu
+              </li>
+            </ul>
+
+            <ATypographyParagraph>
+              <ATypographyText type="secondary">
+                Ultima actualizare: 15 martie 2024
+              </ATypographyText>
+            </ATypographyParagraph>
+          </ATypography>
+        </ACol>
+      </ARow>
+    </div>
+  </AppLayout>
+</template>
+
+<script setup lang="ts">
+import { UserRoles } from '~/types/enums/user-role.enum'
+
+useHead({
+  title: 'Termene și Condiții | SOMAWAY',
+  meta: [
+    { name: 'description', content: 'Termene și condiții de utilizare a platformei SOMAWAY - Reguli, drepturi și responsabilități' }
+  ]
+})
+</script>
+
+<style scoped>
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+ul {
+  margin-left: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+ul li {
+  margin-bottom: 0.5rem;
+}
+</style>
+```
+
+Dependencies (Current):
+- react: ^18.2.0
+- next: ^15.2.4
+- antd: ^5.24.2
+- @/@types/enums/user-role.enum
+- @/components/global/PageHelmet
+- @/layouts/AppLayout
+- @/components/global/PageTitle
+- @/components/pages/legal/AsideMenu
+
+Dependencies (Target):
+- vue: ^3.4.0
+- nuxt: ^3.0.0
+- ant-design-vue: ^4.0.0
+- ~/types/enums/user-role.enum
+- ~/components/global/PageHelmet.vue
+- ~/layouts/AppLayout.vue
+- ~/components/global/PageTitle.vue
+- ~/components/pages/legal/AsideMenu.vue
+
+Authorization: Public (UserRoles.GUEST)
+
+Notes:
+1. Cel mai complex document legal (205 linii, 14 secțiuni)
+2. Include referințe legale specifice: Directiva 2011/83/UE, art. 16, lit. m
+3. Link-uri interne către politica de confidențialitate și cookie
+4. Termeni specifici platformei: Stripe, Librapay, SmartBill, Vimeo, Zoom
+5. Drept de retragere 14 zile cu excepții clare pentru conținut digital
+6. Reguli comunitate: comportament, spam, drepturi autor
+7. Limitări răspundere: rezultate, third-party, disponibilitate
+8. Abonamente recurente cu reînnoire automată și preaviz 30 zile
+9. Jurisdicție: instanțe București, legile României
+10. Structură complexă: titluri nivel 2 și nivel 3, liste multiple
+
+Recommendations:
+1. **Legal Review:** Periodic review by lawyer to ensure GDPR and consumer law compliance
+2. **Version Control:** Implement version history with dates and changelog
+3. **User Acceptance:** Add checkbox requiring users to explicitly accept terms on signup
+4. **Highlight Changes:** When terms are updated, highlight what changed for existing users
+5. **Simplification:** Consider creating a "Terms Summary" for easier reading
+6. **Multi-language:** If expanding internationally, prepare translations
+7. **Template Variables:** Extract company info (address, CUI, etc.) to config for reusability
+8. **Print Stylesheet:** Add print-friendly CSS for legal archiving
+9. **Anchor Links:** Consider adding table of contents with anchor links for navigation
+10. **Withdrawal Form:** Provide downloadable withdrawal form template (ANPC requirement)
+
+================================================================================
+TASK 4: ASIDEMENU COMPONENT (SHARED NAVIGATION)
+================================================================================
+
+Title: AsideMenu Component (Legal Pages Navigation)
+
+Story: Legal Pages Module
+
+Description:
+
+Business Logic:
+Componenta AsideMenu este un meniu lateral de navigare folosit pe toate
+paginile legale. Afișează link-uri către cele 3 pagini legale și marchează
+activ pagina curentă bazată pe route-ul actual.
+
+Funcționalitate:
+1. Lista statică cu 3 link-uri către pagini legale
+2. Active state highlighting bazat pe router.asPath (Next.js) / route.path (Nuxt)
+3. Structură simplă: <aside> → <ul> → <li> cu link-uri
+4. Reusabilă pe toate paginile legale
+
+Este o componentă shared folosită de:
+- politica-de-confidentialitate.tsx
+- politica-de-cookie.tsx
+- termene-si-conditii.tsx
+
+================================================================================
+CURRENT IMPLEMENTATION (React + Next.js)
+================================================================================
+
+File: web/src/components/pages/legal/AsideMenu.tsx
+Lines: 28
+
+Code:
+
+```tsx
+// web/src/components/pages/legal/AsideMenu.tsx
+import React from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
+
+const AsideMenuContent = [
+  { title: 'Politică de cookie-uri', slug: 'politica-de-cookie' },
+  { title: 'Politică de confidențialitate', slug: 'politica-de-confidentialitate' },
+  { title: 'Termene și condiții', slug: 'termene-si-conditii' },
+];
+
+export const AsideMenu: React.FC = () => {
+  const router = useRouter();
+
+  return (
+    <aside>
+      <ul className="legal-menu">
+        {AsideMenuContent.map((page) => (
+          <li key={page.slug} className={router.asPath === `/legal/${page.slug}` ? 'active' : ''}>
+            <Link href={`/legal/${page.slug}`}>
+              {page.title}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </aside>
+  );
+};
+```
+
+Technical Details:
+
+**Data Structure:**
+- AsideMenuContent: Array of objects with `title` and `slug`
+- Static data defined in component (3 items)
+
+**Active State:**
+- Uses `router.asPath` from next/router
+- String comparison: `router.asPath === `/legal/${page.slug}``
+- Adds `active` CSS class to matching <li>
+
+**Rendering:**
+- Maps over AsideMenuContent array
+- Each item rendered as <li> with Link component
+- Link href constructed: `/legal/${page.slug}`
+
+**Styling:**
+- CSS class: "legal-menu" on <ul>
+- Active class: "active" on <li>
+- Styles defined globally (not in component)
+
+================================================================================
+TARGET IMPLEMENTATION (Vue 3 + Nuxt 3)
+================================================================================
+
+File: web/components/pages/legal/AsideMenu.vue
+Estimated Lines: ~35
+
+Code:
+
+```vue
+<!-- web/components/pages/legal/AsideMenu.vue -->
+<template>
+  <aside>
+    <ul class="legal-menu">
+      <li
+        v-for="page in asideMenuContent"
+        :key="page.slug"
+        :class="{ active: isActive(page.slug) }"
+      >
+        <NuxtLink :to="`/legal/${page.slug}`">
+          {{ page.title }}
+        </NuxtLink>
+      </li>
+    </ul>
+  </aside>
+</template>
+
+<script setup lang="ts">
+import { useRoute } from '#app'
+
+interface MenuItem {
+  title: string
+  slug: string
+}
+
+const asideMenuContent: MenuItem[] = [
+  { title: 'Politică de cookie-uri', slug: 'politica-de-cookie' },
+  { title: 'Politică de confidențialitate', slug: 'politica-de-confidentialitate' },
+  { title: 'Termene și condiții', slug: 'termene-si-conditii' }
+]
+
+const route = useRoute()
+
+const isActive = (slug: string): boolean => {
+  return route.path === `/legal/${slug}`
+}
+</script>
+
+<style scoped>
+.legal-menu {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.legal-menu li {
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  transition: background-color 0.3s ease;
+}
+
+.legal-menu li:hover {
+  background-color: #f5f5f5;
+}
+
+.legal-menu li.active {
+  background-color: #e6f7ff;
+  border-left: 4px solid #1890ff;
+}
+
+.legal-menu a {
+  color: #262626;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.legal-menu li.active a {
+  color: #1890ff;
+  font-weight: 600;
+}
+</style>
+```
+
+Alternative Implementation (Using Composable):
+
+```vue
+<!-- web/components/pages/legal/AsideMenu.vue -->
+<template>
+  <aside>
+    <ul class="legal-menu">
+      <li
+        v-for="page in asideMenuContent"
+        :key="page.slug"
+        :class="{ active: isActive(page.slug) }"
+      >
+        <NuxtLink :to="`/legal/${page.slug}`">
+          {{ page.title }}
+        </NuxtLink>
+      </li>
+    </ul>
+  </aside>
+</template>
+
+<script setup lang="ts">
+const route = useRoute()
+
+const asideMenuContent = [
+  { title: 'Politică de cookie-uri', slug: 'politica-de-cookie' },
+  { title: 'Politică de confidențialitate', slug: 'politica-de-confidentialitate' },
+  { title: 'Termene și condiții', slug: 'termene-si-conditii' }
+]
+
+const isActive = computed(() => (slug: string) => {
+  return route.path === `/legal/${slug}`
+})
+</script>
+
+<style scoped>
+/* Same styles as above */
+</style>
+```
+
+================================================================================
+MIGRATION PATTERNS
+================================================================================
+
+**1. Router Access:**
+```tsx
+// Current (React + Next.js)
+import { useRouter } from 'next/router'
+const router = useRouter()
+const currentPath = router.asPath
+```
+
+```vue
+// Target (Vue 3 + Nuxt 3)
+import { useRoute } from '#app'
+const route = useRoute()
+const currentPath = route.path
+```
+
+**2. Link Component:**
+```tsx
+// Current (React + Next.js)
+import Link from 'next/link'
+<Link href="/legal/politica-de-cookie">...</Link>
+```
+
+```vue
+// Target (Vue 3 + Nuxt 3)
+<NuxtLink to="/legal/politica-de-cookie">...</NuxtLink>
+```
+
+**3. Conditional Class:**
+```tsx
+// Current (React + Next.js)
+<li className={router.asPath === `/legal/${page.slug}` ? 'active' : ''}>
+```
+
+```vue
+// Target (Vue 3 + Nuxt 3)
+<li :class="{ active: isActive(page.slug) }">
+```
+
+**4. Array Rendering:**
+```tsx
+// Current (React + Next.js)
+{AsideMenuContent.map((page) => (
+  <li key={page.slug}>...</li>
+))}
+```
+
+```vue
+// Target (Vue 3 + Nuxt 3)
+<li v-for="page in asideMenuContent" :key="page.slug">
+  ...
+</li>
+```
+
+**5. TypeScript Interface:**
+```tsx
+// Current (React + Next.js)
+const AsideMenuContent = [
+  { title: 'Politică de cookie-uri', slug: 'politica-de-cookie' },
+  // ... no explicit type
+];
+```
+
+```typescript
+// Target (Vue 3 + Nuxt 3)
+interface MenuItem {
+  title: string
+  slug: string
+}
+
+const asideMenuContent: MenuItem[] = [
+  { title: 'Politică de cookie-uri', slug: 'politica-de-cookie' },
+  // ... explicit typing
+]
+```
+
+Dependencies (Current):
+- react: ^18.2.0
+- next: ^15.2.4
+- next/link (Link component)
+- next/router (useRouter hook)
+
+Dependencies (Target):
+- vue: ^3.4.0
+- nuxt: ^3.0.0
+- #app (useRoute composable)
+- NuxtLink (built-in component)
+
+Authorization: N/A (Shared component, no auth logic)
+
+Notes:
+1. Componenta foarte simplă - doar 28 linii (React), ~35 linii (Vue)
+2. Nu are props - complet self-contained
+3. Nu are state management - doar routing logic
+4. Active state bazat exclusiv pe current route
+5. Lista de menu items este hard-coded (nu vine din API)
+6. Ordinea: Cookie → Confidențialitate → Termene (alfabetic în cod, dar nu în afișare)
+7. Styling: global în React, scoped în Vue (recomandat)
+8. Nu are loading state sau error handling (static data)
+9. Responsive: layout-ul este gestionat de parent (Row/Col grid)
+10. Accessibility: ar beneficia de aria-current="page" pe link-ul activ
+
+Recommendations:
+1. **TypeScript:** Add explicit types for menu items (interface MenuItem)
+2. **Accessibility:** Add `aria-current="page"` to active link
+3. **Scoped Styles:** Move styles to scoped section in Vue component
+4. **Composable:** Consider extracting menu data to a composable if reused elsewhere
+5. **i18n:** If adding multi-language support, extract titles to translation files
+6. **Dynamic Data:** If legal pages become dynamic, fetch menu from API
+7. **Testing:** Add unit tests for active state logic
+8. **Icons:** Consider adding icons to menu items for better UX
+9. **Mobile:** Add collapse/expand functionality for mobile views
+10. **Keyboard Nav:** Ensure proper keyboard navigation (tab, enter)
+
+================================================================================
+MODULE SUMMARY
+================================================================================
+
+Total Tasks: 4
+Total Components: 4 (3 pages + 1 shared component)
+Total Lines: ~528 (React) → ~575 (Vue 3)
+
+Common Patterns:
+1. **Public Access:** All pages use UserRoles.GUEST authority
+2. **Layout Structure:** Identical grid layout (AsideMenu 8 cols + Content 16 cols)
+3. **Shared Components:** AppLayout, PageHelmet, PageTitle, AsideMenu
+4. **Typography Heavy:** Extensive use of Title, Paragraph, Link, Text
+5. **Static Content:** No API calls, no dynamic data, no state management
+6. **SEO:** PageHelmet with title meta tags on all pages
+7. **Scroll to Top:** FloatButton.BackTop on all pages
+8. **Responsive:** Grid collapses to 24 cols on mobile
+9. **Legal Compliance:** GDPR, ePrivacy, Romanian consumer law
+10. **Versioning:** All pages dated 15.03.2024
+
+Key Differences from Other Modules:
+1. **Zero Business Logic:** Pure static content display
+2. **No Authentication:** Completely public pages
+3. **No API Integration:** No backend calls
+4. **No Forms:** No user input (except navigation)
+5. **No State:** No Redux/Pinia, no local state
+6. **Minimal JavaScript:** Only routing logic in AsideMenu
+
+Migration Complexity: ⭐ (Lowest - 1 of 5)
+- Straightforward content migration
+- Minimal logic to convert
+- No API dependencies
+- No state management
+- Only routing and styling changes
+
+Testing Priorities:
+1. ✅ Route detection and active state (AsideMenu)
+2. ✅ Responsive layout (mobile vs desktop)
+3. ✅ Link navigation between legal pages
+4. ✅ SEO meta tags rendering
+5. ✅ Scroll to top functionality
+6. ⚠️ Content accuracy (legal text preservation)
+7. ⚠️ Print styles (legal archiving requirement)
+8. ⚠️ Accessibility (keyboard navigation, screen readers)
+
+================================================================================
+END OF LEGAL PAGES MODULE DOCUMENTATION
+================================================================================

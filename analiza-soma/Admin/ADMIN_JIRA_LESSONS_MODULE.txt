@@ -1,0 +1,2478 @@
+================================================================================
+JIRA STORY - ADMIN DASHBOARD: LESSONS MANAGEMENT MODULE
+================================================================================
+
+Story Title: Lessons Management Module - React to Vue.js Migration
+
+Story Type: Story (Module-Level)
+
+Priority: HIGH
+
+Labels: admin-dashboard, lessons-management, react-to-vue, migration
+
+Epic Link: Admin Dashboard Migration
+
+================================================================================
+STORY DESCRIPTION
+================================================================================
+
+Modulul Lessons Management gestionează lectiile din cadrul cursurilor, inclusiv
+CRUD (Create, Read, Update, Delete), afișarea video-urilor, gestionarea tag-urilor
+(categorii), și sortarea după ordinea de afișare (displayOrder).
+
+**Caracteristici principale:**
+- Vizualizare listă lectii pentru un curs specific (identificat prin courseId în URL)
+- Creare și editare lectii cu validare
+- Upload imagine pentru lectie (imageUrl)
+- Link video pentru lectie (videoUrl) cu preview în modal
+- Asociere tag-uri (categorii) pentru lectii (multiple selection)
+- Display Order pentru sortare customizată
+- Status Active/Inactive
+- Ștergere cu confirmare
+- Statistici despre lectii (total lectii, completate, în desfășurare)
+- Video player (ReactPlayer) cu controale
+- Drawer pentru formular (responsive: 640px desktop, 100% mobile)
+- Sync real-time a datelor după operațiuni CRUD
+
+**Locație cod sursă:**
+- Page: admin/src/pages/dashboards/Lessons.tsx
+- Table Component: admin/src/components/dashboard/learning/LessonsCard/LessonsCard.tsx
+- Form Component: admin/src/components/dashboard/learning/LessonsForm/LessonsForm.tsx
+- API Service: admin/src/utils/apiService.tsx (getAllLessonsApi, handlePushLessonApi, handleDeleteLessonApi)
+
+**Endpoints utilizate:**
+- GET /v1/lessons/:courseId/all - Get all lessons by course ID
+- POST /v1/lessons - Create lesson
+- PATCH /v1/lessons/:id - Update lesson
+- DELETE /v1/lessons/:id - Delete lesson
+- GET /v1/categories/all - Get categories for tags
+
+**Dependencies:**
+- Categories Module (pentru tag-uri)
+- Courses Module (courseId din URL: /dashboards/lessons/:courseId)
+- Video player (ReactPlayer → @videojs-player/vue)
+- Image preview (Ant Design Image component)
+
+**Tech Stack (Current - React):**
+- React 18.2.0 + TypeScript 5.0.2
+- Ant Design 5.20.1 (Table, Drawer, Modal, Form, Image, Badge, Tag)
+- ReactPlayer 2.16.0 (video player)
+- dayjs (date formatting)
+- react-responsive (useMediaQuery)
+- React Router (useParams pentru courseId)
+
+**Tech Stack (Target - Vue.js 3):**
+- Vue 3.4+ Composition API
+- Ant Design Vue 4.x
+- @videojs-player/vue (video player)
+- dayjs (same)
+- @vueuse/core (useMediaQuery → useBreakpoints)
+- Vue Router (useRoute pentru courseId)
+
+**Notes:**
+- Lessons sunt sortate după displayOrder (ASC, nullish values = 9999999)
+- TagIds sunt stocate ca array de stringuri, dar trimise ca string separată de virgule
+- Video player se deschide în Modal (destroyOnClose pentru cleanup)
+- Drawer width responsive (640px desktop, 100% mobile)
+- Stats cards (total lessons, completed, in progress, active accounts) - mock data pentru unele
+- ExamsCard și CommunityGroupCard sunt mock data (din JSON files)
+- BackBtn pentru navigare înapoi la cursuri
+
+================================================================================
+TASKS (11 COMPONENTS / FEATURES)
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 1: Lessons Page Layout & State Management
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Pagina Lessons Management afișează lectiile pentru un curs specific (identificat
+prin courseId în URL). Utilizatorul vede statistici despre lectii (total, completate,
+în desfășurare) în 4 cards-uri în partea de sus, apoi tabelul cu lectii în centru,
+și 2 cards-uri laterale (Exams și Community Groups) pe dreapta.
+
+**User Flow:**
+1. Admin navighează la /dashboards/lessons/:courseId (ex: courseId=5)
+2. Sistemul încarcă toate lectiile pentru cursul respectiv (GET /v1/lessons/:courseId/all)
+3. Sistemul încarcă toate categoriile pentru tag-uri (GET /v1/categories/all)
+4. Se afișează 4 stats cards (total lessons, completed, in progress, active accounts)
+5. Se afișează tabelul cu lectii în centru și 2 cards-uri mock data pe dreapta
+6. Admin poate crea/edita/șterge lectii, preview video-uri
+
+**Cod sursă:**
+- File: admin/src/pages/dashboards/Lessons.tsx:1-273
+- Main states: lessonsData, categoriesData, modalAction, lessonToUpdate, videoModalUrl, editModalWidth
+- Hooks: useParams (courseId), useMediaQuery (responsive), useAuth (JWT token)
+
+**Current Implementation (React):**
+```typescript
+import { useState, useEffect, useCallback } from 'react';
+import { useParams } from 'react-router-dom';
+import { useMediaQuery } from 'react-responsive';
+import { getAllLessonsApi, getAllCategoriesApi, handleDeleteLessonApi } from '../../utils/apiService';
+
+export const LessonsDashboardPage = () => {
+  const { courseId } = useParams(); // courseId from URL
+  const { authUser } = useAuth();
+  const [editModalWidth, setEditModalWidth] = useState<string>();
+  const [modalAction, setModalAction] = useState<MODAL_ACTIONS>(CLOSE);
+  const [lessonToUpdate, setLessonToUpdate] = useState<LearningLesson>();
+  const [loading, setLoading] = useState(true);
+  const [lessonsData, setLessonsData] = useState<LearningLesson[]>([]);
+  const [categoriesData, setCategoriesData] = useState<Category[]>([]);
+  const [videoModalUrl, setVideoModalUrl] = useState('');
+
+  const isLarge = useMediaQuery({ minWidth: 960 });
+
+  useEffect(() => {
+    if (isLarge) {
+      setEditModalWidth('640');
+    } else {
+      setEditModalWidth('100%');
+    }
+  }, [isLarge]);
+
+  useEffect(() => {
+    getAllLessonsApi(Number(courseId), setLoading, authUser?.accessToken ?? "").then((data: unknown) => {
+      const lessonsData = (data as LessonResponse).lessons;
+      setLessonsData(lessonsData);
+    });
+    getAllCategoriesApi(setLoading, authUser?.accessToken ?? "").then((res: ResponseT) => {
+      const categoriesRawData = (res.data as CategoryResponse)?.categories;
+      setCategoriesData(categoriesRawData);
+    });
+  }, []);
+
+  const handleDeleteLesson = useCallback(async (recordId: number) => {
+    const res: ResponseT = await handleDeleteLessonApi(recordId) as unknown as ResponseT;
+    if ([200, 201].includes(res?.status)) {
+      syncAfterDelete(recordId);
+      message.open({ 'type': 'success', 'content': `Lesson ${recordId} deleted successfully` });
+    } else {
+      message.open({ 'type': 'error', 'content': `Lesson ${recordId} cannot be deleted` });
+    }
+  }, []);
+
+  const handleEditModal = (action: MODAL_ACTIONS, handledRecord?: LearningLesson) => {
+    setModalAction(action);
+    setLessonToUpdate(handledRecord);
+
+    if (action === SYNC && handledRecord) {
+      syncAfterUpdate(handledRecord as LearningLesson);
+      setModalAction(CLOSE);
+      setLessonToUpdate(undefined);
+    }
+    if (action === CREATE && handledRecord) {
+      syncAfterCreate(handledRecord as LearningLesson);
+      setModalAction(CLOSE);
+      setLessonToUpdate(undefined);
+    }
+  }
+
+  const syncAfterUpdate = (newRecord: LearningLesson) => {
+    setLessonsData(prevState => {
+      const updatedCourses = prevState?.map(item =>
+        Number(item.id) === Number(newRecord?.id) ? newRecord : item
+      );
+      return updatedCourses?.sort((a, b) => (a.displayOrder ?? 9999999) - (b.displayOrder ?? 9999999));
+    });
+  }
+
+  const syncAfterCreate = (newRecord: LearningLesson) => {
+    setLessonsData(prevState => [newRecord, ...prevState]);
+  }
+
+  const syncAfterDelete = (recordId: number) => {
+    setLessonsData(prevState => prevState?.filter((record) => record.id !== recordId));
+  }
+
+  return (
+    <div>
+      <Helmet>
+        <title>Lectii | cursul #{courseId}</title>
+      </Helmet>
+      <PageHeader
+        title={`lectii | cursul #${courseId}`}
+        breadcrumbs={[...]}
+      />
+      <Row {...stylesContext?.rowProps}>
+        <Col xs={24} xl={18}>
+          <Row {...stylesContext?.rowProps}>
+            {/* 4 Stats Cards */}
+            <Col xs={24} sm={12} xl={6}>
+              <LearningStatsCard
+                title={`Lectii prezente în cursul #${courseId}`}
+                value={lessonsData?.length}
+                icon={SafetyCertificateOutlined}
+                color="blue"
+                progress={76}
+                style={{ height: '100%' }}
+              />
+            </Col>
+            {/* ... 3 more stats cards ... */}
+
+            <Col span={24}>
+              <LessonsCard
+                data={lessonsData}
+                categories={categoriesData}
+                loading={loading}
+                handleEditModal={handleEditModal}
+                setVideoModalUrl={setVideoModalUrl}
+                handleDeleteLesson={handleDeleteLesson}
+              />
+            </Col>
+          </Row>
+        </Col>
+        <Col xs={24} xl={6}>
+          <Row {...stylesContext?.rowProps}>
+            <Col span={24}>
+              <ExamsCard data={examsData} loading={examsDataLoading} error={examsDataError} />
+            </Col>
+            <Col span={24}>
+              <CommunityGroupCard data={communitiesData} loading={communitiesDataLoading} error={communitiesDataError} />
+            </Col>
+          </Row>
+        </Col>
+      </Row>
+
+      <Drawer
+        title={`${modalAction === UPDATE ? 'Update' : 'Create'} a lesson`}
+        width={editModalWidth}
+        placement="right"
+        open={modalAction !== CLOSE}
+        onClose={() => handleEditModal(CLOSE)}
+      >
+        {!!((lessonToUpdate) || modalAction === CREATE) && (
+          <LessonForm recordToUpdate={lessonToUpdate} handleEditModal={handleEditModal} courseId={Number(courseId)} />
+        )}
+      </Drawer>
+
+      <Modal
+        title={null}
+        footer={null}
+        open={!!videoModalUrl}
+        onCancel={() => setVideoModalUrl('')}
+        width="fit-content"
+        destroyOnClose={true}
+        styles={{ body: { padding: 0 } }}
+      >
+        {handleVideo()}
+      </Modal>
+    </div>
+  );
+};
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { useBreakpoints } from '@vueuse/core'
+import { message, type DrawerProps, type ModalProps } from 'ant-design-vue'
+import { getAllLessonsApi, getAllCategoriesApi, handleDeleteLessonApi } from '@/utils/apiService'
+import { useAuthStore } from '@/stores/auth'
+import type { LearningLesson, Category, LessonResponse, ResponseT } from '@/types'
+
+const route = useRoute()
+const authStore = useAuthStore()
+
+// Reactive state
+const courseId = computed(() => Number(route.params.courseId))
+const modalAction = ref<MODAL_ACTIONS>('CLOSE')
+const lessonToUpdate = ref<LearningLesson | undefined>()
+const loading = ref(true)
+const lessonsData = ref<LearningLesson[]>([])
+const categoriesData = ref<Category[]>([])
+const videoModalUrl = ref('')
+
+// Responsive drawer width
+const breakpoints = useBreakpoints({ large: 960 })
+const isLarge = breakpoints.greaterOrEqual('large')
+const editModalWidth = computed(() => isLarge.value ? '640px' : '100%')
+
+// Fetch lessons and categories
+const fetchData = async () => {
+  try {
+    loading.value = true
+
+    const [lessonsResult, categoriesResult] = await Promise.all([
+      getAllLessonsApi(courseId.value, authStore.accessToken),
+      getAllCategoriesApi(authStore.accessToken)
+    ])
+
+    lessonsData.value = (lessonsResult as LessonResponse).lessons
+    categoriesData.value = (categoriesResult.data as CategoryResponse)?.categories
+  } catch (error) {
+    message.error('Failed to load lessons data')
+    console.error(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+// Delete lesson
+const handleDeleteLesson = async (recordId: number) => {
+  try {
+    const res = await handleDeleteLessonApi(recordId) as ResponseT
+    if ([200, 201].includes(res?.status)) {
+      syncAfterDelete(recordId)
+      message.success(`Lesson ${recordId} deleted successfully`)
+    } else {
+      message.error(`Lesson ${recordId} cannot be deleted`)
+    }
+  } catch (error) {
+    message.error('Failed to delete lesson')
+    console.error(error)
+  }
+}
+
+// Handle modal actions
+const handleEditModal = (action: MODAL_ACTIONS, handledRecord?: LearningLesson) => {
+  modalAction.value = action
+  lessonToUpdate.value = handledRecord
+
+  if (action === 'SYNC' && handledRecord) {
+    syncAfterUpdate(handledRecord)
+    modalAction.value = 'CLOSE'
+    lessonToUpdate.value = undefined
+  }
+  if (action === 'CREATE' && handledRecord) {
+    syncAfterCreate(handledRecord)
+    modalAction.value = 'CLOSE'
+    lessonToUpdate.value = undefined
+  }
+}
+
+// Sync methods
+const syncAfterUpdate = (newRecord: LearningLesson) => {
+  lessonsData.value = lessonsData.value
+    .map(item => Number(item.id) === Number(newRecord?.id) ? newRecord : item)
+    .sort((a, b) => (a.displayOrder ?? 9999999) - (b.displayOrder ?? 9999999))
+}
+
+const syncAfterCreate = (newRecord: LearningLesson) => {
+  lessonsData.value = [newRecord, ...lessonsData.value]
+}
+
+const syncAfterDelete = (recordId: number) => {
+  lessonsData.value = lessonsData.value.filter(record => record.id !== recordId)
+}
+
+// Video player modal
+const isVideoModalOpen = computed(() => !!videoModalUrl.value)
+
+onMounted(() => {
+  fetchData()
+})
+</script>
+
+<template>
+  <div>
+    <a-page-header
+      :title="`lectii | cursul #${courseId}`"
+      :breadcrumb="breadcrumbs"
+    />
+
+    <a-row :gutter="[16, 16]">
+      <a-col :xs="24" :xl="18">
+        <a-row :gutter="[16, 16]">
+          <!-- 4 Stats Cards -->
+          <a-col :xs="24" :sm="12" :xl="6">
+            <LearningStatsCard
+              :title="`Lectii prezente în cursul #${courseId}`"
+              :value="lessonsData.length"
+              icon="SafetyCertificateOutlined"
+              color="blue"
+              :progress="76"
+              style="height: 100%"
+            />
+          </a-col>
+          <!-- ... 3 more stats cards ... -->
+
+          <a-col :span="24">
+            <LessonsCard
+              :data="lessonsData"
+              :categories="categoriesData"
+              :loading="loading"
+              :handleEditModal="handleEditModal"
+              :setVideoModalUrl="(url: string) => videoModalUrl = url"
+              :handleDeleteLesson="handleDeleteLesson"
+            />
+          </a-col>
+        </a-row>
+      </a-col>
+
+      <a-col :xs="24" :xl="6">
+        <a-row :gutter="[16, 16]">
+          <a-col :span="24">
+            <ExamsCard :data="examsData" :loading="examsDataLoading" :error="examsDataError" />
+          </a-col>
+          <a-col :span="24">
+            <CommunityGroupCard :data="communitiesData" :loading="communitiesDataLoading" :error="communitiesDataError" />
+          </a-col>
+        </a-row>
+      </a-col>
+    </a-row>
+
+    <!-- Drawer pentru formular -->
+    <a-drawer
+      :title="`${modalAction === 'UPDATE' ? 'Update' : 'Create'} a lesson`"
+      :width="editModalWidth"
+      placement="right"
+      :open="modalAction !== 'CLOSE'"
+      @close="handleEditModal('CLOSE')"
+    >
+      <LessonForm
+        v-if="lessonToUpdate || modalAction === 'CREATE'"
+        :recordToUpdate="lessonToUpdate"
+        :handleEditModal="handleEditModal"
+        :courseId="courseId"
+      />
+    </a-drawer>
+
+    <!-- Modal pentru video preview -->
+    <a-modal
+      :title="null"
+      :footer="null"
+      :open="isVideoModalOpen"
+      @cancel="videoModalUrl = ''"
+      width="fit-content"
+      :destroyOnClose="true"
+      :bodyStyle="{ padding: 0 }"
+    >
+      <VideoPlayer v-if="videoModalUrl" :url="videoModalUrl" :playing="true" controls />
+    </a-modal>
+  </div>
+</template>
+```
+
+**Notes:**
+- courseId este preluat din URL params (useParams în React, useRoute în Vue)
+- useMediaQuery (React) → useBreakpoints (@vueuse/core) pentru responsive
+- Stats cards: primul card afișează numărul real de lectii, restul sunt mock data
+- ExamsCard și CommunityGroupCard folosesc date mock din JSON files (să fie migrați separat)
+- Drawer width: 640px pentru desktop, 100% pentru mobile (<960px)
+- Video modal are destroyOnClose pentru cleanup la închidere
+- Sync methods update UI local după CRUD operations (optimistic updates)
+
+**Recommendations:**
+1. **Error Handling**: Adaugă try-catch în toate API calls
+2. **Loading States**: Separate loading states pentru lessons și categories
+3. **Computed Properties**: Folosește computed pentru sortarea lessons (nu în sync methods)
+4. **Composables**: Extrage logica de sync într-un composable (useLessonSync)
+5. **Stats Cards**: Fetch real data pentru "completed" și "in progress" (probabil din Analytics)
+6. **Page Title**: Folosește useHead (VueUse) pentru dynamic title
+
+**Migration Complexity**: MEDIUM (9 dependencies, 11 state variables, complex sync logic)
+
+**Estimated Effort**: 1-2 zile (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 2: Lessons Table Component with Categories Tags
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Tabelul afișează toate lectiile pentru cursul curent, cu coloane pentru imagine,
+ID, display order, titlu (clickable pentru edit), video link (cu preview), status
+(Active/Inactive), tag-uri (categorii colorate), dată creare, și delete button.
+
+**User Flow:**
+1. Admin vede tabelul cu toate lectiile cursului
+2. Click pe titlu → deschide Drawer cu formular de editare
+3. Click pe video icon → deschide Modal cu video player
+4. Tag-urile sunt afișate ca badges colorate (purple)
+5. Click pe Delete → confirmă ștergerea → lectia este ștearsă
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/learning/LessonsCard/LessonsCard.tsx:1-129
+- Props: data (lessons), categories, loading, handleEditModal, handleDeleteLesson, setVideoModalUrl
+- Columns: 9 columns (Image, ID, Display Order, Title, Video, Status, Tags, Date, Delete)
+
+**Current Implementation (React):**
+```typescript
+import { Badge, BadgeProps, Table, Image, Button, Popconfirm, Tooltip, Tag } from 'antd/lib';
+import { PlusOutlined, DeleteOutlined, VideoCameraOutlined } from '@ant-design/icons';
+import { BackBtn, Card } from '../../../index.ts';
+import dayjs from 'dayjs';
+import { MODAL_ACTIONS } from '../../../../constants/index.ts';
+
+type Props = {
+  data?: LearningLesson[];
+  categories?: Category[]
+  loading?: boolean;
+  handleEditModal: (modalAction: MODAL_ACTIONS, course?: LearningLesson | undefined) => void;
+  handleDeleteLesson: (courseId: number) => void;
+  setVideoModalUrl: (videoUrl: string) => void;
+} & CardProps;
+
+export const LessonsCard = ({ data, categories, loading, handleEditModal, handleDeleteLesson, setVideoModalUrl, ...others }: Props) => {
+
+  const LESSON_COLUMNS: ColumnsType<LearningLesson> = [
+    {
+      title: 'Image',
+      dataIndex: 'imageUrl',
+      key: 'imageUrl',
+      render: (imgSrc: string) => (<Image src={imgSrc} alt="course" height={40} width={40} preview={true} />),
+    },
+    {
+      title: '#Id',
+      dataIndex: 'id',
+      key: 'id',
+      render: (id: string) => <span className="text-capitalize">#{id}</span>,
+    },
+    {
+      title: 'Display Order',
+      dataIndex: 'displayOrder',
+      key: 'displayOrder',
+      render: (displayOrder: string) => <span className="text-capitalize">{displayOrder}</span>,
+    },
+    {
+      title: 'Titlu',
+      dataIndex: 'title',
+      key: 'title',
+      render: (title: string, record: LearningLesson) => <a onClick={() => { handleEditModal(UPDATE, record) }}>
+        <Tooltip title="editeaza cursul" color="#999" mouseEnterDelay={0.3}>
+          <span className="text-capitalize">{title}</span>
+        </Tooltip>
+      </a>,
+    },
+    {
+      title: 'videoUrl',
+      dataIndex: 'videoUrl',
+      key: 'videoUrl',
+      render: (videoUrl: string) => <>
+        {videoUrl ? <Button type="link" icon={<VideoCameraOutlined />} onClick={() => setVideoModalUrl(videoUrl)} target='_blank'>Link</Button> : null}
+      </>
+    },
+    {
+      title: 'Status',
+      dataIndex: 'isActive',
+      key: 'isActive',
+      render: (_isActive: boolean) => {
+        const label = _isActive ? "Active" : "Inactive";
+        let status: BadgeProps['status'];
+
+        if (_isActive === false) {
+          status = 'default';
+        } else if (_isActive === true) {
+          status = 'success';
+        }
+        else { status = 'processing'; }
+
+        return <Badge status={status} text={label} className="text-capitalize" />;
+      },
+    },
+    {
+      title: 'Taguri',
+      dataIndex: 'tagIds',
+      key: 'tagIds',
+      render: (tagIds: string[]) => <span className="text-capitalize">
+        {tagIds?.map((tagId) => {
+          const tag = categories?.find(({ id }) => id === Number(tagId));
+          return <Tag key={tagId} color="purple">{tag?.title}</Tag>;
+        })}
+      </span>,
+    },
+    {
+      title: 'Data Crearii',
+      dataIndex: 'createdAt',
+      key: 'createdAt',
+      render: (createdAt: string) => <span className="text-capitalize">{dayjs(createdAt).format('DD.MM.YY')}</span>,
+    },
+    {
+      title: 'Delete',
+      dataIndex: 'delete',
+      key: 'delete',
+      render: (_: string, record: LearningLesson) => (
+        <Popconfirm title="Are you sure to delete this lesson?" onConfirm={() => handleDeleteLesson(record.id as number)} okText="Yes" cancelText="No" >
+          <Button type="link" danger>
+            <DeleteOutlined />
+          </Button>
+        </Popconfirm>
+      )
+    }
+  ];
+
+  return (
+    <Card
+      key="lessons-card"
+      title={`Lista lectii`}
+      extra={[<Button icon={<PlusOutlined />} onClick={() => { handleEditModal(CREATE) }} />]}
+      {...others}
+    >
+      <BackBtn type="primary" iconOnly />  <span> Inapoi la cursuri</span>
+      <Table
+        dataSource={data?.length ? data : []}
+        columns={LESSON_COLUMNS}
+        loading={loading}
+        className="overflow-scroll"
+        rowKey="id"
+      />
+    </Card>
+  );
+};
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { computed } from 'vue'
+import { Image, Button, Badge, Tag, Popconfirm, Tooltip, type TableColumnsType } from 'ant-design-vue'
+import { PlusOutlined, DeleteOutlined, VideoCameraOutlined } from '@ant-design/icons-vue'
+import dayjs from 'dayjs'
+import type { LearningLesson, Category } from '@/types'
+
+interface Props {
+  data?: LearningLesson[]
+  categories?: Category[]
+  loading?: boolean
+  handleEditModal: (modalAction: string, lesson?: LearningLesson) => void
+  handleDeleteLesson: (lessonId: number) => void
+  setVideoModalUrl: (videoUrl: string) => void
+}
+
+const props = defineProps<Props>()
+
+const columns = computed<TableColumnsType<LearningLesson>>(() => [
+  {
+    title: 'Image',
+    dataIndex: 'imageUrl',
+    key: 'imageUrl',
+    customRender: ({ text }) => h(Image, { src: text, alt: 'lesson', height: 40, width: 40, preview: true })
+  },
+  {
+    title: '#Id',
+    dataIndex: 'id',
+    key: 'id',
+    customRender: ({ text }) => `#${text}`
+  },
+  {
+    title: 'Display Order',
+    dataIndex: 'displayOrder',
+    key: 'displayOrder',
+    customRender: ({ text }) => text || '-'
+  },
+  {
+    title: 'Titlu',
+    dataIndex: 'title',
+    key: 'title',
+    customRender: ({ text, record }) => h(
+      Tooltip,
+      { title: 'editeaza lectia', color: '#999', mouseEnterDelay: 0.3 },
+      () => h('a', { onClick: () => props.handleEditModal('UPDATE', record) }, text)
+    )
+  },
+  {
+    title: 'videoUrl',
+    dataIndex: 'videoUrl',
+    key: 'videoUrl',
+    customRender: ({ text }) => text ? h(
+      Button,
+      { type: 'link', onClick: () => props.setVideoModalUrl(text) },
+      () => [h(VideoCameraOutlined), ' Link']
+    ) : null
+  },
+  {
+    title: 'Status',
+    dataIndex: 'isActive',
+    key: 'isActive',
+    customRender: ({ text }) => {
+      const label = text ? 'Active' : 'Inactive'
+      const status = text ? 'success' : 'default'
+      return h(Badge, { status, text: label })
+    }
+  },
+  {
+    title: 'Taguri',
+    dataIndex: 'tagIds',
+    key: 'tagIds',
+    customRender: ({ text: tagIds }) => {
+      if (!tagIds || !Array.isArray(tagIds)) return null
+      return tagIds.map((tagId: string) => {
+        const tag = props.categories?.find(({ id }) => id === Number(tagId))
+        return h(Tag, { key: tagId, color: 'purple' }, () => tag?.title || tagId)
+      })
+    }
+  },
+  {
+    title: 'Data Crearii',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    customRender: ({ text }) => dayjs(text).format('DD.MM.YY')
+  },
+  {
+    title: 'Delete',
+    dataIndex: 'delete',
+    key: 'delete',
+    customRender: ({ record }) => h(
+      Popconfirm,
+      {
+        title: 'Are you sure to delete this lesson?',
+        onConfirm: () => props.handleDeleteLesson(record.id as number),
+        okText: 'Yes',
+        cancelText: 'No'
+      },
+      () => h(Button, { type: 'link', danger: true }, () => h(DeleteOutlined))
+    )
+  }
+])
+
+const dataSource = computed(() => props.data?.length ? props.data : [])
+</script>
+
+<template>
+  <a-card key="lessons-card" title="Lista lectii">
+    <template #extra>
+      <a-button :icon="h(PlusOutlined)" @click="handleEditModal('CREATE')" />
+    </template>
+
+    <BackBtn type="primary" icon-only />
+    <span> Inapoi la cursuri</span>
+
+    <a-table
+      :dataSource="dataSource"
+      :columns="columns"
+      :loading="loading"
+      class="overflow-scroll"
+      rowKey="id"
+    />
+  </a-card>
+</template>
+```
+
+**Notes:**
+- BackBtn component pentru navigare înapoi la cursuri (să fie migrat separat)
+- Tag-urile (tagIds) sunt array de string IDs, se face lookup în categories array
+- Image preview built-in în Ant Design (preview={true})
+- Video link deschide modal prin setVideoModalUrl callback
+- Delete cu Popconfirm pentru confirmare
+
+**Recommendations:**
+1. **Tag Rendering**: Adaugă fallback pentru tag-uri care nu există în categories (afișează tagId)
+2. **Empty State**: Adaugă custom empty state pentru tabel fără lectii
+3. **Column Width**: Setează width pentru coloane (Image: 80px, ID: 80px, etc.)
+4. **Responsive**: Hide unele coloane pe mobile (tagIds, createdAt) cu responsive prop
+5. **Sorting**: Adaugă sorting pentru Display Order și Data Crearii
+6. **Video Icon**: Adaugă tooltip "Vezi video" pentru claritate
+
+**Migration Complexity**: MEDIUM (9 columns, custom renderers, categories lookup, Popconfirm)
+
+**Estimated Effort**: 4-6 ore (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 3: Lesson Form with Tags (Multiple Categories Selection)
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Formularul permite crearea și editarea lectiilor. Admin completează titlu,
+descriere, link imagine, link video, tag-uri (multiple selection din categorii),
+display order, și status (Active/Inactive). La submit, lectia este creată sau
+actualizată, iar UI-ul este sincronizat automat.
+
+**User Flow:**
+1. Admin click pe "+" sau pe titlu lectie → Drawer se deschide
+2. Formularul se populează cu date existente (edit mode) sau e gol (create mode)
+3. Admin completează toate câmpurile (titlu, descriere, imageUrl, videoUrl, tags, displayOrder, status)
+4. Admin selectează tag-uri multiple din dropdown (categories)
+5. Admin click "Salveaza" → validare → POST/PATCH request → success message → sync UI
+6. Drawer se închide automat după submit success
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/learning/LessonsForm/LessonsForm.tsx:1-188
+- Props: recordToUpdate (lesson to edit), handleEditModal (callback), courseId (from URL)
+- Fields: id (hidden), title, description, imageUrl, videoUrl, tagIds, displayOrder, isActive
+- Validation: title (min 4 chars), description (required), imageUrl (required), videoUrl (required), isActive (required)
+
+**Current Implementation (React):**
+```typescript
+import { Button, Col, Form, Input, message, Radio, Row, Select } from 'antd';
+import { SaveOutlined } from '@ant-design/icons';
+import { LearningLesson, ResponseT, SelectType } from '../../../../types';
+import { MODAL_ACTIONS } from '../../../../constants';
+import { getAllCategoriesApi, handlePushLessonApi } from '../../../../utils/apiService';
+import { useEffect, useState } from 'react';
+import { useAuth } from '../../../../context/auth';
+
+export type LessonFieldType = LearningLesson & { subscription: string };
+
+type Props = {
+  recordToUpdate: (LearningLesson | undefined),
+  handleEditModal: (action: MODAL_ACTIONS, newRecord?: LearningLesson) => void
+  courseId: number
+}
+
+export const LessonForm = ({ recordToUpdate, handleEditModal, courseId }: Props) => {
+  const [loading, setLoading] = useState(true);
+  const { authUser } = useAuth();
+  const [categoryOptions, setCategoryOptions] = useState<SelectType[]>([]);
+
+  const onFinish = async (formBody: LessonFieldType) => {
+    formBody.isActive = formBody.isActive.toString() === 'true';
+    formBody.courseId = courseId; // Set courseId from URL
+    const fetchMethod = formBody?.id ? 'PATCH' : 'POST';
+    const res: ResponseT = await handlePushLessonApi(fetchMethod, formBody) as unknown as ResponseT;
+
+    if ([200, 201].includes(res?.status)) {
+      const modalAction = formBody?.id ? SYNC : CREATE;
+      handleEditModal(modalAction, res.data as LearningLesson);
+
+      message.open({
+        type: 'success',
+        content: `Lesson ${(res.data as LearningLesson).id} ${formBody?.id ? 'updated' : 'created'} successfully`
+      });
+      console.log('Success:', (res.data as LearningLesson).id);
+    } else {
+      console.log('Failed:', res);
+    }
+  };
+
+  const onFinishFailed = (errorInfo: unknown) => {
+    console.log('Failed:', errorInfo);
+    message.open({
+      type: 'error',
+      content: 'Could not save course details. Please try again later!',
+    });
+  };
+
+  useEffect(() => {
+    getAllCategoriesApi(setLoading, authUser?.accessToken ?? "").then((res: ResponseT) => {
+      if ([200, 201].includes(res?.status)) {
+        const categoriesData = (res.data as CategoryResponse)?.categories;
+        setCategoryOptions([
+          ...[{ value: '', label: 'Selecteaza categorie' }],
+          ...(categoriesData.map((category) => ({ value: category.id?.toString() ?? '', label: category.title })))
+        ]);
+        setLoading(false);
+      }
+    });
+  }, []);
+
+  return (
+    <Form
+      name="user-profile-details-form"
+      layout="vertical"
+      initialValues={
+        (recordToUpdate && ({
+          id: recordToUpdate?.id,
+          title: recordToUpdate?.title,
+          description: recordToUpdate?.description,
+          videoUrl: recordToUpdate?.videoUrl,
+          imageUrl: recordToUpdate?.imageUrl,
+          isActive: recordToUpdate?.isActive ? 'true' : 'false',
+          tagIds: recordToUpdate?.tagIds?.toString().split(','), // Convert string to array
+          displayOrder: recordToUpdate?.displayOrder,
+        })) || {}}
+      onFinish={onFinish}
+      onFinishFailed={onFinishFailed}
+      autoComplete="on"
+      requiredMark={false}
+    >
+      <Row gutter={[16, 0]}>
+        <Form.Item<LessonFieldType> name="id">
+          <Input type="hidden" />
+        </Form.Item>
+
+        <Col sm={24} lg={24}>
+          <Form.Item<LessonFieldType>
+            label="Titlu"
+            name="title"
+            rules={[{ required: true, min: 4, message: 'Please input course title!' }]}
+          >
+            <Input />
+          </Form.Item>
+        </Col>
+
+        <Col sm={24} lg={24}>
+          <Form.Item<LessonFieldType>
+            label="Descriere"
+            name="description"
+            rules={[{ required: true, message: 'Please input your course description!' }]}
+          >
+            <Input type="textarea" />
+          </Form.Item>
+        </Col>
+
+        <Col sm={24} lg={24}>
+          <Form.Item<LessonFieldType>
+            label="Link imagine"
+            name="imageUrl"
+            rules={[{ required: true, message: 'Please input your course image!' }]}
+          >
+            <Input />
+          </Form.Item>
+        </Col>
+
+        <Col sm={24} lg={24}>
+          <Form.Item<LessonFieldType>
+            label="Video Url"
+            name="videoUrl"
+            rules={[{ required: true, message: 'Please input your course video Url!' }]}
+          >
+            <Input />
+          </Form.Item>
+        </Col>
+
+        <Col sm={24} lg={12}>
+          <Form.Item<LessonFieldType> label="Taguri" name="tagIds">
+            {!loading && Boolean(categoryOptions) &&
+              <Select
+                mode="tags"
+                placeholder="Please select"
+                style={{ minWidth: '200px' }}
+                options={categoryOptions}
+              />}
+          </Form.Item>
+        </Col>
+
+        <Col sm={24} lg={12}>
+          <Form.Item<LessonFieldType> label="Ordinea de afisare" name="displayOrder">
+            <Input />
+          </Form.Item>
+        </Col>
+
+        <Col sm={24} lg={12}>
+          <Form.Item<LessonFieldType>
+            label="isActive"
+            name="isActive"
+            rules={[{ required: true, message: 'Please select your status!' }]}
+          >
+            <Radio.Group>
+              <Radio value="true">Active</Radio>
+              <Radio value="false">Inactive</Radio>
+            </Radio.Group>
+          </Form.Item>
+        </Col>
+
+        <Col sm={24} lg={12} style={{ color: "gray", marginTop: '10px' }}>
+          <i>Valoarea <strong>1</strong> este prima pozitie, <strong>2</strong> a doua pozitie.. si tot asa. Cele fara numar de ordine vor urma dupa, si vor fi ordonate dupa data crearii</i>
+        </Col>
+      </Row>
+
+      <Form.Item>
+        <Button type="primary" htmlType="submit" icon={<SaveOutlined />}>
+          Salveaza
+        </Button>
+      </Form.Item>
+    </Form>
+  );
+};
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref, onMounted, computed } from 'vue'
+import { Form, Input, Button, Radio, Select, message, Row, Col } from 'ant-design-vue'
+import { SaveOutlined } from '@ant-design/icons-vue'
+import { getAllCategoriesApi, handlePushLessonApi } from '@/utils/apiService'
+import { useAuthStore } from '@/stores/auth'
+import type { LearningLesson, ResponseT, SelectType, CategoryResponse } from '@/types'
+
+interface Props {
+  recordToUpdate?: LearningLesson
+  handleEditModal: (action: string, newRecord?: LearningLesson) => void
+  courseId: number
+}
+
+const props = defineProps<Props>()
+const authStore = useAuthStore()
+
+const loading = ref(true)
+const categoryOptions = ref<SelectType[]>([])
+const formRef = ref()
+
+const isEditMode = computed(() => !!props.recordToUpdate)
+
+const initialValues = computed(() => {
+  if (!props.recordToUpdate) return {}
+
+  return {
+    id: props.recordToUpdate.id,
+    title: props.recordToUpdate.title,
+    description: props.recordToUpdate.description,
+    videoUrl: props.recordToUpdate.videoUrl,
+    imageUrl: props.recordToUpdate.imageUrl,
+    isActive: props.recordToUpdate.isActive ? 'true' : 'false',
+    tagIds: props.recordToUpdate.tagIds?.toString().split(','), // Convert string to array
+    displayOrder: props.recordToUpdate.displayOrder
+  }
+})
+
+const onFinish = async (values: any) => {
+  try {
+    const formBody = {
+      ...values,
+      isActive: values.isActive === 'true',
+      courseId: props.courseId
+    }
+
+    const fetchMethod = formBody.id ? 'PATCH' : 'POST'
+    const res = await handlePushLessonApi(fetchMethod, formBody) as ResponseT
+
+    if ([200, 201].includes(res?.status)) {
+      const modalAction = formBody.id ? 'SYNC' : 'CREATE'
+      props.handleEditModal(modalAction, res.data as LearningLesson)
+
+      message.success(
+        `Lesson ${(res.data as LearningLesson).id} ${formBody.id ? 'updated' : 'created'} successfully`
+      )
+    } else {
+      message.error('Could not save lesson details. Please try again later!')
+    }
+  } catch (error) {
+    message.error('Could not save lesson details. Please try again later!')
+    console.error('Failed:', error)
+  }
+}
+
+const onFinishFailed = (errorInfo: any) => {
+  console.error('Failed:', errorInfo)
+  message.error('Could not save lesson details. Please try again later!')
+}
+
+const fetchCategories = async () => {
+  try {
+    loading.value = true
+    const res = await getAllCategoriesApi(authStore.accessToken) as ResponseT
+
+    if ([200, 201].includes(res?.status)) {
+      const categoriesData = (res.data as CategoryResponse)?.categories
+      categoryOptions.value = [
+        { value: '', label: 'Selecteaza categorie' },
+        ...categoriesData.map((category) => ({
+          value: category.id?.toString() ?? '',
+          label: category.title
+        }))
+      ]
+    }
+  } catch (error) {
+    message.error('Failed to load categories')
+    console.error(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  fetchCategories()
+})
+</script>
+
+<template>
+  <a-form
+    ref="formRef"
+    name="lesson-form"
+    layout="vertical"
+    :model="initialValues"
+    @finish="onFinish"
+    @finishFailed="onFinishFailed"
+    :requiredMark="false"
+  >
+    <a-row :gutter="[16, 0]">
+      <a-form-item name="id" hidden>
+        <a-input type="hidden" />
+      </a-form-item>
+
+      <a-col :sm="24" :lg="24">
+        <a-form-item
+          label="Titlu"
+          name="title"
+          :rules="[{ required: true, min: 4, message: 'Please input lesson title!' }]"
+        >
+          <a-input />
+        </a-form-item>
+      </a-col>
+
+      <a-col :sm="24" :lg="24">
+        <a-form-item
+          label="Descriere"
+          name="description"
+          :rules="[{ required: true, message: 'Please input lesson description!' }]"
+        >
+          <a-textarea />
+        </a-form-item>
+      </a-col>
+
+      <a-col :sm="24" :lg="24">
+        <a-form-item
+          label="Link imagine"
+          name="imageUrl"
+          :rules="[{ required: true, message: 'Please input lesson image!' }]"
+        >
+          <a-input />
+        </a-form-item>
+      </a-col>
+
+      <a-col :sm="24" :lg="24">
+        <a-form-item
+          label="Video Url"
+          name="videoUrl"
+          :rules="[{ required: true, message: 'Please input lesson video URL!' }]"
+        >
+          <a-input />
+        </a-form-item>
+      </a-col>
+
+      <a-col :sm="24" :lg="12">
+        <a-form-item label="Taguri" name="tagIds">
+          <a-select
+            v-if="!loading && categoryOptions.length"
+            mode="tags"
+            placeholder="Please select"
+            :options="categoryOptions"
+            style="min-width: 200px"
+          />
+        </a-form-item>
+      </a-col>
+
+      <a-col :sm="24" :lg="12">
+        <a-form-item label="Ordinea de afisare" name="displayOrder">
+          <a-input />
+        </a-form-item>
+      </a-col>
+
+      <a-col :sm="24" :lg="12">
+        <a-form-item
+          label="isActive"
+          name="isActive"
+          :rules="[{ required: true, message: 'Please select status!' }]"
+        >
+          <a-radio-group>
+            <a-radio value="true">Active</a-radio>
+            <a-radio value="false">Inactive</a-radio>
+          </a-radio-group>
+        </a-form-item>
+      </a-col>
+
+      <a-col :sm="24" :lg="12" style="color: gray; margin-top: 10px">
+        <i>
+          Valoarea <strong>1</strong> este prima pozitie, <strong>2</strong> a doua pozitie.. si tot asa.
+          Cele fara numar de ordine vor urma dupa, si vor fi ordonate dupa data crearii
+        </i>
+      </a-col>
+    </a-row>
+
+    <a-form-item>
+      <a-button type="primary" html-type="submit" :icon="h(SaveOutlined)">
+        Salveaza
+      </a-button>
+    </a-form-item>
+  </a-form>
+</template>
+```
+
+**Notes:**
+- courseId este preluat din props (din URL în parent component)
+- tagIds sunt convertite din string (comma-separated) în array pentru Select mode="tags"
+- isActive este string 'true'/'false' în form, convertit la boolean la submit
+- Categories sunt fetch-uite la mount pentru dropdown
+- Form se populează cu initialValues dacă recordToUpdate există
+
+**Recommendations:**
+1. **Image Upload**: Adaugă Upload component pentru imagine (nu doar text input)
+2. **Video URL Validation**: Validează format URL (Vimeo/YouTube)
+3. **Display Order Type**: Folosește InputNumber în loc de Input pentru displayOrder
+4. **Tag Validation**: Limitează numărul maxim de tag-uri (ex: max 5)
+5. **Form Reset**: Reset form după submit success (pentru create mode)
+6. **Error Messages**: Traduce mesajele de validare în română
+
+**Migration Complexity**: MEDIUM (8 fields, categories fetch, tag conversion, validation)
+
+**Estimated Effort**: 4-6 ore (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 4: Video Player Modal with ReactPlayer
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Modalul permite preview video-urilor lectiilor. Admin click pe video icon în tabel,
+modalul se deschide cu video player (ReactPlayer), video pornește automat (playing),
+și modalul se închide la click pe X sau Cancel.
+
+**User Flow:**
+1. Admin click pe video icon în tabel → setVideoModalUrl(videoUrl) este apelat
+2. Modal se deschide automat (open={!!videoModalUrl})
+3. Video player încarcă URL-ul și pornește automat (playing={!!videoModalUrl})
+4. Admin poate controla video-ul (play, pause, volume, fullscreen)
+5. Admin închide modalul → video se oprește → cleanup (destroyOnClose={true})
+
+**Cod sursă:**
+- File: admin/src/pages/dashboards/Lessons.tsx:109-118, 260-270
+- Component: ReactPlayer (react-player 2.16.0)
+- State: videoModalUrl (string)
+- Modal props: open={!!videoModalUrl}, destroyOnClose={true}, width="fit-content"
+
+**Current Implementation (React):**
+```typescript
+import { Modal } from 'antd/lib';
+import ReactPlayer from "react-player";
+
+const [videoModalUrl, setVideoModalUrl] = useState('');
+
+const handleVideo = () => {
+  return (
+    <ReactPlayer
+      playing={!!videoModalUrl}
+      className="video-lesson-player"
+      controls
+      url={videoModalUrl}
+    />
+  );
+};
+
+return (
+  <Modal
+    title={null}
+    footer={null}
+    open={!!videoModalUrl}
+    onCancel={() => setVideoModalUrl('')}
+    width="fit-content"
+    destroyOnClose={true}
+    styles={{ body: { padding: 0 } }}
+  >
+    {handleVideo()}
+  </Modal>
+);
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+import { Modal } from 'ant-design-vue'
+// Option 1: VideoJS Player
+import { VideoPlayer } from '@videojs-player/vue'
+import 'video.js/dist/video-js.css'
+
+// Option 2: Vue3 Video Play
+// import { VideoPlayer } from '@vue3-video-play/core'
+// import '@vue3-video-play/core/dist/style.css'
+
+const videoModalUrl = ref('')
+const isVideoModalOpen = computed(() => !!videoModalUrl.value)
+
+const videoOptions = computed(() => ({
+  autoplay: true,
+  controls: true,
+  sources: [
+    {
+      src: videoModalUrl.value,
+      type: 'video/mp4' // sau detectează automat din URL
+    }
+  ]
+}))
+
+const closeVideoModal = () => {
+  videoModalUrl.value = ''
+}
+</script>
+
+<template>
+  <a-modal
+    :title="null"
+    :footer="null"
+    :open="isVideoModalOpen"
+    @cancel="closeVideoModal"
+    width="fit-content"
+    :destroyOnClose="true"
+    :bodyStyle="{ padding: 0 }"
+  >
+    <VideoPlayer
+      v-if="videoModalUrl"
+      :options="videoOptions"
+      class="video-lesson-player"
+    />
+  </a-modal>
+</template>
+
+<style scoped>
+.video-lesson-player {
+  max-width: 90vw;
+  max-height: 80vh;
+}
+</style>
+```
+
+**Alternative Implementation (Native HTML5 Video):**
+```vue
+<script setup lang="ts">
+import { ref, computed, watch } from 'vue'
+
+const videoModalUrl = ref('')
+const isVideoModalOpen = computed(() => !!videoModalUrl.value)
+const videoRef = ref<HTMLVideoElement>()
+
+// Auto-play when URL changes
+watch(videoModalUrl, (newUrl) => {
+  if (newUrl && videoRef.value) {
+    videoRef.value.play()
+  }
+})
+
+const closeVideoModal = () => {
+  videoModalUrl.value = ''
+}
+</script>
+
+<template>
+  <a-modal
+    :title="null"
+    :footer="null"
+    :open="isVideoModalOpen"
+    @cancel="closeVideoModal"
+    width="fit-content"
+    :destroyOnClose="true"
+    :bodyStyle="{ padding: 0 }"
+  >
+    <video
+      v-if="videoModalUrl"
+      ref="videoRef"
+      :src="videoModalUrl"
+      controls
+      autoplay
+      class="video-lesson-player"
+      style="max-width: 90vw; max-height: 80vh;"
+    />
+  </a-modal>
+</template>
+```
+
+**Notes:**
+- ReactPlayer → @videojs-player/vue sau @vue3-video-play sau native HTML5 video
+- destroyOnClose pentru cleanup la închidere (previne memory leaks)
+- playing={!!videoModalUrl} → autoplay: true în videoOptions
+- Modal fără titlu și footer (title={null}, footer={null})
+- width="fit-content" pentru responsive sizing
+
+**Recommendations:**
+1. **Video Library**: Alege între VideoJS (professional), vue3-video-play (lightweight), sau native HTML5
+2. **Video Type Detection**: Detectează automat type (mp4, webm, ogg) din URL extension
+3. **Loading State**: Adaugă loading spinner în timpul încărcării video-ului
+4. **Error Handling**: Afișează mesaj de eroare dacă video-ul nu se poate încărca
+5. **Responsive**: Limitează max-width și max-height pentru mobile (90vw, 80vh)
+6. **Keyboard Support**: Spațiu = play/pause, săgeți = înainte/înapoi
+
+**Migration Complexity**: LOW (single component, simple logic)
+
+**Estimated Effort**: 2-3 ore (1 developer) - includes testing different video libraries
+
+--------------------------------------------------------------------------------
+TASK 5: Delete Lesson with Popconfirm
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Admin poate șterge o lectie prin click pe Delete button în tabel. Se afișează
+Popconfirm pentru confirmare ("Are you sure to delete this lesson?"), apoi se
+execută DELETE request, și UI-ul este sincronizat automat (lectia dispare din tabel).
+
+**User Flow:**
+1. Admin click pe Delete icon în tabel
+2. Popconfirm se afișează: "Are you sure to delete this lesson?" cu Yes/No
+3. Admin confirmă (Yes) → DELETE /v1/lessons/:id request
+4. Success → message.success + syncAfterDelete (remove din lessonsData)
+5. Error → message.error + lectia rămâne în tabel
+
+**Cod sursă:**
+- File: admin/src/pages/dashboards/Lessons.tsx:70-78 (handleDeleteLesson)
+- File: admin/src/pages/dashboards/Lessons.tsx:133-135 (syncAfterDelete)
+- File: admin/src/components/dashboard/learning/LessonsCard/LessonsCard.tsx:97-107 (Popconfirm column)
+- API: handleDeleteLessonApi(lessonId) → DELETE /v1/lessons/:id
+
+**Current Implementation (React):**
+```typescript
+// In Lessons.tsx
+const handleDeleteLesson = useCallback(async (recordId: number) => {
+  const res: ResponseT = await handleDeleteLessonApi(recordId) as unknown as ResponseT;
+  if ([200, 201].includes(res?.status)) {
+    syncAfterDelete(recordId);
+    message.open({ 'type': 'success', 'content': `Lesson ${recordId} deleted successfully` });
+  } else {
+    message.open({ 'type': 'error', 'content': `Lesson ${recordId} cannot be deleted` });
+  }
+}, []);
+
+const syncAfterDelete = (recordId: number) => {
+  setLessonsData(prevState => prevState?.filter((record) => record.id !== recordId));
+}
+
+// In LessonsCard.tsx (Table column)
+{
+  title: 'Delete',
+  dataIndex: 'delete',
+  key: 'delete',
+  render: (_: string, record: LearningLesson) => (
+    <Popconfirm
+      title="Are you sure to delete this lesson?"
+      onConfirm={() => handleDeleteLesson(record.id as number)}
+      okText="Yes"
+      cancelText="No"
+    >
+      <Button type="link" danger>
+        <DeleteOutlined />
+      </Button>
+    </Popconfirm>
+  )
+}
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+// In Lessons.vue
+import { ref } from 'vue'
+import { message } from 'ant-design-vue'
+import { handleDeleteLessonApi } from '@/utils/apiService'
+import type { ResponseT } from '@/types'
+
+const lessonsData = ref<LearningLesson[]>([])
+
+const handleDeleteLesson = async (recordId: number) => {
+  try {
+    const res = await handleDeleteLessonApi(recordId) as ResponseT
+
+    if ([200, 201].includes(res?.status)) {
+      syncAfterDelete(recordId)
+      message.success(`Lesson ${recordId} deleted successfully`)
+    } else {
+      message.error(`Lesson ${recordId} cannot be deleted`)
+    }
+  } catch (error) {
+    message.error('Failed to delete lesson. Please try again.')
+    console.error(error)
+  }
+}
+
+const syncAfterDelete = (recordId: number) => {
+  lessonsData.value = lessonsData.value.filter(record => record.id !== recordId)
+}
+</script>
+
+<script setup lang="ts">
+// In LessonsCard.vue (Table column)
+import { h } from 'vue'
+import { Button, Popconfirm } from 'ant-design-vue'
+import { DeleteOutlined } from '@ant-design/icons-vue'
+
+const columns = computed(() => [
+  // ... other columns ...
+  {
+    title: 'Delete',
+    dataIndex: 'delete',
+    key: 'delete',
+    customRender: ({ record }) => h(
+      Popconfirm,
+      {
+        title: 'Are you sure to delete this lesson?',
+        onConfirm: () => props.handleDeleteLesson(record.id as number),
+        okText: 'Yes',
+        cancelText: 'No'
+      },
+      () => h(Button, { type: 'link', danger: true }, () => h(DeleteOutlined))
+    )
+  }
+])
+</script>
+
+<!-- Alternative: Template-based (easier to read) -->
+<template>
+  <a-table :columns="columns" :dataSource="data">
+    <template #bodyCell="{ column, record }">
+      <template v-if="column.key === 'delete'">
+        <a-popconfirm
+          title="Are you sure to delete this lesson?"
+          ok-text="Yes"
+          cancel-text="No"
+          @confirm="handleDeleteLesson(record.id)"
+        >
+          <a-button type="link" danger>
+            <DeleteOutlined />
+          </a-button>
+        </a-popconfirm>
+      </template>
+    </template>
+  </a-table>
+</template>
+```
+
+**Notes:**
+- useCallback în React → nu e necesar în Vue (funcțiile nu sunt recreate la fiecare render)
+- Popconfirm wrapper pentru Button (same API în Ant Design Vue)
+- Filter pentru ștergere din array (syncAfterDelete) - same logic în Vue
+- Message notification pentru feedback vizual
+
+**Recommendations:**
+1. **Loading State**: Adaugă loading spinner pe buton în timpul ștergerii
+2. **Optimistic Update**: Șterge din UI imediat, revert dacă request eșuează
+3. **Confirmation Text**: Mai detaliat: "Are you sure to delete lesson '{title}'?"
+4. **Undo Feature**: Opțional: permite undo în 5 secunde după ștergere
+5. **Cascade Delete**: Verifică dacă lectia are subscripții active (previne orphan data)
+6. **Permissions**: Verifică dacă user-ul are permisiune să șteargă (role ADMIN)
+
+**Migration Complexity**: LOW (simple delete logic, same Popconfirm API)
+
+**Estimated Effort**: 1-2 ore (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 6: Display Order Management and Sorting
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Display Order permite admin-ului să controleze ordinea de afișare a lectiilor în curs.
+Lectiile cu displayOrder mai mic apar primele (1 = prima poziție, 2 = a doua, etc.).
+Lectiile fără displayOrder (null/undefined) sunt afișate la final, sortate după data creării.
+
+**User Flow:**
+1. Admin setează displayOrder în formular (ex: 1, 2, 3, etc.)
+2. La save, displayOrder este trimis la backend
+3. După sync (CREATE/UPDATE), lessonsData este sortată după displayOrder (ASC)
+4. Lectiile cu displayOrder null/undefined sunt mutate la final (9999999 ca fallback)
+5. Tabelul afișează lectiile în ordinea corectă
+
+**Cod sursă:**
+- File: admin/src/pages/dashboards/Lessons.tsx:120-127 (syncAfterUpdate sorting)
+- File: admin/src/components/dashboard/learning/LessonsForm/LessonsForm.tsx:154-160, 175-177 (displayOrder field + help text)
+- Sorting logic: `(a.displayOrder ?? 9999999) - (b.displayOrder ?? 9999999)`
+
+**Current Implementation (React):**
+```typescript
+// In Lessons.tsx
+const syncAfterUpdate = (newRecord: LearningLesson) => {
+  setLessonsData(prevState => {
+    const updatedCourses = prevState?.map(item =>
+      Number(item.id) === Number(newRecord?.id) ? newRecord : item
+    );
+    // Sort by displayOrder (ASC), nullish values to end
+    return updatedCourses?.sort((a, b) => (a.displayOrder ?? 9999999) - (b.displayOrder ?? 9999999));
+  });
+}
+
+// In LessonsForm.tsx (displayOrder field)
+<Col sm={24} lg={12}>
+  <Form.Item<LessonFieldType> label="Ordinea de afisare" name="displayOrder">
+    <Input />
+  </Form.Item>
+</Col>
+
+<Col sm={24} lg={12} style={{ color: "gray", marginTop: '10px' }}>
+  <i>
+    Valoarea <strong>1</strong> este prima pozitie, <strong>2</strong> a doua pozitie.. si tot asa.
+    Cele fara numar de ordine vor urma dupa, si vor fi ordonate dupa data crearii
+  </i>
+</Col>
+
+// In LessonsCard.tsx (Table column)
+{
+  title: 'Display Order',
+  dataIndex: 'displayOrder',
+  key: 'displayOrder',
+  render: (displayOrder: string) => <span className="text-capitalize">{displayOrder}</span>,
+}
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+// In Lessons.vue
+import { ref, computed } from 'vue'
+
+const lessonsData = ref<LearningLesson[]>([])
+
+// Computed sorted lessons (alternative to sorting in syncAfterUpdate)
+const sortedLessonsData = computed(() => {
+  return [...lessonsData.value].sort(
+    (a, b) => (a.displayOrder ?? 9999999) - (b.displayOrder ?? 9999999)
+  )
+})
+
+const syncAfterUpdate = (newRecord: LearningLesson) => {
+  lessonsData.value = lessonsData.value.map(item =>
+    Number(item.id) === Number(newRecord?.id) ? newRecord : item
+  )
+  // Sorting happens automatically via computed property
+}
+
+// Alternative: Sort in syncAfterUpdate (same as React)
+const syncAfterUpdateWithSort = (newRecord: LearningLesson) => {
+  const updated = lessonsData.value.map(item =>
+    Number(item.id) === Number(newRecord?.id) ? newRecord : item
+  )
+  lessonsData.value = updated.sort(
+    (a, b) => (a.displayOrder ?? 9999999) - (b.displayOrder ?? 9999999)
+  )
+}
+</script>
+
+<template>
+  <!-- Pass sortedLessonsData to table instead of raw lessonsData -->
+  <LessonsCard :data="sortedLessonsData" ... />
+</template>
+
+<script setup lang="ts">
+// In LessonsForm.vue (displayOrder field)
+<a-col :sm="24" :lg="12">
+  <a-form-item label="Ordinea de afisare" name="displayOrder">
+    <a-input-number
+      :min="1"
+      :max="999"
+      style="width: 100%"
+      placeholder="Ex: 1, 2, 3..."
+    />
+  </a-form-item>
+</a-col>
+
+<a-col :sm="24" :lg="12" style="color: gray; margin-top: 10px">
+  <i>
+    Valoarea <strong>1</strong> este prima pozitie, <strong>2</strong> a doua pozitie.. si tot asa.
+    Cele fara numar de ordine vor urma dupa, si vor fi ordonate dupa data crearii
+  </i>
+</a-col>
+</script>
+
+<script setup lang="ts">
+// In LessonsCard.vue (Table column)
+const columns = computed(() => [
+  {
+    title: 'Display Order',
+    dataIndex: 'displayOrder',
+    key: 'displayOrder',
+    sorter: (a, b) => (a.displayOrder ?? 9999999) - (b.displayOrder ?? 9999999),
+    customRender: ({ text }) => text || '-'
+  }
+])
+</script>
+```
+
+**Notes:**
+- Sorting logic: `(a.displayOrder ?? 9999999) - (b.displayOrder ?? 9999999)` (same in Vue)
+- Nullish coalescing operator (??) pentru fallback value
+- Computed property în Vue pentru auto-sorting (mai elegant decât sorting manual)
+- InputNumber în loc de Input pentru displayOrder (validare built-in)
+- Sorter în Table column pentru sorting manual de către user (opțional)
+
+**Recommendations:**
+1. **InputNumber**: Folosește InputNumber cu min=1, max=999 (nu plain Input)
+2. **Validation**: Adaugă validation rule pentru displayOrder (integer, positive)
+3. **Computed Sorting**: Folosește computed property pentru sorting automat
+4. **Visual Feedback**: Highlight lectiile cu displayOrder în tabel (badge sau colored text)
+5. **Drag & Drop**: Opțional: permite reordering prin drag & drop (react-beautiful-dnd → @vueuse/integrations/useSortable)
+6. **Bulk Update**: Feature pentru reordering în bulk (ex: auto-assign 1, 2, 3... la toate lectiile)
+
+**Migration Complexity**: LOW (simple sorting logic, same algorithm)
+
+**Estimated Effort**: 2-3 ore (1 developer) - includes InputNumber migration și computed property
+
+--------------------------------------------------------------------------------
+TASK 7: Active/Inactive Status Management
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Lectiile pot fi Active (vizibile pentru utilizatori) sau Inactive (ascunse).
+Admin setează status-ul prin Radio buttons în formular (Active/Inactive), iar
+în tabel este afișat ca Badge colored (success = Active, default = Inactive).
+
+**User Flow:**
+1. Admin setează status în formular: Active (true) sau Inactive (false)
+2. La save, isActive este trimis ca boolean la backend
+3. Tabelul afișează Badge colored: green (Active) sau gray (Inactive)
+4. Utilizatorii finali văd doar lectiile Active în aplicație
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/learning/LessonsForm/LessonsForm.tsx:161-174 (Radio.Group)
+- File: admin/src/components/dashboard/learning/LessonsCard/LessonsCard.tsx:61-78 (Badge column)
+- Type conversion: string 'true'/'false' → boolean true/false
+
+**Current Implementation (React):**
+```typescript
+// In LessonsForm.tsx
+const onFinish = async (formBody: LessonFieldType) => {
+  // Convert string to boolean
+  formBody.isActive = formBody.isActive.toString() === 'true';
+  // ... rest of submit logic
+};
+
+<Form
+  initialValues={{
+    // ... other fields
+    isActive: recordToUpdate?.isActive ? 'true' : 'false', // Convert boolean to string
+  }}
+>
+  <Col sm={24} lg={12}>
+    <Form.Item<LessonFieldType>
+      label="isActive"
+      name="isActive"
+      rules={[{ required: true, message: 'Please select your status!' }]}
+    >
+      <Radio.Group>
+        <Radio value="true">Active</Radio>
+        <Radio value="false">Inactive</Radio>
+      </Radio.Group>
+    </Form.Item>
+  </Col>
+</Form>
+
+// In LessonsCard.tsx (Table column)
+{
+  title: 'Status',
+  dataIndex: 'isActive',
+  key: 'isActive',
+  render: (_isActive: boolean) => {
+    const label = _isActive ? "Active" : "Inactive";
+    let status: BadgeProps['status'];
+
+    if (_isActive === false) {
+      status = 'default';
+    } else if (_isActive === true) {
+      status = 'success';
+    } else {
+      status = 'processing';
+    }
+
+    return <Badge status={status} text={label} className="text-capitalize" />;
+  },
+}
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+// In LessonsForm.vue
+import { ref, computed } from 'vue'
+import { Form, Radio, message } from 'ant-design-vue'
+
+const props = defineProps<{ recordToUpdate?: LearningLesson }>()
+
+const initialValues = computed(() => {
+  if (!props.recordToUpdate) return { isActive: true } // Default: Active
+
+  return {
+    // ... other fields
+    isActive: props.recordToUpdate.isActive // Keep as boolean, no conversion needed
+  }
+})
+
+const onFinish = async (values: any) => {
+  const formBody = {
+    ...values,
+    isActive: Boolean(values.isActive) // Ensure boolean type
+  }
+  // ... rest of submit logic
+}
+</script>
+
+<template>
+  <a-form :model="initialValues" @finish="onFinish">
+    <a-col :sm="24" :lg="12">
+      <a-form-item
+        label="Status"
+        name="isActive"
+        :rules="[{ required: true, message: 'Please select status!' }]"
+      >
+        <a-radio-group>
+          <a-radio :value="true">Active</a-radio>
+          <a-radio :value="false">Inactive</a-radio>
+        </a-radio-group>
+      </a-form-item>
+    </a-col>
+  </a-form>
+</template>
+
+<script setup lang="ts">
+// In LessonsCard.vue (Table column)
+import { computed, h } from 'vue'
+import { Badge } from 'ant-design-vue'
+
+const columns = computed(() => [
+  {
+    title: 'Status',
+    dataIndex: 'isActive',
+    key: 'isActive',
+    filters: [
+      { text: 'Active', value: true },
+      { text: 'Inactive', value: false }
+    ],
+    onFilter: (value, record) => record.isActive === value,
+    customRender: ({ text: isActive }) => {
+      const label = isActive ? 'Active' : 'Inactive'
+      const status = isActive === false ? 'default' : isActive === true ? 'success' : 'processing'
+
+      return h(Badge, { status, text: label })
+    }
+  }
+])
+</script>
+```
+
+**Notes:**
+- React: Radio.Group cu string values ('true'/'false'), conversion la submit
+- Vue: Radio.Group cu boolean values (true/false), no conversion needed (mai clean)
+- Badge status: 'success' (green), 'default' (gray), 'processing' (blue) - fallback pentru null/undefined
+- Default value pentru create mode: Active (true)
+
+**Recommendations:**
+1. **Boolean Values**: Folosește boolean direct în Radio.Group (nu string conversion)
+2. **Default Value**: Set default isActive=true pentru create mode (most lessons are Active)
+3. **Table Filter**: Adaugă filter în table column pentru filtrare Active/Inactive
+4. **Switch Component**: Alternative: folosește Switch în loc de Radio.Group (mai compact)
+5. **Visual Indicators**: Adaugă icon în Badge (CheckCircleOutlined pentru Active, CloseCircleOutlined pentru Inactive)
+6. **Bulk Action**: Feature pentru bulk activate/deactivate (select multiple lessons)
+
+**Migration Complexity**: LOW (simple Radio.Group, same Badge API)
+
+**Estimated Effort**: 1-2 ore (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 8: Tags (Categories) Multi-Select Management
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Lectiile pot avea multiple tag-uri (categorii) asociate, pentru organizare și
+filtrare. Admin selectează tag-urile din dropdown (multiple selection), iar în
+tabel sunt afișate ca Tag colored badges (purple). Tag-urile sunt stocate ca
+array de IDs în backend.
+
+**User Flow:**
+1. Admin deschide formularul de editare/creare lectie
+2. Sistemul încarcă toate categoriile (GET /v1/categories/all)
+3. Admin selectează 0 sau mai multe tag-uri din dropdown (mode="tags")
+4. La save, tagIds sunt trimise ca array de stringuri la backend
+5. Tabelul afișează tag-urile ca colored badges (purple) cu nume categorie
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/learning/LessonsForm/LessonsForm.tsx:53-68, 139-152 (categories fetch + Select mode="tags")
+- File: admin/src/components/dashboard/learning/LessonsCard/LessonsCard.tsx:79-89 (Tags column)
+- File: admin/src/pages/dashboards/Lessons.tsx:64-67 (categories fetch in parent)
+- Conversion: tagIds string (comma-separated) → array pentru Select → string pentru backend
+
+**Current Implementation (React):**
+```typescript
+// In LessonsForm.tsx
+const [loading, setLoading] = useState(true);
+const [categoryOptions, setCategoryOptions] = useState<SelectType[]>([]);
+
+useEffect(() => {
+  getAllCategoriesApi(setLoading, authUser?.accessToken ?? "").then((res: ResponseT) => {
+    if ([200, 201].includes(res?.status)) {
+      const categoriesData = (res.data as CategoryResponse)?.categories;
+      setCategoryOptions([
+        ...[{ value: '', label: 'Selecteaza categorie' }],
+        ...(categoriesData.map((category) => ({ value: category.id?.toString() ?? '', label: category.title })))
+      ]);
+      setLoading(false);
+    }
+  });
+}, []);
+
+<Form
+  initialValues={{
+    // ... other fields
+    tagIds: recordToUpdate?.tagIds?.toString().split(','), // Convert string to array
+  }}
+>
+  <Col sm={24} lg={12}>
+    <Form.Item<LessonFieldType> label="Taguri" name="tagIds">
+      {!loading && Boolean(categoryOptions) &&
+        <Select
+          mode="tags"
+          placeholder="Please select"
+          style={{ minWidth: '200px' }}
+          options={categoryOptions}
+        />
+      }
+    </Form.Item>
+  </Col>
+</Form>
+
+// In LessonsCard.tsx (Table column)
+{
+  title: 'Taguri',
+  dataIndex: 'tagIds',
+  key: 'tagIds',
+  render: (tagIds: string[]) => <span className="text-capitalize">
+    {tagIds?.map((tagId) => {
+      const tag = categories?.find(({ id }) => id === Number(tagId));
+      return <Tag key={tagId} color="purple">{tag?.title}</Tag>;
+    })}
+  </span>,
+}
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+// In LessonsForm.vue
+import { ref, onMounted, computed } from 'vue'
+import { Select, message } from 'ant-design-vue'
+import { getAllCategoriesApi } from '@/utils/apiService'
+import type { SelectType, CategoryResponse, ResponseT } from '@/types'
+
+const props = defineProps<{ recordToUpdate?: LearningLesson }>()
+const authStore = useAuthStore()
+
+const loading = ref(true)
+const categoryOptions = ref<SelectType[]>([])
+
+const initialValues = computed(() => {
+  if (!props.recordToUpdate) return {}
+
+  return {
+    // ... other fields
+    tagIds: props.recordToUpdate.tagIds?.toString().split(',') || [] // Convert string to array
+  }
+})
+
+const fetchCategories = async () => {
+  try {
+    loading.value = true
+    const res = await getAllCategoriesApi(authStore.accessToken) as ResponseT
+
+    if ([200, 201].includes(res?.status)) {
+      const categoriesData = (res.data as CategoryResponse)?.categories
+      categoryOptions.value = [
+        { value: '', label: 'Selecteaza categorie' },
+        ...categoriesData.map((category) => ({
+          value: category.id?.toString() ?? '',
+          label: category.title
+        }))
+      ]
+    }
+  } catch (error) {
+    message.error('Failed to load categories')
+    console.error(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  fetchCategories()
+})
+</script>
+
+<template>
+  <a-form :model="initialValues">
+    <a-col :sm="24" :lg="12">
+      <a-form-item label="Taguri" name="tagIds">
+        <a-select
+          v-if="!loading && categoryOptions.length"
+          mode="tags"
+          placeholder="Selecteaza categorii"
+          :options="categoryOptions"
+          style="min-width: 200px"
+          :maxTagCount="5"
+          :maxTagTextLength="20"
+        />
+        <a-spin v-else size="small" />
+      </a-form-item>
+    </a-col>
+  </a-form>
+</template>
+
+<script setup lang="ts">
+// In LessonsCard.vue (Table column)
+import { computed, h } from 'vue'
+import { Tag } from 'ant-design-vue'
+
+interface Props {
+  data?: LearningLesson[]
+  categories?: Category[]
+}
+
+const props = defineProps<Props>()
+
+const columns = computed(() => [
+  {
+    title: 'Taguri',
+    dataIndex: 'tagIds',
+    key: 'tagIds',
+    customRender: ({ text: tagIds }) => {
+      if (!tagIds || !Array.isArray(tagIds)) return null
+
+      return tagIds.map((tagId: string) => {
+        const tag = props.categories?.find(({ id }) => id === Number(tagId))
+        return h(
+          Tag,
+          { key: tagId, color: 'purple' },
+          () => tag?.title || `Unknown (${tagId})`
+        )
+      })
+    }
+  }
+])
+</script>
+```
+
+**Notes:**
+- tagIds sunt stocate ca string în backend (comma-separated: "1,2,3")
+- Conversion la load: string → array pentru Select mode="tags"
+- Conversion la save: array → string (probabil făcută de backend)
+- Categories sunt fetch-uite în parent component (Lessons.vue) și pasate ca props
+- Lookup tag title în categories array pentru afișare în tabel
+
+**Recommendations:**
+1. **Loading State**: Afișează Spin în timpul încărcării categoriilor
+2. **Max Tags**: Limitează numărul maxim de tag-uri (maxTagCount=5)
+3. **Tag Validation**: Validează că tag-urile selectate există în categoryOptions
+4. **Fallback Display**: Afișează "Unknown (ID)" dacă tag-ul nu e găsit în categories
+5. **Tag Colors**: Folosește culori diferite pentru fiecare categorie (hash color by ID)
+6. **Tag Filter**: Adaugă filter în table column pentru filtrare după tag-uri
+7. **Create New Tag**: Permite creare tag nou direct din Select (mode="tags" permite custom input)
+
+**Migration Complexity**: MEDIUM (categories fetch, string↔array conversion, lookup logic)
+
+**Estimated Effort**: 3-4 ore (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 9: Statistics Cards (Total, Completed, In Progress, Active Accounts)
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Pagina afișează 4 statistics cards în partea de sus: total lectii în curs,
+lectii completate, lectii în desfășurare, și conturi active. Primul card
+(total lectii) afișează numărul real de lectii, restul sunt mock data (hardcoded).
+
+**User Flow:**
+1. Sistemul încarcă toate lectiile pentru cursul curent
+2. Card 1: "Lectii prezente în cursul #{courseId}" → lessonsData.length (real data)
+3. Card 2: "Lectii completate" → 5 (mock data)
+4. Card 3: "Lectii în desfășurare" → 3 (mock data)
+5. Card 4: "Conturi active" → 245 (mock data)
+6. Cards afișează icon colored, progress bar, și număr
+
+**Cod sursă:**
+- File: admin/src/pages/dashboards/Lessons.tsx:176-215 (4 LearningStatsCard components)
+- Component: LearningStatsCard (shared component)
+- Real data: lessonsData.length (total lessons)
+- Mock data: 5, 3, 245, 76%, 90%, 30%, 78% (hardcoded values)
+
+**Current Implementation (React):**
+```typescript
+// In Lessons.tsx
+import { LearningStatsCard } from '../../components';
+import {
+  FileProtectOutlined,
+  FileSyncOutlined,
+  SafetyCertificateOutlined,
+  UsergroupAddOutlined,
+} from '@ant-design/icons';
+
+const [lessonsData, setLessonsData] = useState<LearningLesson[]>([]);
+
+return (
+  <Row {...stylesContext?.rowProps}>
+    <Col xs={24} sm={12} xl={6}>
+      <LearningStatsCard
+        title={`Lectii prezente în cursul #${courseId}`}
+        value={lessonsData?.length} // Real data
+        icon={SafetyCertificateOutlined}
+        color="blue"
+        progress={76} // Mock data
+        style={{ height: '100%' }}
+      />
+    </Col>
+    <Col xs={24} sm={12} xl={6}>
+      <LearningStatsCard
+        title="Lectii completate"
+        value={5} // Mock data
+        icon={FileProtectOutlined}
+        color="green"
+        progress={90} // Mock data
+        style={{ height: '100%' }}
+      />
+    </Col>
+    <Col xs={24} sm={12} xl={6}>
+      <LearningStatsCard
+        title="Lectii în desfășurare"
+        value={3} // Mock data
+        icon={FileSyncOutlined}
+        color="teal"
+        progress={30} // Mock data
+        style={{ height: '100%' }}
+      />
+    </Col>
+    <Col xs={24} sm={12} xl={6}>
+      <LearningStatsCard
+        title="Conturi active"
+        value={245} // Mock data
+        icon={UsergroupAddOutlined}
+        color="purple"
+        progress={78} // Mock data
+        style={{ height: '100%' }}
+      />
+    </Col>
+  </Row>
+);
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+import { useRoute } from 'vue-router'
+import LearningStatsCard from '@/components/LearningStatsCard.vue'
+import {
+  SafetyCertificateOutlined,
+  FileProtectOutlined,
+  FileSyncOutlined,
+  UsergroupAddOutlined
+} from '@ant-design/icons-vue'
+
+const route = useRoute()
+const courseId = computed(() => Number(route.params.courseId))
+const lessonsData = ref<LearningLesson[]>([])
+
+// Real data stats
+const totalLessons = computed(() => lessonsData.value.length)
+
+// TODO: Replace mock data with real analytics
+const completedLessons = ref(5) // Mock data - fetch from Analytics API
+const inProgressLessons = ref(3) // Mock data - fetch from Analytics API
+const activeAccounts = ref(245) // Mock data - fetch from Users API
+
+// TODO: Calculate real progress percentages
+const totalProgress = ref(76) // Mock data
+const completedProgress = ref(90) // Mock data
+const inProgressProgress = ref(30) // Mock data
+const activeAccountsProgress = ref(78) // Mock data
+</script>
+
+<template>
+  <a-row :gutter="[16, 16]">
+    <a-col :xs="24" :sm="12" :xl="6">
+      <LearningStatsCard
+        :title="`Lectii prezente în cursul #${courseId}`"
+        :value="totalLessons"
+        :icon="SafetyCertificateOutlined"
+        color="blue"
+        :progress="totalProgress"
+        style="height: 100%"
+      />
+    </a-col>
+
+    <a-col :xs="24" :sm="12" :xl="6">
+      <LearningStatsCard
+        title="Lectii completate"
+        :value="completedLessons"
+        :icon="FileProtectOutlined"
+        color="green"
+        :progress="completedProgress"
+        style="height: 100%"
+      />
+    </a-col>
+
+    <a-col :xs="24" :sm="12" :xl="6">
+      <LearningStatsCard
+        title="Lectii în desfășurare"
+        :value="inProgressLessons"
+        :icon="FileSyncOutlined"
+        color="teal"
+        :progress="inProgressProgress"
+        style="height: 100%"
+      />
+    </a-col>
+
+    <a-col :xs="24" :sm="12" :xl="6">
+      <LearningStatsCard
+        title="Conturi active"
+        :value="activeAccounts"
+        :icon="UsergroupAddOutlined"
+        color="purple"
+        :progress="activeAccountsProgress"
+        style="height: 100%"
+      />
+    </a-col>
+  </a-row>
+</template>
+```
+
+**Notes:**
+- LearningStatsCard este shared component (să fie migrat separat)
+- Doar primul card (total lessons) afișează date reale (lessonsData.length)
+- Restul sunt mock data - trebuie înlocuite cu real analytics data
+- Progress bars sunt hardcoded (76%, 90%, 30%, 78%) - trebuie calculate dinamic
+
+**Recommendations:**
+1. **Analytics Integration**: Fetch real data pentru "Lectii completate" și "În desfășurare" din Analytics API
+2. **Active Accounts**: Fetch număr real de conturi active din Users API (filtrare după subscripții active pentru cursul curent)
+3. **Progress Calculation**: Calculează progress bars dinamic (ex: completedLessons / totalLessons * 100)
+4. **Loading States**: Adaugă loading skeleton pentru stats cards
+5. **Click Actions**: Face stats cards clickable (ex: click pe "Lectii completate" → filtrează tabelul)
+6. **Tooltips**: Adaugă tooltips cu mai multe detalii (ex: "5 lectii completate din 8 total")
+
+**Migration Complexity**: LOW (simple component rendering, mostly mock data)
+
+**Estimated Effort**: 2-3 ore (1 developer) - excludes real analytics integration (that's a separate task)
+
+--------------------------------------------------------------------------------
+TASK 10: Back to Courses Navigation Button
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Butonul "Inapoi la cursuri" permite navigarea rapidă înapoi la pagina Courses
+Management. Butonul este afișat deasupra tabelului cu lectii și folosește
+BackBtn shared component.
+
+**User Flow:**
+1. Admin este pe pagina Lessons Management (/dashboards/lessons/:courseId)
+2. Click pe "Inapoi la cursuri" (BackBtn icon + text)
+3. Navigare la /dashboards/courses (Courses Management page)
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/learning/LessonsCard/LessonsCard.tsx:117 (BackBtn usage)
+- Component: BackBtn (shared component) - type="primary", iconOnly
+- Navigation: implicit (BackBtn folosește browser history back)
+
+**Current Implementation (React):**
+```typescript
+// In LessonsCard.tsx
+import { BackBtn } from '../../../index.ts';
+
+return (
+  <Card
+    key="lessons-card"
+    title={`Lista lectii`}
+    extra={[<Button icon={<PlusOutlined />} onClick={() => { handleEditModal(CREATE) }} />]}
+  >
+    <BackBtn type="primary" iconOnly />  <span> Inapoi la cursuri</span>
+    <Table ... />
+  </Card>
+);
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { useRouter } from 'vue-router'
+import { Button } from 'ant-design-vue'
+import { ArrowLeftOutlined } from '@ant-design/icons-vue'
+
+const router = useRouter()
+
+const goBackToCourses = () => {
+  router.push('/dashboards/courses')
+}
+
+// Alternative: Use browser history back
+const goBack = () => {
+  router.back()
+}
+</script>
+
+<template>
+  <a-card key="lessons-card" title="Lista lectii">
+    <template #extra>
+      <a-button :icon="h(PlusOutlined)" @click="handleEditModal('CREATE')" />
+    </template>
+
+    <!-- Option 1: BackBtn component (if migrated) -->
+    <BackBtn type="primary" icon-only />
+    <span> Inapoi la cursuri</span>
+
+    <!-- Option 2: Custom button with router.push -->
+    <a-button type="primary" @click="goBackToCourses" style="margin-bottom: 16px">
+      <ArrowLeftOutlined />
+      Inapoi la cursuri
+    </a-button>
+
+    <!-- Option 3: Custom button with router.back (browser history) -->
+    <a-button type="link" @click="goBack" style="margin-bottom: 16px">
+      <ArrowLeftOutlined />
+      Inapoi
+    </a-button>
+
+    <a-table ... />
+  </a-card>
+</template>
+```
+
+**Notes:**
+- BackBtn este shared component (să fie migrat separat)
+- iconOnly prop → afișează doar icon (fără text în buton)
+- Text "Inapoi la cursuri" este separate span (afară din buton)
+- Navigation: router.push('/dashboards/courses') sau router.back()
+
+**Recommendations:**
+1. **Migration Strategy**: Migrează BackBtn shared component sau folosește native Vue Router
+2. **Explicit Route**: Folosește router.push('/dashboards/courses') în loc de router.back() (mai predictibil)
+3. **Breadcrumbs**: Alternative: folosește breadcrumbs pentru navigare (PageHeader component)
+4. **Icon + Text**: Combinează icon și text în același buton (nu separate)
+5. **Keyboard Shortcut**: Adaugă keyboard shortcut (ESC sau Backspace) pentru back navigation
+6. **Confirmation**: Opțional: confirmă navigare dacă există unsaved changes în form
+
+**Migration Complexity**: VERY LOW (simple button with router navigation)
+
+**Estimated Effort**: 30 min - 1 oră (1 developer) - depends on BackBtn migration
+
+--------------------------------------------------------------------------------
+TASK 11: Responsive Drawer Width for Form
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Formularul de creare/editare lectie se deschide într-un Drawer lateral (right side).
+Drawer-ul are width responsive: 640px pentru desktop (≥960px) și 100% pentru
+mobile/tablet (<960px), asigurând o experiență optimă pe toate device-urile.
+
+**User Flow:**
+1. Desktop (≥960px): Drawer width = 640px (ocupa jumătate din ecran pe desktop mare)
+2. Tablet/Mobile (<960px): Drawer width = 100% (full screen pentru spațiu maxim)
+3. Drawer se deschide din dreapta (placement="right")
+4. La resize window, width-ul se ajustează automat (reactive)
+
+**Cod sursă:**
+- File: admin/src/pages/dashboards/Lessons.tsx:40, 48-57, 248-258 (editModalWidth state + useMediaQuery + Drawer)
+- Breakpoint: 960px (minWidth)
+- Hook: useMediaQuery({ minWidth: 960 }) din react-responsive
+- Drawer: width={editModalWidth}, placement="right", open={modalAction !== CLOSE}
+
+**Current Implementation (React):**
+```typescript
+// In Lessons.tsx
+import { useMediaQuery } from 'react-responsive';
+import { Drawer } from 'antd/lib';
+
+const [editModalWidth, setEditModalWidth] = useState<string>();
+const isLarge = useMediaQuery({ minWidth: 960 });
+
+useEffect(() => {
+  // sort from large to small devices
+  if (isLarge) {
+    setEditModalWidth('640');
+  } else {
+    setEditModalWidth('100%');
+  }
+}, [isLarge]);
+
+return (
+  <Drawer
+    title={`${modalAction === UPDATE ? 'Update' : 'Create'} a lesson`}
+    width={editModalWidth}
+    placement="right"
+    open={modalAction !== CLOSE}
+    onClose={() => handleEditModal(CLOSE)}
+  >
+    {!!((lessonToUpdate) || modalAction === CREATE) && (
+      <LessonForm recordToUpdate={lessonToUpdate} handleEditModal={handleEditModal} courseId={Number(courseId)} />
+    )}
+  </Drawer>
+);
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useBreakpoints } from '@vueuse/core'
+import { Drawer } from 'ant-design-vue'
+
+// Option 1: Using @vueuse/core breakpoints
+const breakpoints = useBreakpoints({ large: 960 })
+const isLarge = breakpoints.greaterOrEqual('large')
+const editModalWidth = computed(() => isLarge.value ? '640px' : '100%')
+
+// Option 2: Using Ant Design breakpoints (from @vueuse/core)
+import { breakpointsAntDesign } from '@vueuse/core'
+const breakpoints2 = useBreakpoints(breakpointsAntDesign)
+const isDesktop = breakpoints2.greaterOrEqual('lg') // lg = 992px in Ant Design
+const editModalWidth2 = computed(() => isDesktop.value ? '640px' : '100%')
+
+// Option 3: Manual window width tracking
+import { useWindowSize } from '@vueuse/core'
+const { width: windowWidth } = useWindowSize()
+const editModalWidth3 = computed(() => windowWidth.value >= 960 ? '640px' : '100%')
+
+const modalAction = ref<MODAL_ACTIONS>('CLOSE')
+const lessonToUpdate = ref<LearningLesson | undefined>()
+const courseId = computed(() => Number(route.params.courseId))
+</script>
+
+<template>
+  <a-drawer
+    :title="`${modalAction === 'UPDATE' ? 'Update' : 'Create'} a lesson`"
+    :width="editModalWidth"
+    placement="right"
+    :open="modalAction !== 'CLOSE'"
+    @close="handleEditModal('CLOSE')"
+  >
+    <LessonForm
+      v-if="lessonToUpdate || modalAction === 'CREATE'"
+      :recordToUpdate="lessonToUpdate"
+      :handleEditModal="handleEditModal"
+      :courseId="courseId"
+    />
+  </a-drawer>
+</template>
+```
+
+**Notes:**
+- react-responsive → @vueuse/core (useBreakpoints or useWindowSize)
+- Breakpoint: 960px (custom) sau 992px (Ant Design 'lg' breakpoint)
+- Computed property în Vue elimină need pentru separate state + useEffect
+- Drawer API identical în Ant Design Vue (width, placement, open, onClose)
+
+**Recommendations:**
+1. **VueUse Breakpoints**: Folosește useBreakpoints din @vueuse/core (reactive, performant)
+2. **Ant Design Breakpoints**: Alternativ, folosește breakpointsAntDesign preset (lg=992px)
+3. **Computed Property**: Width calculat ca computed property (no separate state needed)
+4. **SSR Compatibility**: useWindowSize are SSR support (important pentru Nuxt.js)
+5. **Custom Breakpoints**: Definește breakpoints custom dacă vrei alte valori (xs, sm, md, lg, xl, xxl)
+6. **Responsive Testing**: Testează pe multiple device sizes (Chrome DevTools)
+
+**Migration Complexity**: VERY LOW (simple responsive width logic)
+
+**Estimated Effort**: 1-2 ore (1 developer) - includes VueUse setup și testing
+
+================================================================================
+SUMMARY - LESSONS MANAGEMENT MODULE
+================================================================================
+
+**Total Tasks**: 11 components/features
+
+**Total Estimated Effort**: 8-12 zile (1 developer)
+
+**Migration Priority**:
+- HIGH: Page layout, Table component, Form component (core functionality)
+- MEDIUM: Video modal, Delete, Display Order, Status, Tags (important features)
+- LOW: Stats cards, Back button, Responsive drawer (nice-to-have improvements)
+
+**Critical Dependencies**:
+1. LearningStatsCard shared component migration
+2. BackBtn shared component migration
+3. Categories Module (for tags dropdown)
+4. Video player library selection (@videojs-player/vue vs vue3-video-play vs native HTML5)
+
+**Risks**:
+1. Video player library compatibility (test Vimeo embed URLs)
+2. Tag-uri conversion (string ↔ array) - test thoroughly
+3. Display Order sorting edge cases (null, undefined, negative numbers)
+4. Stats cards mock data - need real Analytics API integration
+5. Responsive testing on multiple devices
+
+**Testing Checklist**:
+- [ ] CRUD operations (create, read, update, delete lessons)
+- [ ] Video preview modal (Vimeo URLs, YouTube URLs, MP4 files)
+- [ ] Tag-uri multi-select (add, remove, display in table)
+- [ ] Display Order sorting (ascending, nullish values to end)
+- [ ] Status toggle (Active/Inactive, badge colored)
+- [ ] Delete confirmation (Popconfirm, success/error messages)
+- [ ] Responsive drawer (960px breakpoint, mobile/desktop)
+- [ ] Back navigation (router.push, router.back)
+- [ ] Loading states (lessons, categories, form submit)
+- [ ] Error handling (API failures, network errors)
+- [ ] Stats cards display (total lessons, mock data)
+- [ ] Form validation (required fields, min length, URL format)
+
+**Post-Migration Tasks**:
+- [ ] Replace mock stats data with real Analytics API
+- [ ] Add image upload component (DigitalOcean Spaces)
+- [ ] Add video upload component (Vimeo API)
+- [ ] Implement drag & drop reordering for Display Order
+- [ ] Add bulk actions (activate, deactivate, delete multiple lessons)
+- [ ] Add filters in table (by status, by tags, by date)
+- [ ] Translate validation messages to Romanian
+- [ ] Add unit tests (Vitest) for composables
+- [ ] Add E2E tests (Playwright) for critical flows
+
+================================================================================
+END OF JIRA STORY - LESSONS MANAGEMENT MODULE
+================================================================================

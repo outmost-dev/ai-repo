@@ -1,0 +1,2316 @@
+================================================================================
+JIRA STORY: USERS MANAGEMENT MODULE (ADMIN DASHBOARD)
+================================================================================
+
+Story Title: Admin - Users Management Module
+
+Story Type: Frontend Feature (Page + Components)
+
+Epic: Somaway Admin Dashboard Migration to Vue.js 3
+
+Story Description:
+------------------
+Modulul de management utilizatori permite administratorilor să vizualizeze,
+creeze, editeze și șteargă utilizatori din platforma Somaway. Include tabel
+cu toți utilizatorii (paginat 40/page), search real-time cu debounce, export
+CSV, formular CRUD, vizualizare subscriptions utilizator, analytics tracking,
+și campaigns assignment.
+
+Locație cod sursă:
+- Page: admin/src/pages/dashboards/Users.tsx
+- Card Component: admin/src/components/dashboard/learning/UsersCard/UsersCard.tsx
+- Form Component: admin/src/components/dashboard/learning/UsersForm/UsersForm.tsx
+
+Features implementate:
+- ✅ Tabel cu toți utilizatorii (paginare 40/page)
+- ✅ Search utilizatori (real-time cu debounce 1s)
+- ✅ Create user (modal cu formular + subscription assignment)
+- ✅ Edit user (modal cu formular pre-populat + subscription history)
+- ✅ Delete user (cu confirmare, doar pentru users fără subscriptions)
+- ✅ Export users to CSV (toate datele)
+- ✅ Vizualizare subscriptions utilizator (în edit modal)
+- ✅ Analytics tracking display (time spent + activities)
+- ✅ Campaigns assignment display
+- ✅ Pagination (40 users per page)
+- ✅ Reset search (clear search și reload all users)
+
+API Endpoints folosite:
+- GET /v1/user/all?offset=X&limit=40 - Fetch users (paginated)
+- POST /v1/user/create-by-admin - Create user by admin
+- PATCH /v1/user/:id - Update user
+- DELETE /v1/user/:id - Delete user
+- POST /v1/user/search - Search users by email/name
+- GET /v1/user/export-to-csv - Export all users to CSV
+- GET /v1/subscription/types/all - Get subscription types for dropdown
+- GET /v1/subscription/user/:userId - Get user subscriptions
+
+Dependencies:
+- Backend API (GET, POST, PATCH, DELETE /v1/user)
+- Subscription Service (types + user subscriptions)
+- Campaign Service (for campaigns display)
+- Analytics Service (for tracking data)
+
+Tech Stack (Current React):
+- React 18.2.0 + TypeScript 5.0.2
+- Ant Design 5.20.1 (Table, Form, Modal, Search, Button, etc.)
+- react-responsive (useMediaQuery)
+- dayjs (date formatting)
+- Custom hooks: useAuth, useStylesContext
+- Debounce function (custom implementation)
+
+Target Tech Stack (Vue 3):
+- Vue 3.4+ Composition API + TypeScript
+- Ant Design Vue 4.x
+- @vueuse/core (useMediaQuery, useDebounceFn)
+- dayjs (same)
+- Composables: useAuth, useApi
+
+================================================================================
+TASKS (11 COMPONENTS + FEATURES)
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 1: Users Page Layout & State Management
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Pagina principală de management utilizatori care orchestrează toate componentele:
+tabel cu utilizatori (paginat), search real-time, modal create/edit, și state
+management pentru operațiunile CRUD. Include pagination logic (40 users/page),
+search cu debounce, și sincronizare UI după operațiuni.
+
+Flow:
+1. La mount:
+   - Fetch users paginated (offset=0, limit=40)
+   - Setează loading=true până la primirea datelor
+   - Populate usersData[] cu utilizatorii primiti
+   - Setează countUsers pentru pagination
+2. User poate:
+   - Navigate între pagini (pagination)
+   - Search utilizatori (debounce 1s, min 3 caractere)
+   - Reset search (reload all users, page 1)
+   - Export users to CSV (download file)
+   - Deschide modal Create (click "Add User" button)
+   - Deschide modal Edit (click pe nume user în tabel)
+   - Șterge user (click delete → confirm → doar dacă fără subscriptions)
+3. După operații:
+   - Create: adaugă noul user în state (prepend la array)
+   - Update: updatează user în state (find by id și replace)
+   - Delete: elimină user din state (filter by id)
+4. Pagination:
+   - Change page → recalculate offset → fetch new page
+   - Total pages = Math.ceil(countUsers / 40)
+
+Cod sursă:
+- Page: admin/src/pages/dashboards/Users.tsx:1-200
+
+Component Structure:
+<div>
+  <Helmet><title>Users | Dashboard</title></Helmet>
+  <PageHeader title="users | dashboard" breadcrumbs={...} />
+
+  <Row gutter={[32, 32]}>
+    <Col span={24}>
+      <UsersCard
+        data={usersData}
+        countUsers={countUsers}
+        pageLimit={40}
+        loading={loading}
+        handlePagination={handlePagination}
+        handleEditModal={handleEditModal}
+        handleDeleteUser={handleDeleteUser}
+        handleSearch={handleSearch}
+        resetSearch={resetSearch}
+        exportUsers={exportUsers}
+      />
+    </Col>
+  </Row>
+
+  <Drawer open={modalAction !== CLOSE} onClose={...} width={editModalWidth}>
+    <UsersForm
+      recordToUpdate={userToUpdate}
+      handleEditModal={handleEditModal}
+    />
+  </Drawer>
+</div>
+
+State Management (React):
+const [loading, setLoading] = useState(true);
+const [usersData, setUsersData] = useState<User[]>([]);
+const [modalAction, setModalAction] = useState<MODAL_ACTIONS>(CLOSE);
+const [userToUpdate, setUserToUpdate] = useState<User>();
+const [pageLimit] = useState<number>(40);
+const [pageNumber, setPageNumber] = useState<number>(1);
+const [editModalWidth, setEditModalWidth] = useState<string>();
+
+State Management (Target Vue):
+const loading = ref(true);
+const usersData = ref<User[]>([]);
+const modalAction = ref<MODAL_ACTIONS>('CLOSE');
+const userToUpdate = ref<User>();
+const pageLimit = ref(40);
+const pageNumber = ref(1);
+const editModalWidth = ref<string>();
+const countUsers = ref(0);
+
+API Integration (Pagination):
+useEffect(() => {
+  if (searchValue) {
+    handleSearch(searchValue);
+  } else if (pageNumber) {
+    const offset = (pageNumber - 1) * pageLimit;
+    getAllUsersApi(offset, pageLimit, setLoading, authUser?.accessToken ?? "").then((data: unknown) => {
+      const usersData = (data as UserResponse).users;
+      const countUsers = (data as UserResponse).count;
+      setUsersData(usersData);
+      setUserCount(countUsers);
+    });
+  }
+}, [pageNumber]);
+
+// Vue equivalent:
+watch(pageNumber, async (newPage) => {
+  if (searchValue.value) {
+    await handleSearch(searchValue.value);
+  } else {
+    const offset = (newPage - 1) * pageLimit.value;
+    const { data } = await useApi().request(`/v1/user/all?offset=${offset}&limit=${pageLimit.value}`);
+    usersData.value = data.users;
+    countUsers.value = data.count;
+  }
+});
+
+Pagination Handler:
+const handlePagination = useCallback((pageNumber: number) => {
+  setPageNumber(pageNumber);
+}, []);
+
+// Vue equivalent:
+const handlePagination = (page: number) => {
+  pageNumber.value = page;
+};
+
+Responsive Design:
+const isLarge = useMediaQuery({ minWidth: 960 });
+
+useEffect(() => {
+  if (isLarge) {
+    setEditModalWidth('640');
+  } else {
+    setEditModalWidth('100%');
+  }
+}, [isLarge]);
+
+// Vue equivalent:
+import { useMediaQuery } from '@vueuse/core';
+const isLarge = useMediaQuery('(min-width: 960px)');
+const editModalWidth = computed(() => isLarge.value ? '640px' : '100%');
+
+Sync Methods:
+const syncAfterUpdate = (newRecord: User) => {
+  setUsersData(prevState => prevState?.map(function (item) {
+    if (Number(item.id) === Number(newRecord?.id)) {
+      return newRecord;
+    }
+    return item;
+  }));
+}
+
+const syncAfterCreate = (newRecord: User) => {
+  setUsersData(prevState => [newRecord, ...prevState]);
+}
+
+const syncAfterDelete = (recordId: number) => {
+  setUsersData(prevState => prevState?.filter((item) => item.id !== recordId));
+}
+
+Notes:
+- ⚠️ pageLimit hardcoded la 40 (nu este configurabil)
+- ⚠️ Search și pagination conflict (dacă user face search apoi schimbă pagina → pierde search)
+- ⚠️ Nu există error handling pentru API calls
+- ⚠️ countUsers managed în auth context (ar trebui local state)
+- ✅ Pagination eficientă (doar 40 users loaded per page)
+- ✅ Responsive drawer width
+- ✅ Search persistă în URL query param
+
+Recommendations for Vue Migration:
+1. Use Pinia store for users state (shared)
+2. Add error handling cu try-catch
+3. Fix search + pagination conflict (clear pagination când search)
+4. Move countUsers din auth context în local state
+5. Add loading skeleton pentru table
+6. Make pageLimit configurable (dropdown: 20, 40, 100)
+7. Add URL query params pentru pagination (bookmarkable)
+
+Migration Complexity: MEDIUM-HIGH
+Estimated Effort: 1-2 zile
+
+--------------------------------------------------------------------------------
+TASK 2: Users Table Component (UsersCard)
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Componenta de tabel care afișează toți utilizatorii cu coloane: ID, Nume, Email,
+Phone, paidSubscription (status), isConfirmed, Date Creation, All Time Spent,
+Activities Started, Assigned Campaigns, Edit, Delete. Include search input cu
+debounce, reset button, export CSV button, add user button, și pagination.
+
+Flow:
+1. Primește data (users array), countUsers, pageLimit, loading ca props
+2. Renderează custom title bar cu:
+   - Search input (debounce 1s, min 3 caractere)
+   - Reset button (clear search)
+   - Export users button (CSV download) - DISABLED
+   - Add User button (open create modal)
+3. Renderează tabel Ant Design cu coloane configurate
+4. Pentru fiecare coloană:
+   - ID: format #123
+   - Nume: link care deschide modal Edit (cu tooltip)
+   - Email: plain text
+   - Phone: plain text
+   - paidSubscription: icon ✓ (green) / ✗ (red) - based on status > 0
+   - isConfirmed: Badge Confirmed/Not confirmed
+   - Date Creation: format DD.MM.YY HH:mm
+   - All Time Spent: suma analyticsTime[] în minute
+   - Activities Started: count analytics[] (Curs: type=2, Lect: type=3)
+   - Assigned Campaigns: lista campaign titles (comma-separated)
+   - Edit: buton edit icon (blue)
+   - Delete: buton delete icon (red) - DOAR dacă status < 1 (fără subscription)
+5. Pagination footer: current page + total users
+
+Cod sursă:
+- Component: admin/src/components/dashboard/learning/UsersCard/UsersCard.tsx:1-250
+- Styles: admin/src/components/dashboard/learning/UsersCard/UsersCard.css
+
+Component Props:
+type Props = {
+  data?: User[];
+  countUsers: number;
+  pageLimit: number;
+  handlePagination: (page: number) => void;
+  loading?: boolean;
+  handleEditModal: (modalAction: MODAL_ACTIONS, user?: User | undefined) => void;
+  handleDeleteUser: (userId: number) => void;
+  handleSearch: (searchValue: string) => void;
+  resetSearch: () => void;
+  exportUsers: () => void;
+} & CardProps;
+
+Custom Title Bar Component:
+const Title: React.FC<TitleProps> = ({ handleSearch, resetSearch, exportUsers, handleEditModal }) => {
+  const inputRef = React.createRef<HTMLInputElement>();
+  const [searchValue, setSearchingVal] = useState<string>('');
+
+  function debounce<T extends (...args: any[]) => void>(func: T, wait: number): (...args: Parameters<T>) => void {
+    let timeout: NodeJS.Timeout;
+    return (...args: Parameters<T>) => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func(...args), wait);
+    };
+  }
+
+  const debouncedFetchResults = useCallback(debounce<(searchValue: string) => void>(handleSearch, 1000), []);
+
+  const onTypeSearch = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value;
+    setSearchingVal(value);
+    if (value.length > 2) {
+      debouncedFetchResults(value);
+    }
+  };
+
+  const onReset = () => {
+    setSearchingVal('');
+    resetSearch()
+  }
+
+  return (
+    <div className="flex justify-between items-center" style={{ display: 'flex' }}>
+      <h3 className="text-lg font-semibold" style={{ marginTop: '15px' }}>Users</h3>
+      <input ref={inputRef} onChange={onTypeSearch} className='search-input' placeholder='Searching...' value={searchValue} />
+
+      <Button type="default" style={{ marginTop: '17px' }} onClick={() => onReset()}>
+        Reset
+      </Button>
+
+      <Button type="primary" disabled={true} style={{ marginTop: '17px', marginLeft: '20px' }} onClick={() => exportUsers()}>
+        Export users
+      </Button>
+
+      <Button type="primary" style={{ marginTop: '17px', marginLeft: '20px' }} onClick={() => handleEditModal(CREATE)}>
+        Add User
+      </Button>
+    </div>
+  )
+};
+
+Table Columns Configuration:
+const USERS_COLUMNS: ColumnsType<User> = [
+  {
+    title: '#Id',
+    dataIndex: 'id',
+    key: 'id',
+    render: (id: string) => <span>#{id}</span>,
+  },
+  {
+    title: 'Nume',
+    dataIndex: 'fullName',
+    key: 'fullName',
+    render: (fullName: string, record: User) => <a onClick={() => { handleEditModal(UPDATE, record) }}>
+      <Tooltip title="editeaza userul" color="#999" mouseEnterDelay={0.3}>
+        <span>{fullName}</span>
+      </Tooltip>
+    </a>,
+  },
+  {
+    title: 'email',
+    dataIndex: 'email',
+    key: 'email',
+    render: (email: string) => <span>{email}</span>,
+  },
+  {
+    title: 'phone',
+    dataIndex: 'phone',
+    key: 'phone',
+    render: (phone: string) => <span>{phone}</span>,
+  },
+  {
+    title: 'paidSubscription',
+    dataIndex: 'status',
+    key: 'status',
+    render: (status: number) => (
+      <span>{status ? <CheckCircleFilled /> : <CloseCircleOutlined />}</span>
+    ),
+  },
+  {
+    title: 'isConfirmed',
+    dataIndex: 'isActive',
+    key: 'isActive',
+    render: (_isActive: boolean) => {
+      const label = _isActive ? "Confirmed" : "Not confirmed";
+      let status: BadgeProps['status'];
+
+      if (_isActive === false) {
+        status = 'default';
+      } else if (_isActive === true) {
+        status = 'success';
+      }
+
+      return <Badge status={status} text={label} />;
+    },
+  },
+  {
+    title: 'Date Creation',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    render: (createdAt: string) => <span>{dayjs(createdAt).format('DD.MM.YY HH:mm')}</span>,
+  },
+  {
+    title: 'All Time Spent',
+    dataIndex: 'analyticsTime',
+    key: 'analyticsTime',
+    render: (analyticsTime: User["analyticsTime"]) => <span>
+      {analyticsTime?.reduce(
+        (sum, item) => Math.round(sum) + Math.round(item.value),
+        0,
+      )} min
+    </span>,
+  },
+  {
+    title: 'Activities started',
+    dataIndex: 'analytics',
+    key: 'analytics',
+    render: (analytics: User["analytics"]) => <span>
+      Curs:{analytics?.filter(item => item.type === 2).length} {" / "}
+      Lect:{analytics?.filter(item => item.type === 3).length}
+    </span>,
+  },
+  {
+    title: 'Assigned campaigns',
+    dataIndex: 'campaigns',
+    key: 'campaigns',
+    render: (campaigns: User["campaigns"]) => <span>
+      {campaigns?.map((campaign) => campaign.title).join(', ')}
+    </span>,
+  },
+  {
+    title: 'Delete',
+    dataIndex: 'delete',
+    key: 'delete',
+    render: (_: string, record: User) => (
+      <Flex>
+        <Button type="link" onClick={() => { handleEditModal(UPDATE, record) }} style={{ padding: '7px', marginRight: '10px' }}>
+          <EditOutlined />
+        </Button>
+        {record.status < 1 && (
+          <Popconfirm
+            title={`Esti sigur? Datele sterse nu se mai pot recupera!`}
+            onConfirm={() => handleDeleteUser(record.id as number)}
+            okText="Yes"
+            cancelText="No"
+          >
+            <Button type="link" danger style={{ padding: '7px' }}>
+              <DeleteOutlined />
+            </Button>
+          </Popconfirm>
+        )}
+      </Flex>
+    )
+  }
+];
+
+Card Component:
+<Card
+  title={<Title
+    handleSearch={handleSearch}
+    resetSearch={resetSearch}
+    exportUsers={exportUsers}
+    handleEditModal={handleEditModal}
+  />}
+  {...others}
+>
+  <Table
+    dataSource={data?.length ? data : []}
+    columns={USERS_COLUMNS}
+    loading={loading}
+    className="overflow-scroll"
+    rowKey="id"
+    pagination={{
+      current: Math.floor(offset / pageLimit) + 1,
+      pageSize: pageLimit,
+      total: countUsers,
+      onChange: handlePagination,
+      showTotal: (total) => `Total ${total} users`,
+    }}
+  />
+</Card>
+
+Search Implementation:
+const handleSearch = useCallback((searchValue: string) => {
+  searchUsersApi(searchValue, setLoading, authUser?.accessToken ?? "").then((data: unknown) => {
+    const usersData = (data as UserResponse).users;
+    const countUsers = (data as UserResponse).count;
+    setUsersData(usersData);
+    setUserCount(countUsers);
+  });
+}, []);
+
+const resetSearch = useCallback(() => {
+  getAllUsersApi(0, pageLimit, setLoading, authUser?.accessToken ?? "").then((data: unknown) => {
+    const usersData = (data as UserResponse).users;
+    const countUsers = (data as UserResponse).count;
+    setUsersData(usersData);
+    setUserCount(countUsers);
+  });
+}, []);
+
+Export Users:
+const exportUsers = () => {
+  const exportEnabled = true;
+  console.log('Export users');
+  if (exportEnabled)
+    exportUsersApi();
+  else
+    prompt('This features was disabled');
+};
+
+// Backend API (apiService.tsx):
+export const exportUsersApi = async () => {
+  const url = `${ROOT_API}/v1/user/export-to-csv`;
+  window.location.href = url; // Trigger download
+};
+
+Notes:
+- ⚠️ Search input este native HTML input (nu Ant Design Search component)
+- ⚠️ Export users button DISABLED (why?)
+- ⚠️ Debounce logic duplicated (ar trebui reusable utility)
+- ⚠️ Search min length 3 caractere (hardcoded)
+- ⚠️ Delete doar pentru users cu status < 1 (logic unclear - ar trebui comment)
+- ⚠️ analyticsTime și analytics calculations în render (ar trebui computed)
+- ⚠️ Nu există sortare pe coloane
+- ⚠️ Nu există filtrare pe coloane (besides search)
+- ✅ Pagination configurată corect (current, pageSize, total, onChange)
+- ✅ Debounce pentru search (reduce API calls)
+- ✅ Tooltips pentru UX
+- ✅ Conditional delete button (safety)
+
+Recommendations for Vue Migration:
+1. Use <a-input-search> în loc de native HTML input
+2. Enable export users button (sau remove dacă nu e folosit)
+3. Extract debounce logic în composable reusable
+4. Use computed properties pentru analytics calculations
+5. Add column sorting (createdAt, email, fullName)
+6. Add column filtering (status, isActive, campaigns)
+7. Replace native input cu Ant Design Search component
+8. Add clear button în search input
+9. Add search icon în input
+10. Translateză toate textele în română (consistency)
+
+Vue Migration Example:
+<template>
+  <a-card>
+    <template #title>
+      <div class="flex justify-between items-center">
+        <h3>Utilizatori</h3>
+        <a-input-search
+          v-model:value="searchValue"
+          placeholder="Caută utilizatori..."
+          :loading="searching"
+          @search="handleSearch"
+          @change="onSearchChange"
+          allow-clear
+          style="width: 300px"
+        />
+        <a-button @click="resetSearch">Reset</a-button>
+        <a-button type="primary" @click="exportUsers" :disabled="true">
+          Export CSV
+        </a-button>
+        <a-button type="primary" @click="handleEditModal('CREATE')">
+          Adaugă Utilizator
+        </a-button>
+      </div>
+    </template>
+
+    <a-table
+      :data-source="usersData"
+      :columns="columns"
+      :loading="loading"
+      :row-key="record => record.id"
+      :pagination="{
+        current: pageNumber,
+        pageSize: pageLimit,
+        total: countUsers,
+        showTotal: total => `Total ${total} utilizatori`
+      }"
+      @change="handleTableChange"
+    >
+      <template #analyticsTime="{ text }">
+        <span>{{ calculateTotalTime(text) }} min</span>
+      </template>
+      <template #analytics="{ text }">
+        <span>
+          Curs: {{ text?.filter(a => a.type === 2).length }} /
+          Lect: {{ text?.filter(a => a.type === 3).length }}
+        </span>
+      </template>
+      <!-- ... other custom slots -->
+    </a-table>
+  </a-card>
+</template>
+
+<script setup lang="ts">
+import { useDebounceFn } from '@vueuse/core';
+
+const searchValue = ref('');
+const searching = ref(false);
+
+const debouncedSearch = useDebounceFn((value: string) => {
+  if (value.length > 2) {
+    handleSearch(value);
+  }
+}, 1000);
+
+const onSearchChange = (e: Event) => {
+  const value = (e.target as HTMLInputElement).value;
+  debouncedSearch(value);
+};
+
+const calculateTotalTime = (analyticsTime: any[]) => {
+  return analyticsTime?.reduce((sum, item) => Math.round(sum) + Math.round(item.value), 0) || 0;
+};
+</script>
+
+Migration Complexity: MEDIUM
+Estimated Effort: 1-1.5 zile
+
+--------------------------------------------------------------------------------
+TASK 3: User Create/Edit Form (UsersForm)
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Formular pentru creare și editare utilizatori. Suportă două moduri: CREATE
+(formular gol + subscription assignment) și UPDATE (formular pre-populat +
+subscription history). Include fetch subscription types pentru dropdown, fetch
+user subscriptions pentru history, și submit către API.
+
+Flow CREATE:
+1. La mount:
+   - Fetch subscription types din API (GET /v1/subscription/types/all)
+   - Populate subscriptionTypes[] pentru dropdown
+2. User completează formularul:
+   - Nume (required, min 4 caractere)
+   - Email (optional în form, dar obligatoriu în backend)
+   - Phone (required)
+   - isActive (Radio: Confirmed/Not confirmed) - DISABLED în create mode
+   - Product (dropdown subscription types) - optional
+3. La submit:
+   - Convert isActive la boolean
+   - Call API: POST /v1/user/create-by-admin
+   - Dacă success: message + close modal + sync UI
+   - Dacă error: message error
+
+Flow UPDATE:
+1. La mount:
+   - Fetch subscription types (same as create)
+   - Fetch user subscriptions (GET /v1/subscription/user/:userId)
+   - Populate subscriptions history list
+2. Form pre-populat cu datele user-ului
+3. User poate edita: Nume, Email, Phone, isActive, Product
+4. Subscription History Display (read-only):
+   - List cu toate subscriptions user-ului
+   - Product name (din subscription types)
+   - Status: Activ (dacă status=3 și endDate > now) / Inactiv
+5. La submit:
+   - Call API: PATCH /v1/user/:id
+   - Sync UI
+
+Cod sursă:
+- Component: admin/src/components/dashboard/learning/UsersForm/UsersForm.tsx:1-235
+
+Component Props:
+type Props = {
+  recordToUpdate: (User | undefined),
+  handleEditModal: (action: MODAL_ACTIONS, newUser?: User) => void
+}
+
+Form Fields:
+export type UserFieldType = User & { subTypeId: string };
+
+type User = {
+  id?: number;
+  fullName: string;
+  email: string;
+  phone: string;
+  status: number; // 0 = no subscription, 1+ = has subscription
+  isActive: boolean; // email confirmed
+  subscriptions?: Subscription[];
+  campaigns?: Campaign[];
+  analytics?: Analytics[];
+  analyticsTime?: AnalyticsTime[];
+};
+
+Form Layout:
+<Form
+  name="user-profile-details-form"
+  layout="vertical"
+  initialValues={
+    (recordToUpdate && ({
+      id: recordToUpdate?.id,
+      fullName: recordToUpdate?.fullName,
+      email: recordToUpdate?.email,
+      phone: recordToUpdate?.phone,
+      status: recordToUpdate?.status ? '1' : '0',
+      isActive: recordToUpdate?.isActive ? 'true' : 'false',
+      subTypeId: '0'
+    })) || {
+      isActive: 'true'
+    }}
+  onFinish={onFinish}
+  onFinishFailed={onFinishFailed}
+>
+  <Row gutter={[16, 0]}>
+    <Form.Item name="id"><Input type="hidden" /></Form.Item>
+
+    <Col sm={24} lg={24}>
+      <Form.Item label="Nume" name="fullName" rules={[{ required: true, min: 4 }]}>
+        <Input />
+      </Form.Item>
+    </Col>
+
+    <Col sm={24} lg={12}>
+      <Form.Item label="email" name="email">
+        <Input />
+      </Form.Item>
+    </Col>
+
+    <Col sm={24} lg={12}>
+      <Form.Item label="phone" name="phone" rules={[{ required: true }]}>
+        <Input />
+      </Form.Item>
+    </Col>
+
+    <Col span={24} lg={12}>
+      <Form.Item label="isActive" name="isActive" rules={[{ required: true }]}>
+        <Radio.Group disabled={!recordToUpdate}>
+          <Radio value="true">Confirmed</Radio>
+          <Radio value="false">Not confirmed</Radio>
+        </Radio.Group>
+      </Form.Item>
+    </Col>
+
+    <Col span={24} lg={12}>
+      <Form.Item label="Product" name="subTypeId" rules={[{ required: false }]}>
+        <Select placeholder="Select a subscription type" loading={loading} allowClear>
+          {subscriptionTypes.map(type => (
+            <Select.Option key={type.id} value={type.id.toString()}>
+              {type.productName}
+            </Select.Option>
+          ))}
+        </Select>
+      </Form.Item>
+    </Col>
+  </Row>
+
+  <Form.Item>
+    <Button type="primary" htmlType="submit" icon={<SaveOutlined />} disabled={loading}>
+      Salveaza
+    </Button>
+  </Form.Item>
+</Form>
+
+{isEditMode && (
+  <div style={{ marginTop: '24px' }}>
+    <Title level={5}>Produse achizitionate</Title>
+    {subscriptionsLoading ? (
+      <Spin />
+    ) : (
+      userSubscriptions.length > 0 ? (
+        <List
+          bordered
+          dataSource={userSubscriptions}
+          renderItem={(item: SubscriptionT & { subType?: SubscriptionTypeT }) => (
+            <List.Item>
+              {subscriptionTypes.find(stype => stype.id === item.subTypeId)?.productName || `Subscription ID: ${item.id}`}
+              (Status: {Number(item.status) === 3 && new Date(item.endDate) > new Date() ? 'Activ' : 'Inactiv'})
+            </List.Item>
+          )}
+        />
+      ) : (
+        <Typography.Text type="secondary">No subscriptions assigned.</Typography.Text>
+      )
+    )}
+  </div>
+)}
+
+Form Submit Logic:
+const onFinish = async (formBody: UserFieldType) => {
+  formBody.isActive = formBody.isActive.toString() === 'true';
+  const isCreating = !formBody?.id;
+  let res: ResponseT;
+
+  if (isCreating) {
+    res = await handleCreateUserByAdminApi(formBody) as unknown as ResponseT;
+  } else {
+    res = await handlePushUserApi('PATCH', formBody) as unknown as ResponseT;
+  }
+
+  if ([200, 201].includes(res?.status)) {
+    const modalAction = formBody?.id ? SYNC : CREATE;
+    handleEditModal(modalAction, res.data as User);
+    message.open({
+      type: 'success',
+      content: `User ${(res.data as User).id} ${formBody?.id ? 'updated' : 'created'} successfully`
+    });
+  } else {
+    console.log('Failed:', res);
+  }
+};
+
+Fetch Subscription Types:
+useEffect(() => {
+  const fetchSubscriptionTypes = async () => {
+    try {
+      const result = await getSubscriptionTypesApi(setLoading, authUser?.accessToken ?? "");
+      const data = result as unknown as SubscriptionTypesResponse;
+      if (data && data.subscriptionTypes) {
+        setSubscriptionTypes([
+          { id: 0, productName: 'Select a subscription type' } as SubscriptionTypeT,
+          ...data.subscriptionTypes
+        ]);
+      }
+    } catch (error) {
+      console.error("Failed to fetch subscription types", error);
+    }
+  };
+
+  fetchSubscriptionTypes();
+}, [authUser?.accessToken]);
+
+Fetch User Subscriptions (Edit Mode):
+useEffect(() => {
+  const fetchUserSubscriptions = async () => {
+    if (isEditMode && recordToUpdate?.id) {
+      try {
+        const result = await getUserSubscriptionsApi(
+          recordToUpdate.id,
+          setSubscriptionsLoading,
+          authUser?.accessToken ?? ""
+        );
+        const data = result as unknown as UserSubscriptionsResponse;
+        if (data && data.subscriptions) {
+          setUserSubscriptions(data.subscriptions);
+        } else {
+          setUserSubscriptions([]);
+        }
+      } catch (error) {
+        console.error("Failed to fetch user subscriptions", error);
+        setUserSubscriptions([]);
+      }
+    } else {
+      setUserSubscriptions([]);
+    }
+  };
+
+  fetchUserSubscriptions();
+}, [recordToUpdate, isEditMode, authUser?.accessToken]);
+
+Subscription Status Logic:
+Number(item.status) === 3 && new Date(item.endDate) > new Date() ? 'Activ' : 'Inactiv'
+
+// status = 3 → subscription active
+// endDate > now → not expired
+// Both conditions → "Activ"
+
+Notes:
+- ⚠️ Email field NOT required în form (but required în backend)
+- ⚠️ isActive disabled în create mode (should default to false, confirm via email)
+- ⚠️ subTypeId NOT used in create API call (commented out in form)
+- ⚠️ Subscription assignment în create mode NOT working (dropdown present dar nu se folosește)
+- ⚠️ Subscription history afișează doar productName + status (ar trebui mai multe detalii)
+- ⚠️ Nu există password field (users created without password?)
+- ⚠️ Nu există role field (default role = CLIENT?)
+- ⚠️ Type conversion weird: .toString() === 'true'
+- ✅ Separate API calls pentru create vs update
+- ✅ Loading states pentru subscriptions fetch
+- ✅ Error handling cu try-catch
+
+Recommendations for Vue Migration:
+1. Make email required în form
+2. Add password field pentru create mode (generate random or user input?)
+3. Add role field (Radio: ADMIN, CLIENT, CREATOR)
+4. Fix isActive în create (should be false by default)
+5. Implement subscription assignment în create (backend support needed?)
+6. Enhance subscription history display (startDate, endDate, price, status)
+7. Add pagination pentru subscription history (dacă multe subscriptions)
+8. Add button "Assign New Subscription" în edit mode
+9. Fix type conversion (use boolean directly)
+10. Add validation pentru email format
+
+Vue Implementation:
+<template>
+  <a-form
+    :model="formData"
+    :rules="rules"
+    layout="vertical"
+    @finish="onFinish"
+  >
+    <a-row :gutter="[16, 0]">
+      <a-col :sm="24" :lg="24">
+        <a-form-item label="Nume" name="fullName">
+          <a-input v-model:value="formData.fullName" />
+        </a-form-item>
+      </a-col>
+
+      <a-col :sm="24" :lg="12">
+        <a-form-item label="Email" name="email">
+          <a-input v-model:value="formData.email" type="email" />
+        </a-form-item>
+      </a-col>
+
+      <a-col :sm="24" :lg="12">
+        <a-form-item label="Telefon" name="phone">
+          <a-input v-model:value="formData.phone" />
+        </a-form-item>
+      </a-col>
+
+      <a-col v-if="!isEditMode" :sm="24" :lg="12">
+        <a-form-item label="Parolă" name="password">
+          <a-input-password v-model:value="formData.password" />
+        </a-form-item>
+      </a-col>
+
+      <a-col :sm="24" :lg="12">
+        <a-form-item label="Status Email" name="isActive">
+          <a-radio-group v-model:value="formData.isActive" :disabled="!isEditMode">
+            <a-radio :value="true">Confirmat</a-radio>
+            <a-radio :value="false">Neconfirmat</a-radio>
+          </a-radio-group>
+        </a-form-item>
+      </a-col>
+
+      <a-col :sm="24" :lg="12">
+        <a-form-item label="Tip Subscription" name="subTypeId">
+          <a-select
+            v-model:value="formData.subTypeId"
+            placeholder="Selectează subscription"
+            :loading="loading"
+            allow-clear
+          >
+            <a-select-option v-for="type in subscriptionTypes" :key="type.id" :value="type.id">
+              {{ type.productName }}
+            </a-select-option>
+          </a-select>
+        </a-form-item>
+      </a-col>
+    </a-row>
+
+    <a-form-item>
+      <a-button type="primary" html-type="submit" :loading="loading">
+        <SaveOutlined />
+        Salvează
+      </a-button>
+    </a-form-item>
+  </a-form>
+
+  <!-- Subscription History (Edit Mode) -->
+  <div v-if="isEditMode" style="margin-top: 24px">
+    <a-typography-title :level="5">Subscriptions Achiziționate</a-typography-title>
+    <a-spin v-if="subscriptionsLoading" />
+    <a-list v-else-if="userSubscriptions.length > 0" bordered :data-source="userSubscriptions">
+      <template #renderItem="{ item }">
+        <a-list-item>
+          <a-list-item-meta
+            :title="getProductName(item.subTypeId)"
+            :description="`Perioada: ${formatDate(item.startDate)} - ${formatDate(item.endDate)}`"
+          />
+          <template #extra>
+            <a-tag :color="isSubscriptionActive(item) ? 'green' : 'default'">
+              {{ isSubscriptionActive(item) ? 'Activ' : 'Inactiv' }}
+            </a-tag>
+          </template>
+        </a-list-item>
+      </template>
+    </a-list>
+    <a-typography-text v-else type="secondary">
+      Nicio subscription găsită.
+    </a-typography-text>
+  </div>
+</template>
+
+<script setup lang="ts">
+const formData = reactive({
+  fullName: '',
+  email: '',
+  phone: '',
+  password: '',
+  isActive: false,
+  subTypeId: 0
+});
+
+const rules = {
+  fullName: [{ required: true, message: 'Numele este obligatoriu', min: 4 }],
+  email: [
+    { required: true, message: 'Email-ul este obligatoriu' },
+    { type: 'email', message: 'Email invalid' }
+  ],
+  phone: [{ required: true, message: 'Telefonul este obligatoriu' }],
+  password: [
+    { required: !isEditMode, message: 'Parola este obligatorie' },
+    { min: 6, message: 'Parola trebuie să aibă minim 6 caractere' }
+  ],
+  isActive: [{ required: true, message: 'Status-ul este obligatoriu' }]
+};
+
+const isSubscriptionActive = (subscription: SubscriptionT) => {
+  return subscription.status === 3 && new Date(subscription.endDate) > new Date();
+};
+
+const getProductName = (subTypeId: number) => {
+  return subscriptionTypes.value.find(st => st.id === subTypeId)?.productName || `Subscription #${subTypeId}`;
+};
+</script>
+
+Migration Complexity: MEDIUM-HIGH
+Estimated Effort: 1.5-2 zile (cu password field și subscription assignment)
+
+--------------------------------------------------------------------------------
+TASK 4: Search Users with Debounce
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Funcționalitate de search real-time cu debounce (1 secundă) pentru căutare
+utilizatori după email sau nume. Minimum 3 caractere pentru a declanșa search.
+Include reset button pentru clear search și reload all users.
+
+Flow:
+1. User tastează în search input
+2. Debounce logic: așteaptă 1s după ultima tastare
+3. Dacă input.length > 2:
+   - Call API: POST /v1/user/search cu searchValue
+   - Backend caută în users.email și users.fullName (LIKE query)
+   - Returnează users matching + count
+   - Update usersData și countUsers
+4. User click "Reset":
+   - Clear search input
+   - Reload all users (page 1, offset=0, limit=40)
+
+Current Implementation:
+// Custom debounce function
+function debounce<T extends (...args: any[]) => void>(func: T, wait: number): (...args: Parameters<T>) => void {
+  let timeout: NodeJS.Timeout;
+  return (...args: Parameters<T>) => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func(...args), wait);
+  };
+}
+
+const debouncedFetchResults = useCallback(debounce<(searchValue: string) => void>(handleSearch, 1000), []);
+
+const onTypeSearch = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const value = event.target.value;
+  setSearchingVal(value);
+  if (value.length > 2) {
+    debouncedFetchResults(value);
+  }
+};
+
+// Handle search API call
+const handleSearch = useCallback((searchValue: string) => {
+  searchUsersApi(searchValue, setLoading, authUser?.accessToken ?? "").then((data: unknown) => {
+    const usersData = (data as UserResponse).users;
+    const countUsers = (data as UserResponse).count;
+    setUsersData(usersData);
+    setUserCount(countUsers);
+  });
+}, []);
+
+// Reset search
+const resetSearch = useCallback(() => {
+  getAllUsersApi(0, pageLimit, setLoading, authUser?.accessToken ?? "").then((data: unknown) => {
+    const usersData = (data as UserResponse).users;
+    const countUsers = (data as UserResponse).count;
+    setUsersData(usersData);
+    setUserCount(countUsers);
+  });
+}, []);
+
+API Endpoint:
+POST /v1/user/search
+Body: { searchValue: "john" }
+
+Response:
+{
+  "users": [...],
+  "count": 5
+}
+
+Backend Logic (assumed):
+SELECT * FROM users
+WHERE email LIKE '%john%' OR fullName LIKE '%john%'
+LIMIT 40
+
+Notes:
+- ⚠️ Debounce logic duplicated (should be reusable utility)
+- ⚠️ Min length 3 hardcoded (should be configurable)
+- ⚠️ Search result nu are pagination (doar primele 40 results?)
+- ⚠️ Search input persistence în URL missing (bookmark search)
+- ⚠️ Search highlight în results missing (nu se evidențiază textul căutat)
+- ⚠️ Nu există indication că e în search mode (besides input value)
+- ✅ Debounce reduce API calls (performance)
+- ✅ Reset button clear și functional
+
+Recommendations for Vue Migration:
+1. Use @vueuse/core useDebounceFn (no custom debounce needed)
+2. Make min length configurable (prop or constant)
+3. Add pagination pentru search results
+4. Add URL query param pentru search (bookmarkable)
+5. Add search highlight în table results
+6. Add loading indicator în search input
+7. Add "X results found for 'john'" message
+8. Add keyboard shortcut pentru search (Ctrl+K?)
+
+Vue Implementation:
+<template>
+  <a-input-search
+    v-model:value="searchValue"
+    placeholder="Caută după email sau nume (min 3 caractere)..."
+    :loading="searching"
+    allow-clear
+    @search="handleSearch"
+    @change="onSearchChange"
+    style="width: 400px"
+  >
+    <template #prefix>
+      <SearchOutlined />
+    </template>
+  </a-input-search>
+
+  <a-button @click="resetSearch" :disabled="!searchValue">
+    Reset
+  </a-button>
+
+  <a-typography-text v-if="searchValue && !searching" type="secondary">
+    {{ usersData.length }} rezultate pentru "{{ searchValue }}"
+  </a-typography-text>
+</template>
+
+<script setup lang="ts">
+import { useDebounceFn } from '@vueuse/core';
+
+const searchValue = ref('');
+const searching = ref(false);
+const MIN_SEARCH_LENGTH = 3;
+
+const debouncedSearch = useDebounceFn(async (value: string) => {
+  if (value.length >= MIN_SEARCH_LENGTH) {
+    searching.value = true;
+    try {
+      const { data } = await api.post('/v1/user/search', { searchValue: value });
+      usersData.value = data.users;
+      countUsers.value = data.count;
+    } catch (error) {
+      message.error('Eroare la căutare utilizatori');
+    } finally {
+      searching.value = false;
+    }
+  }
+}, 1000);
+
+const onSearchChange = (e: Event) => {
+  const value = (e.target as HTMLInputElement).value;
+  if (value.length === 0) {
+    resetSearch(); // Auto-reset când input e gol
+  } else {
+    debouncedSearch(value);
+  }
+};
+
+const handleSearch = (value: string) => {
+  debouncedSearch(value);
+};
+
+const resetSearch = async () => {
+  searchValue.value = '';
+  pageNumber.value = 1;
+  await fetchUsers(0, pageLimit.value);
+};
+
+// Add to URL query params for bookmarking
+watch(searchValue, (newValue) => {
+  const url = new URL(window.location.href);
+  if (newValue) {
+    url.searchParams.set('search', newValue);
+  } else {
+    url.searchParams.delete('search');
+  }
+  window.history.replaceState({}, '', url);
+});
+
+// Restore from URL on mount
+onMounted(() => {
+  const urlParams = new URLSearchParams(window.location.search);
+  const searchParam = urlParams.get('search');
+  if (searchParam) {
+    searchValue.value = searchParam;
+    handleSearch(searchParam);
+  }
+});
+</script>
+
+Migration Complexity: LOW-MEDIUM
+Estimated Effort: 4-6 ore
+
+--------------------------------------------------------------------------------
+TASK 5: Export Users to CSV
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Funcționalitate de export all users data în format CSV pentru download. Include
+toate câmpurile user (id, name, email, phone, status, subscriptions, etc.).
+Trigger download via window.location.href (backend returnează CSV file).
+
+Flow:
+1. User click "Export users" button
+2. Trigger backend API: GET /v1/user/export-to-csv
+3. Backend:
+   - Query all users din database
+   - Include subscriptions, campaigns, analytics
+   - Format data în CSV (columns: id, fullName, email, phone, status, ...)
+   - Return CSV file cu headers Content-Type: text/csv, Content-Disposition: attachment
+4. Browser downloadează CSV file automat
+5. User deschide CSV în Excel/Google Sheets
+
+Current Implementation:
+const exportUsers = () => {
+  const exportEnabled = true;
+  console.log('Export users');
+  if (exportEnabled)
+    exportUsersApi();
+  else
+    prompt('This features was disabled');
+};
+
+// Button în UI - DISABLED
+<Button type="primary" disabled={true} style={{ marginTop: '17px', marginLeft: '20px' }} onClick={() => exportUsers()}>
+  Export users
+</Button>
+
+// API call (apiService.tsx)
+export const exportUsersApi = async () => {
+  const url = `${ROOT_API}/v1/user/export-to-csv`;
+  window.location.href = url; // Trigger download
+};
+
+Backend Endpoint:
+GET /v1/user/export-to-csv
+
+Response:
+Content-Type: text/csv
+Content-Disposition: attachment; filename="users_2024-11-02.csv"
+
+CSV Content:
+id,fullName,email,phone,status,isActive,createdAt,subscriptions,campaigns
+1,John Doe,john@example.com,0123456789,1,true,2024-01-01,"Premium,Basic","Campaign 1"
+2,Jane Smith,jane@example.com,0987654321,0,true,2024-01-02,,"Campaign 2"
+...
+
+Notes:
+- ⚠️ Export button DISABLED în UI (why?)
+- ⚠️ exportEnabled hardcoded la true (inconsistent cu button disabled)
+- ⚠️ window.location.href trigger (old-school, ar trebui fetch + blob download)
+- ⚠️ Nu există progress indicator (pentru multe date)
+- ⚠️ Nu există error handling (dacă export fail)
+- ⚠️ Nu există confirm dialog (export poate fi mare)
+- ⚠️ Nu există opțiuni de filtrare (export all vs filtered)
+- ⚠️ Nu există format selection (CSV only, no Excel/JSON options)
+- ⚠️ Backend endpoint nu primește auth token (security issue?)
+
+Recommendations for Vue Migration:
+1. Enable export button (sau remove dacă nu e folosit)
+2. Use fetch API + blob download în loc de window.location.href
+3. Add progress indicator pentru export
+4. Add confirm dialog ("Export {count} users?")
+5. Add error handling cu message
+6. Add filter options (export current page vs all vs search results)
+7. Add format selection (CSV, Excel, JSON)
+8. Add auth token în request (security)
+9. Add filename cu timestamp (users_2024-11-02_14-30.csv)
+
+Vue Implementation:
+<template>
+  <a-button
+    type="primary"
+    @click="confirmExport"
+    :loading="exporting"
+  >
+    <DownloadOutlined />
+    Export CSV
+  </a-button>
+</template>
+
+<script setup lang="ts">
+const exporting = ref(false);
+
+const confirmExport = () => {
+  Modal.confirm({
+    title: 'Export Utilizatori',
+    content: `Sigur vrei să exporți ${countUsers.value} utilizatori în CSV?`,
+    okText: 'Export',
+    cancelText: 'Anulează',
+    onOk: async () => {
+      await exportUsers();
+    }
+  });
+};
+
+const exportUsers = async () => {
+  exporting.value = true;
+  try {
+    const response = await fetch('/v1/user/export-to-csv', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${authToken.value}`
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error('Export failed');
+    }
+
+    // Create blob from response
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+
+    // Create download link
+    const link = document.createElement('a');
+    link.href = url;
+    const timestamp = dayjs().format('YYYY-MM-DD_HH-mm');
+    link.download = `users_${timestamp}.csv`;
+    document.body.appendChild(link);
+    link.click();
+
+    // Cleanup
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+
+    message.success(`${countUsers.value} utilizatori exportați cu succes!`);
+  } catch (error) {
+    console.error('Export error:', error);
+    message.error('Eroare la exportul utilizatorilor. Încearcă din nou.');
+  } finally {
+    exporting.value = false;
+  }
+};
+
+// Alternative: Export only filtered results
+const exportFilteredUsers = async () => {
+  const params = searchValue.value
+    ? { searchValue: searchValue.value }
+    : { offset: 0, limit: countUsers.value };
+
+  const response = await fetch('/v1/user/export-to-csv', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${authToken.value}`
+    },
+    body: JSON.stringify(params)
+  });
+
+  // ... same blob download logic
+};
+</script>
+
+Migration Complexity: LOW-MEDIUM
+Estimated Effort: 4-6 ore (cu improvements)
+
+--------------------------------------------------------------------------------
+TASK 6: Delete User with Subscription Check
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Ștergere user cu verificare subscription status. Users cu subscriptions active
+(status >= 1) NU pot fi șterși (delete button hidden). Users fără subscriptions
+pot fi șterși după confirmare Popconfirm.
+
+Flow:
+1. În tabel, pentru fiecare user:
+   - Dacă status >= 1 (has subscription): NO delete button
+   - Dacă status < 1 (no subscription): SHOW delete button
+2. User click delete button
+3. Popconfirm apare: "Ești sigur? Datele șterse nu se mai pot recupera!"
+4. User click "Yes":
+   - API call: DELETE /v1/user/:id
+   - Dacă success (200/201):
+     - Message success: "User {id} deleted successfully"
+     - syncAfterDelete(userId) → elimină din usersData
+   - Dacă error:
+     - Message error: "User {id} cannot be deleted"
+     - Log error în console
+5. User click "No" sau Cancel:
+   - Popconfirm se închide
+   - Nicio acțiune
+
+Current Implementation:
+{
+  title: 'Delete',
+  dataIndex: 'delete',
+  key: 'delete',
+  render: (_: string, record: User) => (
+    <Flex>
+      <Button type="link" onClick={() => { handleEditModal(UPDATE, record) }} style={{ padding: '7px', marginRight: '10px' }}>
+        <EditOutlined />
+      </Button>
+      {record.status < 1 && (
+        <Popconfirm
+          title={`Esti sigur? Datele sterse nu se mai pot recupera!`}
+          onConfirm={() => handleDeleteUser(record.id as number)}
+          okText="Yes"
+          cancelText="No"
+        >
+          <Button type="link" danger style={{ padding: '7px' }}>
+            <DeleteOutlined />
+          </Button>
+        </Popconfirm>
+      )}
+    </Flex>
+  )
+}
+
+const handleDeleteUser = useCallback(async (recordId: number) => {
+  const res: ResponseT = await handleDeleteUserApi(recordId) as unknown as ResponseT;
+  if ([200, 201].includes(res?.status)) {
+    syncAfterDelete(recordId);
+    message.open({ 'type': 'success', 'content': `User ${recordId} deleted successfully` });
+  } else {
+    message.open({ 'type': 'error', 'content': `User ${recordId} cannot be deleted` });
+  }
+}, []);
+
+const syncAfterDelete = (recordId: number) => {
+  setUsersData(prevState => prevState?.filter((item) => item.id !== recordId));
+}
+
+API Call:
+export const handleDeleteUserApi = async (userId: number) => {
+  const response = await fetch(`${USER_API}/${userId}`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${authToken}`
+    }
+  });
+  return await response.json();
+};
+
+Status Logic:
+- status = 0 → No subscription → CAN delete
+- status >= 1 → Has subscription (active or expired) → CANNOT delete
+
+Notes:
+- ⚠️ Logic unclear: status >= 1 înseamnă "has subscription" (active sau expired?)
+- ⚠️ Users cu subscriptions expirate tot nu pot fi șterși? (ar trebui soft delete?)
+- ⚠️ Nu există soft delete (isDeleted flag) - hard delete
+- ⚠️ Nu există undo delete (permanent)
+- ⚠️ Nu există audit log pentru delete (cine, când)
+- ⚠️ Backend delete cascade? (subscriptions, analytics orphaned?)
+- ⚠️ Popconfirm text în română dar okText/cancelText în engleză (inconsistent)
+- ✅ Conditional delete button (safety)
+- ✅ Popconfirm previne delete accidental
+- ✅ Success/error messages
+
+Recommendations for Vue Migration:
+1. Clarify status logic în comment (ce înseamnă status >= 1)
+2. Consider soft delete în loc de hard delete (isDeleted: true, deletedAt: timestamp)
+3. Add undo delete feature (30 seconds grace period)
+4. Add audit log pentru delete operations
+5. Add backend check pentru orphaned data (subscriptions, analytics)
+6. Translateză okText/cancelText în română (consistency)
+7. Add tooltip pe delete button disabled state ("Nu se poate șterge user cu subscriptions")
+8. Add bulk delete (select multiple → delete all fără subscriptions)
+
+Vue Implementation:
+<template>
+  <a-flex>
+    <a-button type="link" @click="handleEditModal('UPDATE', record)">
+      <EditOutlined />
+    </a-button>
+
+    <a-tooltip
+      v-if="record.status >= 1"
+      title="Nu se poate șterge utilizatorul cu subscriptions active"
+    >
+      <a-button type="link" danger disabled>
+        <DeleteOutlined />
+      </a-button>
+    </a-tooltip>
+
+    <a-popconfirm
+      v-else
+      title="Ești sigur? Datele șterse nu se mai pot recupera!"
+      ok-text="Da, șterge"
+      cancel-text="Anulează"
+      @confirm="handleDeleteUser(record.id)"
+    >
+      <a-button type="link" danger>
+        <DeleteOutlined />
+      </a-button>
+    </a-popconfirm>
+  </a-flex>
+</template>
+
+<script setup lang="ts">
+const handleDeleteUser = async (userId: number) => {
+  try {
+    const response = await api.delete(`/v1/user/${userId}`);
+    if (response.status === 200) {
+      usersData.value = usersData.value.filter(u => u.id !== userId);
+      message.success(`Utilizatorul ${userId} a fost șters cu succes!`);
+
+      // Optional: Undo delete feature
+      const undoTimeout = setTimeout(() => {
+        // Permanent delete after 30s
+      }, 30000);
+
+      message.info({
+        content: 'Apasă pentru a anula ștergerea',
+        duration: 30,
+        onClick: () => {
+          clearTimeout(undoTimeout);
+          // Restore user
+          message.info('Ștergere anulată');
+        }
+      });
+    }
+  } catch (error) {
+    message.error(`Utilizatorul ${userId} nu a putut fi șters!`);
+    console.error('Delete error:', error);
+  }
+};
+</script>
+
+Migration Complexity: LOW
+Estimated Effort: 3-4 ore (cu improvements)
+
+--------------------------------------------------------------------------------
+TASK 7: Pagination (40 Users Per Page)
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Sistem de paginare pentru tabel utilizatori (40 users per page). Pagination
+controlată de backend (offset + limit) pentru performance. Include page
+navigation, total count display, și current page indicator.
+
+Flow:
+1. Initial load:
+   - pageNumber = 1
+   - offset = 0
+   - limit = 40
+   - Fetch: GET /v1/user/all?offset=0&limit=40
+2. User click page 2:
+   - pageNumber = 2
+   - offset = (2-1) * 40 = 40
+   - limit = 40
+   - Fetch: GET /v1/user/all?offset=40&limit=40
+3. Backend returnează:
+   - users[] (40 items)
+   - count (total users în database)
+4. Frontend calculează:
+   - totalPages = Math.ceil(count / 40)
+   - currentPage = Math.floor(offset / limit) + 1
+5. Ant Design Table Pagination config:
+   - current: currentPage
+   - pageSize: 40
+   - total: count
+   - onChange: handlePagination
+   - showTotal: (total) => `Total ${total} users`
+
+Current Implementation:
+const [pageLimit] = useState<number>(40);
+const [pageNumber, setPageNumber] = useState<number>(1);
+
+useEffect(() => {
+  if (searchValue) {
+    handleSearch(searchValue);
+  } else if (pageNumber) {
+    const offset = (pageNumber - 1) * pageLimit;
+    getAllUsersApi(offset, pageLimit, setLoading, authUser?.accessToken ?? "").then((data: unknown) => {
+      const usersData = (data as UserResponse).users;
+      const countUsers = (data as UserResponse).count;
+      setUsersData(usersData);
+      setUserCount(countUsers);
+    });
+  }
+}, [pageNumber]);
+
+const handlePagination = useCallback((pageNumber: number) => {
+  setPageNumber(pageNumber);
+}, []);
+
+// Table component
+<Table
+  dataSource={data?.length ? data : []}
+  columns={USERS_COLUMNS}
+  loading={loading}
+  rowKey="id"
+  pagination={{
+    current: Math.floor(offset / pageLimit) + 1,
+    pageSize: pageLimit,
+    total: countUsers,
+    onChange: handlePagination,
+    showTotal: (total) => `Total ${total} users`,
+  }}
+/>
+
+Backend API:
+GET /v1/user/all?offset=0&limit=40
+
+Response:
+{
+  "users": [...], // 40 items
+  "count": 523   // total users
+}
+
+Notes:
+- ⚠️ pageLimit hardcoded la 40 (nu este configurabil)
+- ⚠️ Search reset pagination (revert to page 1) - OK
+- ⚠️ Pagination state nu persistă în URL (bookmarking issue)
+- ⚠️ offset calculation în Table component (Math.floor) - redundant
+- ⚠️ Nu există "Jump to page" input
+- ⚠️ Nu există page size selector (10, 20, 40, 100)
+- ✅ Backend pagination (performance optimizat)
+- ✅ Total count display
+- ✅ Current page indicator
+
+Recommendations for Vue Migration:
+1. Make pageLimit configurable (dropdown: 20, 40, 100)
+2. Add URL query params pentru page și limit (bookmarkable)
+3. Add "Jump to page" input
+4. Add keyboard navigation (arrow keys pentru prev/next page)
+5. Add infinite scroll option (alternative to pagination)
+6. Persist pagination settings în localStorage (user preference)
+
+Vue Implementation:
+<template>
+  <a-table
+    :data-source="usersData"
+    :columns="columns"
+    :loading="loading"
+    :row-key="record => record.id"
+    :pagination="paginationConfig"
+    @change="handleTableChange"
+  >
+    <!-- ... columns -->
+  </a-table>
+</template>
+
+<script setup lang="ts">
+const pageNumber = ref(1);
+const pageLimit = ref(40);
+const countUsers = ref(0);
+
+const paginationConfig = computed(() => ({
+  current: pageNumber.value,
+  pageSize: pageLimit.value,
+  total: countUsers.value,
+  showSizeChanger: true,
+  pageSizeOptions: ['20', '40', '100'],
+  showTotal: (total: number) => `Total ${total} utilizatori`,
+  showQuickJumper: true,
+  onChange: (page: number, pageSize: number) => {
+    pageNumber.value = page;
+    pageLimit.value = pageSize;
+  }
+}));
+
+const handleTableChange = (pagination: any) => {
+  pageNumber.value = pagination.current;
+  pageLimit.value = pagination.pageSize;
+};
+
+// Fetch users on page or limit change
+watch([pageNumber, pageLimit], async ([newPage, newLimit]) => {
+  const offset = (newPage - 1) * newLimit;
+  await fetchUsers(offset, newLimit);
+});
+
+// URL query params for bookmarking
+watch([pageNumber, pageLimit], ([page, limit]) => {
+  const url = new URL(window.location.href);
+  url.searchParams.set('page', page.toString());
+  url.searchParams.set('limit', limit.toString());
+  window.history.replaceState({}, '', url);
+});
+
+// Restore from URL on mount
+onMounted(() => {
+  const urlParams = new URLSearchParams(window.location.search);
+  pageNumber.value = parseInt(urlParams.get('page') || '1');
+  pageLimit.value = parseInt(urlParams.get('limit') || '40');
+});
+</script>
+
+Migration Complexity: LOW
+Estimated Effort: 3-4 ore (cu improvements)
+
+--------------------------------------------------------------------------------
+TASK 8: Analytics Display (Time Spent + Activities)
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Afișare analytics data pentru fiecare user în tabel: Total Time Spent (minute)
+și Activities Started (Curs + Lecții). Data vine din relationships: user.analyticsTime[]
+și user.analytics[].
+
+Flow:
+1. Backend returnează users cu relations:
+   - user.analyticsTime[] (array de { id, userId, value (minutes), courseId, createdAt })
+   - user.analytics[] (array de { id, userId, type (2=curs, 3=lectie), courseId, lessonId })
+2. Frontend calculează în table render:
+   - Total Time Spent: sum(analyticsTime[].value) în minute
+   - Activities Started Curs: count(analytics[] where type === 2)
+   - Activities Started Lect: count(analytics[] where type === 3)
+3. Display în tabel:
+   - "All Time Spent": "125 min"
+   - "Activities started": "Curs: 5 / Lect: 23"
+
+Current Implementation:
+{
+  title: 'All Time Spent',
+  dataIndex: 'analyticsTime',
+  key: 'analyticsTime',
+  render: (analyticsTime: User["analyticsTime"]) => <span>
+    {analyticsTime?.reduce(
+      (sum, item) => Math.round(sum) + Math.round(item.value),
+      0,
+    )} min
+  </span>,
+},
+{
+  title: 'Activities started',
+  dataIndex: 'analytics',
+  key: 'analytics',
+  render: (analytics: User["analytics"]) => <span>
+    Curs:{analytics?.filter(item => item.type === 2).length} {" / "}
+    Lect:{analytics?.filter(item => item.type === 3).length}
+  </span>,
+}
+
+Type Definitions:
+type User = {
+  analyticsTime?: AnalyticsTime[];
+  analytics?: Analytics[];
+};
+
+type AnalyticsTime = {
+  id: number;
+  userId: number;
+  value: number; // minutes
+  courseId: number;
+  createdAt: string;
+};
+
+type Analytics = {
+  id: number;
+  userId: number;
+  type: number; // 2 = curs started, 3 = lectie started
+  courseId: number;
+  lessonId?: number;
+  createdAt: string;
+};
+
+Notes:
+- ⚠️ Calculations în render (should be computed properties pentru performance)
+- ⚠️ Nu există breakdown per course (doar total)
+- ⚠️ Nu există sort by time spent (top active users)
+- ⚠️ Nu există filter by activity level (low/medium/high engagement)
+- ⚠️ analyticsTime poate fi undefined (needs optional chaining)
+- ⚠️ Math.round pe sum și pe item (double rounding - poate cauza erori)
+- ✅ Clear display format (minutes + count)
+- ✅ Separate counts pentru Curs și Lecții
+
+Recommendations for Vue Migration:
+1. Use computed properties pentru calculations
+2. Add tooltip cu breakdown per course
+3. Add sort by time spent column
+4. Add filter by engagement level
+5. Add visual indicator (progress bar sau badge pentru high/low)
+6. Add click pentru details (modal cu full analytics)
+7. Format time better (hours:minutes dacă > 60 min)
+
+Vue Implementation:
+<template>
+  <template #analyticsTime="{ text: analyticsTime }">
+    <a-tooltip :title="getTimeBreakdown(analyticsTime)">
+      <span>{{ formatTotalTime(analyticsTime) }}</span>
+    </a-tooltip>
+  </template>
+
+  <template #analytics="{ text: analytics }">
+    <a-space>
+      <a-tag color="blue">Curs: {{ getAnalyticsCount(analytics, 2) }}</a-tag>
+      <a-tag color="green">Lect: {{ getAnalyticsCount(analytics, 3) }}</a-tag>
+    </a-space>
+  </template>
+</template>
+
+<script setup lang="ts">
+const formatTotalTime = (analyticsTime?: AnalyticsTime[]) => {
+  if (!analyticsTime || analyticsTime.length === 0) return '0 min';
+
+  const totalMinutes = analyticsTime.reduce((sum, item) => sum + Math.round(item.value), 0);
+
+  if (totalMinutes >= 60) {
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `${hours}h ${minutes}m`;
+  }
+
+  return `${totalMinutes} min`;
+};
+
+const getAnalyticsCount = (analytics?: Analytics[], type: number) => {
+  return analytics?.filter(a => a.type === type).length || 0;
+};
+
+const getTimeBreakdown = (analyticsTime?: AnalyticsTime[]) => {
+  if (!analyticsTime || analyticsTime.length === 0) return 'Nicio activitate';
+
+  // Group by courseId
+  const breakdown = analyticsTime.reduce((acc, item) => {
+    acc[item.courseId] = (acc[item.courseId] || 0) + Math.round(item.value);
+    return acc;
+  }, {} as Record<number, number>);
+
+  return Object.entries(breakdown)
+    .map(([courseId, minutes]) => `Curs ${courseId}: ${minutes} min`)
+    .join('\n');
+};
+
+// Add computed property for table sorting
+const usersWithAnalytics = computed(() => {
+  return usersData.value.map(user => ({
+    ...user,
+    totalTimeSpent: user.analyticsTime?.reduce((sum, item) => sum + item.value, 0) || 0,
+    totalActivities: (user.analytics?.length || 0)
+  }));
+});
+
+// Add column sorting
+const columns = [
+  // ... other columns
+  {
+    title: 'All Time Spent',
+    dataIndex: 'analyticsTime',
+    key: 'analyticsTime',
+    sorter: (a: User, b: User) => {
+      const aTime = a.analyticsTime?.reduce((sum, item) => sum + item.value, 0) || 0;
+      const bTime = b.analyticsTime?.reduce((sum, item) => sum + item.value, 0) || 0;
+      return aTime - bTime;
+    },
+    slots: { customRender: 'analyticsTime' }
+  }
+];
+</script>
+
+Migration Complexity: LOW-MEDIUM
+Estimated Effort: 4-6 ore (cu improvements)
+
+--------------------------------------------------------------------------------
+TASK 9: Campaigns Assignment Display
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Afișare campaigns assigned pentru fiecare user în tabel. Data vine din
+relationship: user.campaigns[] (Many-to-Many via junction table). Display
+ca listă de campaign titles comma-separated.
+
+Flow:
+1. Backend returnează users cu relations:
+   - user.campaigns[] (array de { id, title, description, mailerliteGroupId, createdAt })
+2. Frontend extrage titles și join cu virgulă
+3. Display în tabel: "Campaign 1, Campaign 2, Campaign 3"
+4. Dacă nu are campaigns: "" (empty cell)
+
+Current Implementation:
+{
+  title: 'Assigned campaigns',
+  dataIndex: 'campaigns',
+  key: 'campaigns',
+  render: (campaigns: User["campaigns"]) => <span>
+    {campaigns?.map((campaign) => campaign.title).join(', ')}
+  </span>,
+}
+
+Type Definitions:
+type User = {
+  campaigns?: Campaign[];
+};
+
+type Campaign = {
+  id: number;
+  title: string;
+  description: string;
+  mailerliteGroupId: string;
+  createdAt: string;
+};
+
+Notes:
+- ⚠️ Display doar titles (no details, no links)
+- ⚠️ Nu există click pentru details (modal cu campaign info)
+- ⚠️ Nu există filter by campaign (show only users în Campaign X)
+- ⚠️ Nu există assign/unassign campaign în user edit
+- ⚠️ Long campaign list poate overflow cell (no truncate/tooltip)
+- ⚠️ Nu există count (ex: "3 campaigns")
+- ✅ Simple comma-separated list
+- ✅ Optional chaining pentru campaigns
+
+Recommendations for Vue Migration:
+1. Add click pentru campaign details (modal)
+2. Add filter by campaign în tabel
+3. Add assign/unassign campaign în user edit form
+4. Add truncate cu tooltip pentru long lists
+5. Add count badge (ex: "3 campaigns")
+6. Add campaign tags (colored badges) în loc de text
+7. Add visual indicator pentru MailerLite sync status
+
+Vue Implementation:
+<template>
+  <template #campaigns="{ text: campaigns }">
+    <a-space v-if="campaigns && campaigns.length > 0" wrap>
+      <a-tag
+        v-for="campaign in campaigns"
+        :key="campaign.id"
+        color="purple"
+        @click="showCampaignDetails(campaign)"
+        style="cursor: pointer"
+      >
+        {{ campaign.title }}
+      </a-tag>
+    </a-space>
+    <a-typography-text v-else type="secondary">
+      Nicio campanie
+    </a-typography-text>
+  </template>
+</template>
+
+<script setup lang="ts">
+const showCampaignDetails = (campaign: Campaign) => {
+  Modal.info({
+    title: campaign.title,
+    content: h('div', [
+      h('p', `Descriere: ${campaign.description}`),
+      h('p', `MailerLite Group: ${campaign.mailerliteGroupId}`),
+      h('p', `Creat la: ${dayjs(campaign.createdAt).format('DD.MM.YYYY HH:mm')}`)
+    ]),
+    width: 600
+  });
+};
+
+// Add filter by campaign în table
+const campaignFilter = ref<number | null>(null);
+
+const filteredUsers = computed(() => {
+  if (!campaignFilter.value) return usersData.value;
+
+  return usersData.value.filter(user =>
+    user.campaigns?.some(c => c.id === campaignFilter.value)
+  );
+});
+
+// Add campaign selector
+<template>
+  <a-select
+    v-model:value="campaignFilter"
+    placeholder="Filtrează după campanie"
+    allow-clear
+    style="width: 200px"
+  >
+    <a-select-option v-for="campaign in allCampaigns" :key="campaign.id" :value="campaign.id">
+      {{ campaign.title }}
+    </a-select-option>
+  </a-select>
+</template>
+
+// Add campaign assignment în user form
+<template>
+  <a-form-item label="Campaigns" name="campaigns">
+    <a-select
+      v-model:value="formData.campaigns"
+      mode="multiple"
+      placeholder="Selectează campaigns"
+      :options="campaignOptions"
+    />
+  </a-form-item>
+</template>
+</script>
+
+Migration Complexity: LOW-MEDIUM
+Estimated Effort: 4-6 ore (cu campaign assignment)
+
+--------------------------------------------------------------------------------
+TASK 10: Responsive Drawer Width
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Modal/Drawer pentru create/edit user cu width responsiv: 640px pe desktop,
+100% pe mobile/tablet. Detectează screen size cu useMediaQuery și ajustează
+width-ul automat.
+
+Flow:
+1. Component mount: detectează screen size
+2. Dacă screen width >= 960px (desktop): drawerWidth = '640px'
+3. Dacă screen width < 960px (mobile/tablet): drawerWidth = '100%'
+4. Drawer se deschide cu width-ul corespunzător
+5. Resize window: width se ajustează automat (reactive)
+
+Current Implementation:
+const isLarge = useMediaQuery({ minWidth: 960 });
+const [editModalWidth, setEditModalWidth] = useState<string>();
+
+useEffect(() => {
+  if (isLarge) {
+    setEditModalWidth('640');
+  } else {
+    setEditModalWidth('100%');
+  }
+}, [isLarge]);
+
+<Drawer open={modalAction !== CLOSE} onClose={...} width={editModalWidth}>
+  <UsersForm recordToUpdate={userToUpdate} handleEditModal={handleEditModal} />
+</Drawer>
+
+Notes:
+- ⚠️ Width value inconsistent: '640' (number) vs '100%' (string with unit)
+- ⚠️ Should be '640px' pentru consistency
+- ⚠️ Breakpoint 960px hardcoded (ar trebui constant/config)
+- ✅ Responsive behavior
+- ✅ Auto-adjust on resize
+
+Recommendations for Vue Migration:
+1. Use @vueuse/core useMediaQuery (no library needed)
+2. Fix width values ('640px' vs '100%')
+3. Make breakpoint configurable (constant)
+4. Add transition pentru width change
+5. Consider using Ant Design breakpoints (xs, sm, md, lg, xl)
+
+Vue Implementation:
+<template>
+  <a-drawer
+    :open="modalVisible"
+    :width="drawerWidth"
+    @close="handleClose"
+  >
+    <UsersForm :record-to-update="userToUpdate" @close="handleClose" />
+  </a-drawer>
+</template>
+
+<script setup lang="ts">
+import { useMediaQuery } from '@vueuse/core';
+
+const DESKTOP_BREAKPOINT = 960; // px
+const DRAWER_WIDTH_DESKTOP = '640px';
+const DRAWER_WIDTH_MOBILE = '100%';
+
+const isLargeScreen = useMediaQuery(`(min-width: ${DESKTOP_BREAKPOINT}px)`);
+
+const drawerWidth = computed(() =>
+  isLargeScreen.value ? DRAWER_WIDTH_DESKTOP : DRAWER_WIDTH_MOBILE
+);
+
+// Alternative: Use Ant Design breakpoints
+import { Grid } from 'ant-design-vue';
+const { useBreakpoint } = Grid;
+const screens = useBreakpoint();
+
+const drawerWidth = computed(() =>
+  screens.value.lg ? '640px' : '100%'
+);
+</script>
+
+Migration Complexity: LOW
+Estimated Effort: 1-2 ore
+
+--------------------------------------------------------------------------------
+TASK 11: User Subscriptions History (Edit Mode)
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+În edit mode, form-ul afișează lista cu toate subscriptions achiziționate de
+user. Include product name, status (Activ/Inactiv based pe status=3 și endDate),
+și loading state. Data fetchată din API: GET /v1/subscription/user/:userId.
+
+Flow:
+1. Dacă isEditMode (recordToUpdate.id exists):
+   - Fetch user subscriptions: GET /v1/subscription/user/:userId
+   - Parse response: { subscriptions: [...], count: N }
+   - Display subscriptions în List component
+2. Pentru fiecare subscription:
+   - Find product name din subscriptionTypes (by subTypeId)
+   - Calculate status: Activ (status=3 și endDate > now) / Inactiv
+   - Display: "Premium (Status: Activ)"
+3. Dacă nu are subscriptions:
+   - Display: "No subscriptions assigned."
+4. Loading state: Spin component during fetch
+
+Current Implementation:
+const [userSubscriptions, setUserSubscriptions] = useState<SubscriptionT[]>([]);
+const [subscriptionsLoading, setSubscriptionsLoading] = useState<boolean>(false);
+const isEditMode = !!recordToUpdate?.id;
+
+useEffect(() => {
+  const fetchUserSubscriptions = async () => {
+    if (isEditMode && recordToUpdate?.id) {
+      try {
+        const result = await getUserSubscriptionsApi(
+          recordToUpdate.id,
+          setSubscriptionsLoading,
+          authUser?.accessToken ?? ""
+        );
+        const data = result as unknown as UserSubscriptionsResponse;
+        if (data && data.subscriptions) {
+          setUserSubscriptions(data.subscriptions);
+        } else {
+          setUserSubscriptions([]);
+        }
+      } catch (error) {
+        console.error("Failed to fetch user subscriptions", error);
+        setUserSubscriptions([]);
+      }
+    } else {
+      setUserSubscriptions([]);
+    }
+  };
+
+  fetchUserSubscriptions();
+}, [recordToUpdate, isEditMode, authUser?.accessToken]);
+
+{isEditMode && (
+  <div style={{ marginTop: '24px' }}>
+    <Title level={5}>Produse achizitionate</Title>
+    {subscriptionsLoading ? (
+      <Spin />
+    ) : (
+      userSubscriptions.length > 0 ? (
+        <List
+          bordered
+          dataSource={userSubscriptions}
+          renderItem={(item: SubscriptionT & { subType?: SubscriptionTypeT }) => (
+            <List.Item>
+              {subscriptionTypes.find(stype => stype.id === item.subTypeId)?.productName || `Subscription ID: ${item.id}`}
+              (Status: {Number(item.status) === 3 && new Date(item.endDate) > new Date() ? 'Activ' : 'Inactiv'})
+            </List.Item>
+          )}
+        />
+      ) : (
+        <Typography.Text type="secondary">No subscriptions assigned.</Typography.Text>
+      )
+    )}
+  </div>
+)}
+
+Subscription Type:
+type SubscriptionT = {
+  id: number;
+  userId: number;
+  subTypeId: number;
+  status: number; // 3 = active
+  startDate: string;
+  endDate: string;
+  createdAt: string;
+};
+
+Status Logic:
+- status === 3 AND endDate > now → "Activ"
+- Otherwise → "Inactiv"
+
+Notes:
+- ⚠️ Display doar productName + status (missing: dates, price, type details)
+- ⚠️ Nu există pagination (dacă user are multe subscriptions)
+- ⚠️ Nu există sort (by date, by status)
+- ⚠️ Nu există filter (active only, expired only)
+- ⚠️ Nu există action buttons (renew, cancel, extend)
+- ⚠️ Status calculation inline în render (should be computed)
+- ⚠️ fallback "Subscription ID: {id}" (ar trebui error state)
+- ✅ Loading state (Spin)
+- ✅ Empty state message
+- ✅ Conditional display (only în edit mode)
+
+Recommendations for Vue Migration:
+1. Enhance display: add startDate, endDate, price, subscription type
+2. Add pagination pentru many subscriptions
+3. Add sort by date/status
+4. Add filter (active/inactive/all)
+5. Add action buttons (renew, cancel, extend) - dacă backend suportă
+6. Use computed property pentru status calculation
+7. Add visual timeline (progress bar cu endDate)
+8. Add colored status tags (green=active, red=expired)
+
+Vue Implementation:
+<template>
+  <div v-if="isEditMode" style="margin-top: 24px">
+    <a-typography-title :level="5">Subscriptions Achiziționate</a-typography-title>
+
+    <a-spin v-if="subscriptionsLoading" />
+
+    <a-list
+      v-else-if="userSubscriptions.length > 0"
+      bordered
+      :data-source="userSubscriptions"
+    >
+      <template #renderItem="{ item }">
+        <a-list-item>
+          <a-list-item-meta
+            :title="getProductName(item.subTypeId)"
+            :description="getSubscriptionPeriod(item)"
+          />
+          <template #extra>
+            <a-space direction="vertical" align="end">
+              <a-tag :color="isActive(item) ? 'green' : 'default'">
+                {{ isActive(item) ? 'Activ' : 'Inactiv' }}
+              </a-tag>
+              <a-progress
+                v-if="isActive(item)"
+                :percent="getSubscriptionProgress(item)"
+                :show-info="false"
+                size="small"
+              />
+            </a-space>
+          </template>
+        </a-list-item>
+      </template>
+    </a-list>
+
+    <a-empty v-else description="Nicio subscription găsită" />
+  </div>
+</template>
+
+<script setup lang="ts">
+const getProductName = (subTypeId: number) => {
+  return subscriptionTypes.value.find(st => st.id === subTypeId)?.productName || 'Unknown Product';
+};
+
+const getSubscriptionPeriod = (subscription: SubscriptionT) => {
+  const start = dayjs(subscription.startDate).format('DD.MM.YYYY');
+  const end = dayjs(subscription.endDate).format('DD.MM.YYYY');
+  return `${start} - ${end}`;
+};
+
+const isActive = (subscription: SubscriptionT) => {
+  return subscription.status === 3 && dayjs(subscription.endDate).isAfter(dayjs());
+};
+
+const getSubscriptionProgress = (subscription: SubscriptionT) => {
+  const start = dayjs(subscription.startDate);
+  const end = dayjs(subscription.endDate);
+  const now = dayjs();
+
+  const totalDays = end.diff(start, 'day');
+  const daysElapsed = now.diff(start, 'day');
+
+  return Math.min(Math.round((daysElapsed / totalDays) * 100), 100);
+};
+</script>
+
+Migration Complexity: LOW-MEDIUM
+Estimated Effort: 6-8 ore (cu enhancements)
+
+================================================================================
+SUMMARY
+================================================================================
+
+**Total Tasks**: 11 components/features
+**Total Estimated Effort**: 8-12 zile (1 developer)
+
+**Migration Priority**:
+1. HIGH: Users Page Layout & State Management (TASK 1)
+2. HIGH: Users Table Component (TASK 2)
+3. HIGH: User Create/Edit Form (TASK 3)
+4. MEDIUM: Search Users with Debounce (TASK 4)
+5. MEDIUM: Export Users to CSV (TASK 5)
+6. LOW: Delete User with Subscription Check (TASK 6)
+7. LOW: Pagination (40 Users Per Page) (TASK 7)
+8. MEDIUM: Analytics Display (TASK 8)
+9. LOW: Campaigns Assignment Display (TASK 9)
+10. LOW: Responsive Drawer Width (TASK 10)
+11. MEDIUM: User Subscriptions History (TASK 11)
+
+**Critical Dependencies**:
+- Backend API endpoints (all working)
+- Subscription Service (types + user subscriptions)
+- Campaign Service (for campaigns display)
+- Analytics Service (for tracking data)
+
+**Migration Challenges**:
+- Search + pagination conflict (need to fix)
+- Export CSV disabled (need to enable or remove)
+- Subscription assignment în create mode (backend support unclear)
+- Password field missing în create (need to add)
+- Complex analytics calculations (need to optimize)
+
+**Success Criteria**:
+- ✅ Toate operațiunile CRUD funcționează
+- ✅ Search cu debounce funcționează
+- ✅ Pagination funcționează
+- ✅ Export CSV funcționează
+- ✅ Analytics display corect
+- ✅ Subscription history display
+- ✅ UI/UX consistent cu React app
+- ✅ Responsive design (mobile, tablet, desktop)
+
+================================================================================
+END OF USERS MANAGEMENT MODULE DOCUMENTATION
+================================================================================
+
+Ready for JIRA import! 👥

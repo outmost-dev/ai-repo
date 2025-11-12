@@ -1,0 +1,799 @@
+================================================================================
+JIRA STORY: PAYMENTS MODULE
+================================================================================
+
+Story Title: Payments Module
+
+Story Type: Story
+
+Epic: Somaway Backend Migration to .NET
+
+Story Description:
+------------------
+Modulul Payments gestionează procesarea plăților prin Stripe și Librapay,
+incluzând gestionarea webhook-urilor Stripe, plăți recurente, anularea
+abonamentelor, și integrarea cu sistemul de facturare SmartBill.
+
+Locație cod sursă: server/src/v1/Payments/
+
+Endpoints implementate: 10 (corrected from 6 estimate)
+- 1 PUBLIC endpoint (Stripe webhook)
+- 7 endpoints autentificate pentru clienți
+- 2 endpoints ADMIN only
+
+Services utilizate:
+- StripeService (PaymentIntent, Subscriptions, Webhooks)
+- InvoiceService (SmartBill invoice generation)
+- SubscriptionService (activate subscriptions after payment)
+- MailerLiteService (marketing subscriptions post-purchase)
+- MailerService (Postmark transactional emails)
+- UserService (user data retrieval)
+- PaymentsRepository
+- OrdersRepository
+
+Dependencies:
+- Stripe API (payment processing, webhooks, subscriptions)
+- SmartBill API (invoice generation)
+- MailerLite API (marketing automation)
+- Postmark SMTP (transactional emails)
+- Librapay API (alternative payment gateway for Romanian market)
+
+Notes:
+- CRITICAL: Webhook endpoint is PUBLIC (no JWT) - uses Stripe signature verification
+- Dual payment gateway support: Stripe (primary) + Librapay (alternative)
+- Handles both one-time payments (payment_intent.succeeded) and recurring (invoice.payment_succeeded)
+- Complete Order → Payment → StripePayment entity chain
+- POST /v1/payments/checkout is DEPRECATED (returns stub message)
+- Circular dependencies with SubscriptionService and InvoiceService (forwardRef)
+
+================================================================================
+TASKS (10 ENDPOINTS)
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 1: POST /v1/payments/stripe/webhook
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Webhook Stripe pentru procesarea evenimentelor de plată. Stripe trimite notificări
+automate când o plată este finalizată sau când o factură recurentă este procesată.
+
+Flow:
+1. Primește request de la Stripe cu eveniment de plată
+2. Verifică semnătura Stripe pentru securitate (stripe-signature header)
+3. Determină tipul evenimentului:
+   - payment_intent.succeeded → plată unică finalizată
+   - invoice.payment_succeeded → plată recurentă finalizată
+4. Pentru payment_intent.succeeded:
+   - Actualizează status plată în baza de date
+   - Activează abonamentul (changeStatusToAccepted)
+   - Marchează Order ca COMPLETED
+   - Actualizează Payment și StripePayment entities
+   - Generează factură SmartBill (createOrderInvoice)
+   - Trimite email de confirmare către utilizator
+   - Înscrie utilizatorul în grupul MailerLite al produsului
+5. Pentru invoice.payment_succeeded (plăți recurente):
+   - Verifică că e billing_reason = 'subscription_cycle'
+   - Creează nou Order pentru ciclul de facturare
+   - Creează OrderItem, Payment, StripePayment entities
+   - Generează factură SmartBill pentru plata recurentă
+   - Extinde endDate al abonamentului cu 1 lună
+6. Returnează { received: true } către Stripe
+
+Cod sursă:
+- Controller: src/v1/Payments/Controller/payments.controller.ts:50-57
+- Service: src/v1/Payments/Service/payments.service.ts:466-652
+  - processStripeWebhook: 466-478
+  - handlePaymentIntentSucceeded: 480-575
+  - handleInvoicePaymentSucceeded: 577-652
+
+Request:
+POST /v1/payments/stripe/webhook
+Headers:
+  stripe-signature: string (required - Stripe signature for verification)
+Body: Raw body from Stripe (JSON payload with event data)
+
+Response Success:
+{
+  "received": true
+}
+
+Response Error:
+- 400 Bad Request: Invalid signature or could not find previous stripe payment
+
+Authorization: PUBLIC (no AuthGuard)
+Security: Stripe signature verification in constructEvent()
+
+Rate Limiting: Default global rate limiting
+
+Dependencies:
+- StripeService.constructEvent(requestBody, signature)
+- PaymentsRepository.getPaymentByIntentSecret()
+- PaymentsRepository.updateInternalPayment()
+- SubscriptionService.changeStatusToAccepted()
+- SubscriptionService.getSubscription()
+- SubscriptionService.getSubscriptionTypeById()
+- SubscriptionService.updateSubscriptionEndDate()
+- OrdersRepository.getOrderBySubscriptionId()
+- OrdersRepository.updateOrder()
+- InvoiceService.createOrderInvoice()
+- MailerLiteService.retrieveOrCreateGroup()
+- MailerLiteService.subscribeToMarketing()
+- UserService.getUserById()
+- MailerService.sendMail()
+
+Notes:
+- ⚠️ PUBLIC endpoint - no JWT authentication (by design)
+- Security relies entirely on Stripe signature verification
+- Handles TWO event types: payment_intent.succeeded and invoice.payment_succeeded
+- Creates complete Order → Payment → StripePayment entity chain
+- For recurring payments: automatically extends subscription and generates invoice
+- Email template: 'success-registration' with user first name
+- MailerLite group name format: subType.mailerLiteGroup or "Achizitie abonament: {productName}"
+
+Recommendations for .NET:
+- Use Stripe.NET SDK webhook event construction
+- Configure webhook signature secret in appsettings
+- Use IMediator pattern for event handlers (separate handlers for each event type)
+- Add idempotency key handling to prevent duplicate processing
+- Add structured logging for all webhook events
+- Consider webhook retry logic and dead letter queue
+
+--------------------------------------------------------------------------------
+TASK 2: POST /v1/payments/create-account
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Creează un cont Stripe Connect pentru utilizator, necesar pentru plăți viitoare.
+Salvează IP-ul utilizatorului pentru verificarea termenilor și condițiilor Stripe.
+
+Flow:
+1. Extrage email-ul din request body
+2. Extrage IP-ul utilizatorului din req.connection.remoteAddress
+3. Apelează StripeService pentru a crea un cont Stripe
+4. Returnează detaliile contului Stripe creat
+
+Cod sursă:
+- Controller: src/v1/Payments/Controller/payments.controller.ts:59-66
+- Service: StripeService.createAccount(email, ipAddress)
+
+Request:
+POST /v1/payments/create-account
+Headers:
+  Authorization: Bearer {jwt_token}
+Body:
+{
+  "email": "user@example.com"
+}
+
+Response Success:
+{
+  "id": "acct_xxxxx",
+  "email": "user@example.com",
+  ...
+}
+
+Response Error:
+- 401 Unauthorized: Missing or invalid JWT token
+- 400 Bad Request: Stripe API error
+
+Authorization: Authenticated (JWT)
+Roles: Any authenticated user
+
+Rate Limiting: Default global rate limiting
+
+Dependencies:
+- StripeService.createAccount(email, ipAddress)
+
+Notes:
+- Uses req.connection.remoteAddress to capture user IP (may not work behind proxies)
+- Stripe Connect account creation
+
+Recommendations for .NET:
+- Use IHttpContextAccessor to get client IP address
+- Consider X-Forwarded-For header for IP detection behind proxies/load balancers
+- Validate email format before Stripe API call
+- Add proper error handling for Stripe API exceptions
+
+--------------------------------------------------------------------------------
+TASK 3: POST /v1/payments/update-account-tos
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Actualizează acceptarea termenilor și condițiilor Stripe pentru contul utilizatorului.
+Salvează IP-ul utilizatorului pentru audit.
+
+Flow:
+1. Extrage IP-ul utilizatorului din req.connection.remoteAddress
+2. Apelează StripeService pentru a actualiza contul cu TOS acceptance
+3. Returnează confirmarea actualizării
+
+Cod sursă:
+- Controller: src/v1/Payments/Controller/payments.controller.ts:68-72
+- Service: StripeService.updateAccount(ipAddress)
+
+Request:
+POST /v1/payments/update-account-tos
+Headers:
+  Authorization: Bearer {jwt_token}
+Body: (empty)
+
+Response Success:
+{
+  "id": "acct_xxxxx",
+  "tos_acceptance": {
+    "date": 1234567890,
+    "ip": "192.168.1.1"
+  },
+  ...
+}
+
+Response Error:
+- 401 Unauthorized: Missing or invalid JWT token
+- 400 Bad Request: Stripe API error
+
+Authorization: Authenticated (JWT)
+Roles: Any authenticated user
+
+Rate Limiting: Default global rate limiting
+
+Dependencies:
+- StripeService.updateAccount(ipAddress)
+
+Notes:
+- Uses req.connection.remoteAddress for IP capture
+- Stripe requires IP address for TOS acceptance compliance
+
+Recommendations for .NET:
+- Use IHttpContextAccessor.HttpContext.Connection.RemoteIpAddress
+- Handle X-Forwarded-For header for reverse proxy scenarios
+- Log TOS acceptance with timestamp for audit trail
+
+--------------------------------------------------------------------------------
+TASK 4: POST /v1/payments/checkout (DEPRECATED)
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+⚠️ DEPRECATED ENDPOINT - returnează doar un mesaj stub.
+
+Anterior: Finaliza procesul de plată după ce utilizatorul completează checkout-ul
+în frontend. Acum întreaga logică de finalizare se face prin webhook-ul Stripe.
+
+Flow actual:
+1. Returnează mesaj stub: "Plata a fost confirmată! Vă rugăm așteptați."
+
+Flow original (comentat în cod):
+1. Găsește payment după clientSecret
+2. Verifică că utilizatorul este autorul plății
+3. Verifică status PaymentIntent în Stripe (succeeded)
+4. Actualizează status payment în baza de date
+5. Activează abonamentul (changeStatusToAccepted)
+6. Generează factură SmartBill
+7. Înscrie utilizatorul în MailerLite
+8. Trimite email de confirmare
+9. Returnează abonamentul activat
+
+Cod sursă:
+- Controller: src/v1/Payments/Controller/payments.controller.ts:74-82
+- Service: src/v1/Payments/Service/payments.service.ts:358-464 (commented out)
+
+Request:
+POST /v1/payments/checkout
+Headers:
+  Authorization: Bearer {jwt_token}
+Body:
+{
+  "clientSecret": "pi_xxxxx_secret_xxxxx"
+}
+
+Response Success:
+{
+  "status": "ok",
+  "message": "Plata a fost confirmată! Vă rugăm așteptați."
+}
+
+Authorization: Authenticated (JWT)
+Roles: Any authenticated user
+
+Rate Limiting: Default global rate limiting
+
+Dependencies:
+- NONE (stub implementation)
+
+Notes:
+- ⚠️ DEPRECATED - do NOT migrate this logic
+- All payment processing now done via Stripe webhook
+- Original logic moved to handlePaymentIntentSucceeded in webhook handler
+- Kept for backwards compatibility with frontend
+
+Recommendations for .NET:
+- DO NOT implement this endpoint in .NET
+- Return 410 Gone status code instead of stub message
+- Update frontend to remove calls to this endpoint
+- Document migration path in API changelog
+
+--------------------------------------------------------------------------------
+TASK 5: GET /v1/payments/payment-subscriptions
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Returnează toate abonamentele recurente active ale utilizatorului, din ambele
+gateway-uri de plată: Stripe și Librapay. Folosit pentru pagina de management
+abonamente unde utilizatorul poate vedea și anula plățile recurente.
+
+Flow:
+1. Verifică dacă utilizatorul are stripeCustomer ID
+2. Dacă DA: apelează Stripe API pentru abonamente active
+   - Mapează abonamentele Stripe la format uniform
+   - Extrage plan nickname, amount, currency din price object
+   - Adaugă metadata.internalSubscriptionId pentru tracking
+   - Marchează gatewayType = 'STRIPE'
+3. Apelează SubscriptionService pentru abonamente Librapay active
+4. Dacă există: mapează abonamentele Librapay la format uniform
+   - Convertește amount la bani (multiply by 100 for consistency)
+   - Prefixează ID cu 'librapay_'
+   - Marchează gatewayType = 'LIBRAPAY'
+5. Combină abonamentele din ambele surse într-un array
+6. Dacă array-ul e gol: aruncă NotFoundException
+7. Returnează lista combinată de abonamente
+
+Cod sursă:
+- Controller: src/v1/Payments/Controller/payments.controller.ts:84-160
+- Service: StripeService.retrieveActivePaymentSubscriptions()
+- Service: SubscriptionService.getActiveLibraRecurrentSubscriptions()
+
+Request:
+GET /v1/payments/payment-subscriptions
+Headers:
+  Authorization: Bearer {jwt_token}
+
+Response Success:
+[
+  {
+    "id": "sub_xxxxx",
+    "plan": {
+      "nickname": "Abonament Standard",
+      "amount": 9900,
+      "currency": "RON"
+    },
+    "metadata": {
+      "internalSubscriptionId": "123"
+    },
+    "status": "active",
+    "current_period_end": 1234567890,
+    "cancel_at_period_end": false,
+    "cancel_at": null,
+    "gatewayType": "STRIPE"
+  },
+  {
+    "id": "librapay_456",
+    "plan": {
+      "nickname": null,
+      "amount": 9900,
+      "currency": "RON"
+    },
+    "metadata": {
+      "internalSubscriptionId": "456"
+    },
+    "status": "active",
+    "current_period_end": 1234567890,
+    "cancel_at_period_end": false,
+    "cancel_at": 1234567890,
+    "gatewayType": "LIBRAPAY"
+  }
+]
+
+Response Error:
+- 401 Unauthorized: Missing or invalid JWT token
+- 404 Not Found: "Nu ai plata recurenta activa."
+
+Authorization: Authenticated (JWT)
+Roles: Any authenticated user
+
+Rate Limiting: Default global rate limiting
+
+Dependencies:
+- StripeService.retrieveActivePaymentSubscriptions(stripeCustomer)
+- SubscriptionService.getActiveLibraRecurrentSubscriptions(userId)
+
+Notes:
+- Dual gateway support: Stripe + Librapay
+- Unified response format for both gateways
+- Librapay amounts converted to bani (x100) for consistency with Stripe
+- current_period_end converted from Date to Unix timestamp (seconds)
+- gatewayType field added to distinguish source
+
+Recommendations for .NET:
+- Create PaymentSubscriptionResponse DTO with gatewayType enum
+- Use AutoMapper for mapping Stripe/Librapay models to unified DTO
+- Consider caching Stripe API responses (short TTL ~1min)
+- Add proper null handling for plan.nickname
+- Return empty array instead of 404 when no subscriptions (RESTful best practice)
+
+--------------------------------------------------------------------------------
+TASK 6: DELETE /v1/payments/cancel-subscription/:subscriptionId
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Anulează un abonament recurent Stripe al utilizatorului. Abonamentul rămâne activ
+până la sfârșitul perioadei curente de facturare, apoi nu va mai fi reînnoit.
+
+Flow:
+1. Extrage subscriptionId din URL params
+2. Extrage stripeCustomer ID din utilizatorul autentificat
+3. Apelează StripeService.cancelPaymentSubscription()
+   - Verifică că subscription aparține customer-ului
+   - Anulează subscription în Stripe (cancel_at_period_end = true)
+4. Returnează confirmarea anulării de la Stripe
+
+Cod sursă:
+- Controller: src/v1/Payments/Controller/payments.controller.ts:162-172
+- Service: StripeService.cancelPaymentSubscription(subscriptionId, stripeCustomer)
+
+Request:
+DELETE /v1/payments/cancel-subscription/:subscriptionId
+Headers:
+  Authorization: Bearer {jwt_token}
+URL Params:
+  subscriptionId: string (Stripe subscription ID, e.g., "sub_xxxxx")
+
+Response Success:
+{
+  "id": "sub_xxxxx",
+  "status": "active",
+  "cancel_at_period_end": true,
+  "cancel_at": 1234567890,
+  ...
+}
+
+Response Error:
+- 401 Unauthorized: Missing or invalid JWT token
+- 404 Not Found: Subscription not found or doesn't belong to customer
+- 400 Bad Request: Stripe API error
+
+Authorization: Authenticated (JWT)
+Roles: Any authenticated user
+
+Rate Limiting: Default global rate limiting
+
+Dependencies:
+- StripeService.cancelPaymentSubscription(subscriptionId, stripeCustomer)
+
+Notes:
+- ⚠️ Only cancels in Stripe - does NOT update internal subscription status
+- Subscription remains active until current_period_end
+- User can still access content until period expires
+- Missing: internal database update for cancelled subscription
+
+Recommendations for .NET:
+- Add internal subscription status update (mark as CANCELLING or CANCELLED)
+- Log cancellation event for audit trail
+- Send cancellation confirmation email to user
+- Consider cancellation reason capture for analytics
+- Add validation that subscriptionId belongs to authenticated user's stripeCustomer
+
+--------------------------------------------------------------------------------
+TASK 7: GET /v1/payments/all (ADMIN ONLY)
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Returnează lista tuturor plăților din sistem cu filtrare și paginare.
+Folosit de admini pentru monitorizare și raportare.
+
+Flow:
+1. Verifică că utilizatorul are rol ADMIN
+2. Extrage parametrii de filtrare din query string
+3. Apelează PaymentsRepository.getPaymentList() cu filtre
+4. Returnează lista de plăți cu total count pentru paginare
+
+Cod sursă:
+- Controller: src/v1/Payments/Controller/payments.controller.ts:174-182
+- Service: src/v1/Payments/Service/payments.service.ts:71-74
+- Repository: PaymentsRepository.getPaymentList(query)
+
+Request:
+GET /v1/payments/all?status=succeeded&userId=123&limit=50&offset=0
+Headers:
+  Authorization: Bearer {jwt_token}
+Query Parameters:
+  - status: string (optional, e.g., "succeeded", "pending")
+  - userId: number (optional, filter by user)
+  - subscriptionId: number (optional, filter by subscription)
+  - amount: number (optional, filter by amount)
+  - limit: number (optional, pagination, default 63)
+  - offset: number (optional, pagination, default 14)
+
+Response Success:
+{
+  "payments": [
+    {
+      "id": 123,
+      "amount": 99.00,
+      "status": "succeeded",
+      "intentSecret": "pi_xxxxx_secret_xxxxx",
+      "stripePaymentId": "pi_xxxxx",
+      "stripeSubscriptionId": "sub_xxxxx",
+      "createdAt": "2024-01-01T12:00:00Z",
+      "updatedAt": "2024-01-01T12:05:00Z"
+    },
+    ...
+  ],
+  "count": 150
+}
+
+Response Error:
+- 401 Unauthorized: Missing or invalid JWT token
+- 403 Forbidden: User is not ADMIN
+
+Authorization: Authenticated (JWT)
+Roles: ADMIN only
+
+Rate Limiting: Default global rate limiting
+
+Dependencies:
+- PaymentsRepository.getPaymentList(query)
+
+Notes:
+- ADMIN only endpoint
+- Supports multiple filter criteria
+- Returns paginated results
+- Unusual default values: limit=63, offset=14 (copied from DTO example)
+
+Recommendations for .NET:
+- Use PagedResponse<Payment> DTO pattern
+- Add sorting support (orderBy, sortDirection)
+- Add date range filtering (createdFrom, createdTo)
+- Change default limit to 20 or 50 (more standard)
+- Add CSV export option for reporting
+- Consider adding aggregations (total amount, count by status)
+
+--------------------------------------------------------------------------------
+TASK 8: POST /v1/payments/create-invoice (ADMIN ONLY - TEMPORARY)
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+⚠️ TEMPORARY TESTING ENDPOINT - creează manual o factură SmartBill pentru un
+abonament plătit. În producție, facturile se generează automat prin webhook-ul Stripe.
+
+Flow:
+1. Verifică că utilizatorul are rol ADMIN
+2. Primește DTO cu subscriptionId, customerId, paymentValue
+3. Apelează InvoiceService.createInvoice() care:
+   - Creează înregistrare Invoice în baza de date
+   - Apelează SmartBill API pentru generare factură PDF
+   - Salvează externalId și seriesName de la SmartBill
+4. Returnează factura creată cu toate detaliile
+
+Cod sursă:
+- Controller: src/v1/Payments/Controller/payments.controller.ts:184-193
+- Service: InvoiceService.createInvoice(dto, authUser)
+
+Request:
+POST /v1/payments/create-invoice
+Headers:
+  Authorization: Bearer {jwt_token}
+Body:
+{
+  "subscriptionId": 123,
+  "customerId": 456,
+  "paymentValue": 99.00,
+  "seriesName": "BC",
+  "externalId": "BC-2024-00123",
+  "status": 1,
+  "issueDate": "2024-01-01"
+}
+
+Response Success:
+{
+  "id": 789,
+  "subscriptionId": 123,
+  "customerId": 456,
+  "paymentValue": 99.00,
+  "seriesName": "BC",
+  "externalId": "BC-2024-00123",
+  "status": 1,
+  "issueDate": "2024-01-01T00:00:00Z",
+  "createdAt": "2024-01-01T12:00:00Z",
+  "updatedAt": "2024-01-01T12:00:00Z"
+}
+
+Response Error:
+- 401 Unauthorized: Missing or invalid JWT token
+- 403 Forbidden: User is not ADMIN
+- 400 Bad Request: Invalid DTO or SmartBill API error
+
+Authorization: Authenticated (JWT)
+Roles: ADMIN only
+
+Rate Limiting: Default global rate limiting
+
+Dependencies:
+- InvoiceService.createInvoice(dto, authUser)
+
+Notes:
+- ⚠️ TEMPORARY ENDPOINT - marked "For temporary testing" in code
+- NOT used in production flow (webhook handles invoice creation)
+- Useful for manual invoice generation or testing
+- SmartBill integration: series "BC", VAT "RO45702099"
+
+Recommendations for .NET:
+- Consider removing this endpoint in .NET migration
+- If kept: add thorough validation and authorization
+- Add audit logging for manual invoice creation
+- Consider making it an internal admin tool instead of API endpoint
+- Add idempotency check (don't create duplicate invoices)
+
+--------------------------------------------------------------------------------
+TASK 9: GET /v1/payments/invoices
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Returnează lista de facturi ale utilizatorului autentificat. Utilizatorul vede
+doar propriile facturi, filtrate automat după customerId.
+
+Flow:
+1. Extrage utilizatorul autentificat din JWT token
+2. Apelează InvoiceService.getInvoiceList() cu filter customerId
+3. Returnează lista de facturi a utilizatorului
+
+Cod sursă:
+- Controller: src/v1/Payments/Controller/payments.controller.ts:195-201
+- Service: InvoiceService.getInvoiceList({ customerId })
+
+Request:
+GET /v1/payments/invoices
+Headers:
+  Authorization: Bearer {jwt_token}
+
+Response Success:
+{
+  "invoices": [
+    {
+      "id": 123,
+      "subscriptionId": 456,
+      "customerId": 789,
+      "paymentValue": 99.00,
+      "seriesName": "BC",
+      "externalId": "BC-2024-00123",
+      "status": 1,
+      "issueDate": "2024-01-01T00:00:00Z",
+      "createdAt": "2024-01-01T12:00:00Z",
+      "updatedAt": "2024-01-01T12:00:00Z"
+    },
+    ...
+  ],
+  "count": 5
+}
+
+Response Error:
+- 401 Unauthorized: Missing or invalid JWT token
+- 404 Not Found: No invoices found for user
+
+Authorization: Authenticated (JWT)
+Roles: Any authenticated user
+
+Rate Limiting: Default global rate limiting
+
+Dependencies:
+- InvoiceService.getInvoiceList({ customerId })
+
+Notes:
+- Automatic filtering by authenticated user's ID
+- Returns ALL user's invoices (no pagination - potential issue for power users)
+- SmartBill externalId format: "{seriesName}-{year}-{number}" (e.g., "BC-2024-00123")
+
+Recommendations for .NET:
+- Add pagination support (limit, offset)
+- Add date range filtering
+- Add sorting (by issueDate desc default)
+- Consider caching invoice list (invalidate on new invoice)
+- Return empty array instead of 404 when no invoices
+
+--------------------------------------------------------------------------------
+TASK 10: GET /v1/payments/download-invoice/:invoiceId
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Descarcă factura PDF generată de SmartBill pentru o factură specifică.
+Verifică că factura aparține utilizatorului autentificat.
+
+Flow:
+1. Extrage invoiceId din URL params
+2. Extrage utilizatorul autentificat din JWT token
+3. Apelează InvoiceService.downloadInvoice(invoiceId, userId) care:
+   - Verifică că factura aparține user-ului (ownership check)
+   - Apelează SmartBill API pentru download PDF
+   - Returnează stream PDF
+4. Dacă PDF-ul nu există: aruncă NotFoundException
+5. Setează header Content-Disposition pentru download
+6. Trimite PDF stream în response
+
+Cod sursă:
+- Controller: src/v1/Payments/Controller/payments.controller.ts:203-225
+- Service: InvoiceService.downloadInvoice(invoiceId, userId)
+
+Request:
+GET /v1/payments/download-invoice/:invoiceId
+Headers:
+  Authorization: Bearer {jwt_token}
+URL Params:
+  invoiceId: number (internal invoice ID)
+
+Response Success:
+Content-Type: application/pdf
+Content-Disposition: attachment; filename=invoice-{invoiceId}.pdf
+Body: PDF binary stream
+
+Response Error:
+- 401 Unauthorized: Missing or invalid JWT token
+- 404 Not Found: "Factura nu a fost procesată." (invoice not processed/not found)
+- 403 Forbidden: Invoice doesn't belong to user
+
+Authorization: Authenticated (JWT)
+Roles: Any authenticated user
+
+Rate Limiting: Default global rate limiting
+
+Dependencies:
+- InvoiceService.downloadInvoice(invoiceId, userId)
+
+Notes:
+- Ownership validation in service layer
+- SmartBill PDF generation may be async - invoice might not be immediately available
+- Filename format: invoice-{invoiceId}.pdf
+- Returns PDF stream directly (not base64 encoded)
+
+Recommendations for .NET:
+- Use FileStreamResult for PDF response
+- Add proper MIME type: application/pdf
+- Add caching headers (PDF doesn't change once generated)
+- Consider pre-signed URLs for direct SmartBill downloads (reduce server load)
+- Add rate limiting per user (prevent download abuse)
+- Log download events for audit trail
+
+================================================================================
+END OF PAYMENTS MODULE DOCUMENTATION
+================================================================================
+
+Summary:
+- Total Endpoints: 10 (corrected from 6 estimate)
+  - 1 PUBLIC webhook endpoint
+  - 7 authenticated user endpoints
+  - 2 ADMIN only endpoints
+- Critical Dependencies: Stripe, SmartBill, MailerLite, Postmark, Librapay
+- Webhook Events: payment_intent.succeeded, invoice.payment_succeeded
+- Entity Chain: Order → OrderItem → Payment → StripePayment
+- Deprecated: POST /v1/payments/checkout (returns stub)
+
+Security Findings:
+- ✅ Webhook uses Stripe signature verification (no JWT by design)
+- ⚠️ POST /v1/payments/checkout is deprecated but still exposed
+- ⚠️ DELETE cancel-subscription doesn't update internal subscription status
+- ⚠️ GET /v1/payments/invoices has no pagination (potential performance issue)
+
+Missing Features:
+- Librapay subscription cancellation endpoint
+- Invoice regeneration endpoint (if SmartBill fails)
+- Payment retry mechanism for failed payments
+- Refund endpoints
+
+Critical for .NET Migration:
+1. Implement robust webhook handling with idempotency
+2. Create Order → Payment → StripePayment entity models
+3. Integrate Stripe.NET SDK for webhook event construction
+4. Implement SmartBill client for invoice generation
+5. Add proper error handling and retry logic for external API calls
+6. Remove deprecated /checkout endpoint
+7. Add comprehensive logging for payment flows
+
+Ready for JIRA import! 🎯

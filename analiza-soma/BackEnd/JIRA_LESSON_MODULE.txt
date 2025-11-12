@@ -1,0 +1,921 @@
+================================================================================
+JIRA STORY: LESSON MODULE
+================================================================================
+
+Title: Lesson Module
+
+Description:
+Modulul Lesson gestionează lecțiile individuale din cadrul cursurilor: creare, actualizare, ștergere, vizualizare cu access control, voting system (upvote/downvote), și featured lesson selection. Include logic de access control similar cu Course Module (ADMIN, STANDARD, COURSE_BASED) și auto-update lesson count în parent course.
+
+Locație cod sursă:
+- Controller: src/v1/Lesson/Controller/lesson.controller.ts
+- Service: src/v1/Lesson/Service/lessons.service.ts
+- Module: src/v1/Lesson/lesson.module.ts
+
+Endpoints implementate: 11 (nu 7 cum e documentat inițial)
+
+Services utilizate:
+- LessonService (Service/lessons.service.ts)
+- CourseService (din Course Module) - update lesson count
+- UserService (din User Module) - access control validation
+
+Repositories:
+- LessonsRepository
+
+Dependencies:
+- Redis (access control cache via UserService)
+- CourseService (forwardRef pentru circular dependency)
+
+Guards utilizați:
+- AuthGuard('subscription-validation') - TOATE endpoint-urile necesită subscription validă
+- RolesGuard - pentru endpoint-uri ADMIN și USER specifice
+
+Authorization Roles:
+- ADMIN - acces complet (create, update, delete orice lesson, vede inactive lessons)
+- USER - poate vota (upvote/downvote/undo)
+- Subscription-based access - lessons vizibile bazat pe subscription level
+
+Access Control Logic:
+- ACCESS_TYPE.ADMIN - vede toate lessons (inclusiv inactive)
+- ACCESS_TYPE.STANDARD - vede toate lessons active
+- ACCESS_TYPE.COURSE_BASED - vede doar lessons din categoriile la care are access (slug și videoUrl șterse pentru lessons fără access)
+
+Notes:
+- Voting system: upvote/downvote/undo pentru fiecare lesson
+- Lesson count în parent course e auto-updated (+1 la create, -1 la delete)
+- Featured lesson selection pentru prima lecție din curs
+- Slug și videoUrl sunt ȘTERSE din response pentru lessons fără access (similar cu Course)
+- Delete lesson șterge doar lesson-ul, NU afectează alt content
+- Bulk delete pentru toate lessons dintr-un course (folosit la course delete)
+
+Voting System Details:
+- User poate upvote SAU downvote un lesson (nu ambele)
+- Undo vote șterge vote-ul existent
+- Vote count e tracked per lesson (upVotes și downVotes separate)
+- Doar users cu role USER pot vota (nu ADMIN)
+
+================================================================================
+TASKS
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 1: GET /v1/lesson/:lessonId
+--------------------------------------------------------------------------------
+
+Title: GET /v1/lesson/:lessonId
+
+Description:
+
+Business Logic:
+1. Primește lessonId în URL
+2. Caută lesson în baza de date
+3. Returnează lesson object cu toate detaliile
+4. NU verifică access control (POSIBIL SECURITY ISSUE - similar cu Course search)
+5. Returnează lesson chiar dacă user-ul nu are access la parent course
+
+Cod sursă:
+- Controller: src/v1/Lesson/Controller/lesson.controller.ts:35-38
+- Service: src/v1/Lesson/Service/lessons.service.ts:35-39
+
+Request:
+GET /v1/lesson/456
+Headers: Authorization: Bearer {accessToken}
+
+Response (Success 200):
+{
+  "id": 456,
+  "title": "Variabile și Tipuri de Date",
+  "description": "În această lecție învățăm despre variabile...",
+  "videoUrl": "https://vimeo.com/...",
+  "slug": "variabile-si-tipuri-de-date",
+  "courseId": 123,
+  "categoryId": 30,
+  "displayOrder": 1,
+  "isActive": true,
+  "upVotes": 15,
+  "downVotes": 2,
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-01-15T00:00:00.000Z"
+}
+
+Response (Error 404 - lesson not found):
+{
+  "statusCode": 404,
+  "message": "Lesson not found"
+}
+
+Authorization: AuthGuard('subscription-validation')
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- LessonsRepository.getLesson()
+
+Notes:
+- **SECURITY CONCERN**: Nu verifică dacă user-ul are access la parent course
+- User poate accesa orice lesson dacă are lessonId
+- Similar cu Course search bug
+- Returnează videoUrl chiar pentru lessons fără access
+
+Posibile îmbunătățiri .NET:
+- ADD access control check (verify user has access to parent course)
+- VALIDATE course access prin UserService
+- Consider hiding videoUrl pentru lessons fără access
+
+--------------------------------------------------------------------------------
+TASK 2: GET /v1/lesson/by-course/:courseId/all
+--------------------------------------------------------------------------------
+
+Title: GET /v1/lesson/by-course/:courseId/all
+
+Description:
+
+Business Logic:
+1. Returnează toate lessons dintr-un course specific
+2. Query params: page, limit, isActive, orderBy, orderDirection
+3. **SPECIAL ADMIN LOGIC**: Dacă authUser.role === ADMIN:
+   - showAll = true → vede ȘI lessons inactive
+4. Non-admin users văd DOAR lessons active (isActive=true)
+5. Paginare și sortare configurabilă
+
+Cod sursă:
+- Controller: src/v1/Lesson/Controller/lesson.controller.ts:40-49
+- Service: src/v1/Lesson/Service/lessons.service.ts:41-52
+
+Request:
+GET /v1/lesson/by-course/123/all?page=1&limit=20&isActive=true&orderBy=displayOrder&orderDirection=ASC
+Headers: Authorization: Bearer {accessToken}
+
+Query Parameters:
+- page (number, optional): default 1
+- limit (number, optional): default 20
+- isActive (boolean, optional): filter by active status (ignored for ADMIN)
+- orderBy (string, optional): displayOrder, createdAt, title
+- orderDirection (string, optional): ASC sau DESC
+
+Response (Success 200):
+{
+  "lessons": [
+    {
+      "id": 456,
+      "title": "Lecția 1: Introducere",
+      "description": "...",
+      "videoUrl": "https://vimeo.com/...",
+      "courseId": 123,
+      "displayOrder": 1,
+      "isActive": true,
+      "upVotes": 15,
+      "downVotes": 2
+    },
+    {
+      "id": 457,
+      "title": "Lecția 2: Variabile",
+      "displayOrder": 2,
+      "isActive": true
+    }
+  ],
+  "count": 15
+}
+
+Response (Success 200 - ADMIN with inactive):
+{
+  "lessons": [
+    ...active lessons,
+    {
+      "id": 458,
+      "title": "Lecția 3: Draft",
+      "isActive": false  // Visible only to ADMIN
+    }
+  ],
+  "count": 16
+}
+
+Authorization: AuthGuard('subscription-validation')
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- LessonsRepository.getLessonsByCourseId()
+
+Admin Privilege:
+- showAll = true → includes inactive lessons
+- Non-admin → only active lessons (isActive=true)
+
+Notes:
+- ADMIN vede TOATE lessons (active + inactive)
+- Non-admin vede DOAR active lessons
+- Useful pentru preview/draft lessons înainte de publishing
+- NU verifică access la parent course (presupune că courseId e valid)
+
+Posibile îmbunătățiri .NET:
+- ADD course access validation
+- ADD lesson status enum (DRAFT, ACTIVE, ARCHIVED)
+- Consider separate endpoint pentru draft lessons
+
+--------------------------------------------------------------------------------
+TASK 3: GET /v1/lesson/by-course/:courseId/featured
+--------------------------------------------------------------------------------
+
+Title: GET /v1/lesson/by-course/:courseId/featured
+
+Description:
+
+Business Logic:
+1. Returnează "featured" lesson pentru un course
+2. **Featured lesson**: probabil prima lecție sau lecția cu displayOrder minim
+3. Folosit pentru preview/intro lesson în course listing
+4. Returnează un singur lesson object (nu array)
+5. NU verifică access control
+
+Cod sursă:
+- Controller: src/v1/Lesson/Controller/lesson.controller.ts:51-56
+- Service: src/v1/Lesson/Service/lessons.service.ts:54-58
+
+Request:
+GET /v1/lesson/by-course/123/featured
+Headers: Authorization: Bearer {accessToken}
+
+Response (Success 200):
+{
+  "id": 456,
+  "title": "Introducere în Python",
+  "description": "Prima lecție din curs...",
+  "videoUrl": "https://vimeo.com/...",
+  "courseId": 123,
+  "displayOrder": 1,
+  "isActive": true,
+  "upVotes": 25,
+  "downVotes": 1
+}
+
+Response (Error 404 - no featured lesson):
+{
+  "statusCode": 404,
+  "message": "Featured lesson not found"
+}
+
+Authorization: AuthGuard('subscription-validation')
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- LessonsRepository.getFeaturedLessonByCourseId()
+
+Featured Lesson Selection Logic:
+- Probabil: MIN(displayOrder) WHERE isActive=true
+- Sau: explicit "isFeatured" flag în database
+- Folosit pentru course preview/intro
+
+Notes:
+- Returnează UN SINGUR lesson (nu array)
+- NU verifică access la parent course
+- Useful pentru "free preview" functionality
+- Poate returna null dacă nu există lessons active
+
+Posibile îmbunătățiri .NET:
+- ADD explicit "isFeatured" flag în LessonEntity
+- ALLOW multiple featured lessons per course
+- ADD free preview flag (allow access without subscription)
+
+--------------------------------------------------------------------------------
+TASK 4: GET /v1/lesson/all
+--------------------------------------------------------------------------------
+
+Title: GET /v1/lesson/all
+
+Description:
+
+Business Logic:
+1. Returnează lista paginată de TOATE lessons (cross-course)
+2. Query params: page, limit, tagIds, isActive, orderBy, orderDirection
+3. Access control complex (similar cu Course.all):
+   - ADMIN/STANDARD → vede toate lessons
+   - COURSE_BASED → filtrare după categorii permise (șterge slug și videoUrl pentru lessons fără access)
+4. Tag filtering: tagIds poate fi comma-separated (ex: "1,2,3")
+5. Returnează lessons cu parent course info
+
+Cod sursă:
+- Controller: src/v1/Lesson/Controller/lesson.controller.ts:58-65
+- Service: src/v1/Lesson/Service/lessons.service.ts:60-86
+
+Request:
+GET /v1/lesson/all?page=1&limit=20&tagIds=1,2&isActive=true&orderBy=createdAt&orderDirection=DESC
+Headers: Authorization: Bearer {accessToken}
+
+Query Parameters:
+- page (number, optional): default 1
+- limit (number, optional): default 20
+- tagIds (string, optional): comma-separated tag IDs (ex: "1,2,3")
+- isActive (boolean, optional): filter by active status
+- orderBy (string, optional): displayOrder, createdAt, title
+- orderDirection (string, optional): ASC sau DESC
+
+Response (Success 200):
+{
+  "lessons": [
+    {
+      "id": 456,
+      "title": "Variabile în Python",
+      "slug": "variabile-in-python",  // Removed for COURSE_BASED without access
+      "videoUrl": "...",  // Removed for COURSE_BASED without access
+      "courseId": 123,
+      "categoryId": 30,
+      "displayOrder": 1,
+      "isActive": true,
+      "tags": [1, 2],
+      "upVotes": 15,
+      "downVotes": 2
+    }
+  ],
+  "count": 50
+}
+
+Authorization: AuthGuard('subscription-validation')
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- LessonsRepository.getLessonList()
+- UserService.validateAccessToResources()
+- UserService.getCategoriesWithAccessFromSubs()
+
+Access Control Logic:
+1. Get user access level (ADMIN, STANDARD, COURSE_BASED, NO_ACCESS)
+2. Query lessons based on access level
+3. If COURSE_BASED:
+   - Get allowed categories from subscriptions
+   - For lessons NOT in allowed categories → delete slug și videoUrl
+4. Return filtered list
+
+Tag Filtering:
+- tagIds string e split by comma: "1,2,3" → [1, 2, 3]
+- Filter lessons având oricare din tag-urile specificate (OR logic)
+
+Notes:
+- Similar cu Course.all în terms de access control
+- Slug și videoUrl ȘTERSE pentru lessons fără access (nu hidden complet)
+- Tag filtering permite multi-tag search
+- Cross-course listing (toate lessons din toate courses)
+
+Posibile îmbunătățiri .NET:
+- ADD course info în response (title, author)
+- ADD category info
+- CONSIDER separate endpoint pentru lesson search
+- ADD full-text search în title/description
+
+--------------------------------------------------------------------------------
+TASK 5: PATCH /v1/lesson/:lessonId
+--------------------------------------------------------------------------------
+
+Title: PATCH /v1/lesson/:lessonId
+
+Description:
+
+Business Logic:
+1. Actualizează un lesson existent
+2. **NO EXPLICIT AUTHORIZATION CHECK** în controller (ar trebui ADMIN sau CREATOR)
+3. UpdateLessonDto fields: title, description, videoUrl, displayOrder, isActive
+4. Toate câmpurile sunt opționale (partial update)
+5. Verificare ownership probabil în repository layer
+6. Returnează updated lesson object
+
+Cod sursă:
+- Controller: src/v1/Lesson/Controller/lesson.controller.ts:67-74
+- Service: src/v1/Lesson/Service/lessons.service.ts:88-99
+
+Request:
+PATCH /v1/lesson/456
+Headers: Authorization: Bearer {accessToken}
+Body:
+{
+  "title": "Variabile și Tipuri (Updated)",  // Optional
+  "description": "Updated description",  // Optional
+  "videoUrl": "https://vimeo.com/new-video",  // Optional
+  "displayOrder": 2,  // Optional
+  "isActive": true  // Optional
+}
+
+Response (Success 200):
+{
+  "id": 456,
+  "title": "Variabile și Tipuri (Updated)",
+  "description": "Updated description",
+  "videoUrl": "https://vimeo.com/new-video",
+  "displayOrder": 2,
+  "isActive": true,
+  "updatedAt": "2024-01-20T11:00:00.000Z"
+}
+
+Response (Error 404 - lesson not found):
+{
+  "statusCode": 404,
+  "message": "Lesson not found"
+}
+
+Response (Error 403 - unauthorized):
+{
+  "statusCode": 403,
+  "message": "Not authorized to update this lesson"
+}
+
+Authorization: AuthGuard('subscription-validation')
+Note: NO @Roles guard - authorization probabil în repository
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- LessonsRepository.updateLesson()
+
+UpdateLessonDto Fields (all optional):
+- title: string
+- description: string
+- videoUrl: string
+- displayOrder: number
+- isActive: boolean
+
+Notes:
+- **NO @Roles guard** în controller
+- Authorization check probabil în repository (verify ownership sau admin)
+- Partial update - doar câmpurile din request sunt actualizate
+- NU re-generează slug (lesson nu are slug auto-generate ca Course)
+
+Posibile îmbunătățiri .NET:
+- ADD @Roles guard (ADMIN sau CREATOR)
+- ADD explicit ownership check
+- ADD validation că videoUrl e valid Vimeo URL
+- ADD audit log pentru updates
+
+--------------------------------------------------------------------------------
+TASK 6: POST /v1/lesson/up-vote/:lessonId
+--------------------------------------------------------------------------------
+
+Title: POST /v1/lesson/up-vote/:lessonId
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru USER role
+2. User dă upvote la un lesson
+3. Incrementează upVotes count pentru lesson
+4. Dacă user a votat deja (upvote sau downvote), comportamentul depinde de implementare
+5. Returnează success message (nu returnează lesson object cu vote counts)
+
+Cod sursă:
+- Controller: src/v1/Lesson/Controller/lesson.controller.ts:76-83
+- Service: src/v1/Lesson/Service/lessons.service.ts:133-140
+
+Request:
+POST /v1/lesson/up-vote/456
+Headers: Authorization: Bearer {accessToken}
+Body: {} (empty)
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Lesson has been voted"
+}
+
+Response (Error 404 - lesson not found):
+{
+  "statusCode": 404,
+  "message": "Lesson not found"
+}
+
+Response (Error 403 - not USER role):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+
+Authorization:
+- AuthGuard('subscription-validation')
+- @Roles(UserRoles.USER) - DOAR USER (nu ADMIN)
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- LessonsRepository.voteLesson(lessonId, isUpVoted=true, userId)
+
+Voting Logic:
+- isUpVoted = true (upvote)
+- Vote e asociat cu userId (nu anonim)
+- Dacă user a votat deja, probabil UPDATE vote (nu error)
+
+Notes:
+- DOAR USER role poate vota (ADMIN nu poate - logic ciudată)
+- Nu returnează vote counts în response
+- Pentru a vedea vote counts, trebuie GET lesson
+- Voting e per-user (un user = un vote)
+
+Posibile îmbunătățiri .NET:
+- ALLOW ADMIN să voteze also
+- RETURN updated vote counts în response
+- ADD validation: un user poate vota doar o dată
+- ADD vote history tracking
+
+--------------------------------------------------------------------------------
+TASK 7: POST /v1/lesson/down-vote/:lessonId
+--------------------------------------------------------------------------------
+
+Title: POST /v1/lesson/down-vote/:lessonId
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru USER role
+2. User dă downvote la un lesson
+3. Incrementează downVotes count pentru lesson
+4. Dacă user a upvotat deja, switch to downvote (sau error - depinde de implementare)
+5. Returnează success message
+
+Cod sursă:
+- Controller: src/v1/Lesson/Controller/lesson.controller.ts:85-92
+- Service: src/v1/Lesson/Service/lessons.service.ts:133-140
+
+Request:
+POST /v1/lesson/down-vote/456
+Headers: Authorization: Bearer {accessToken}
+Body: {} (empty)
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Lesson has been voted"
+}
+
+Response (Error 404 - lesson not found):
+{
+  "statusCode": 404,
+  "message": "Lesson not found"
+}
+
+Response (Error 403 - not USER role):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+
+Authorization:
+- AuthGuard('subscription-validation')
+- @Roles(UserRoles.USER) - DOAR USER
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- LessonsRepository.voteLesson(lessonId, isUpVoted=false, userId)
+
+Voting Logic:
+- isUpVoted = false (downvote)
+- Vote e asociat cu userId
+- Dacă user a upvotat deja, probabil switch to downvote
+
+Notes:
+- Identical cu up-vote endpoint, doar isUpVoted=false
+- Same message pentru up și down vote
+- DOAR USER role
+
+Posibile îmbunătățiri .NET:
+- Same ca up-vote
+- Consider unified endpoint: POST /vote cu body { voteType: "up" | "down" }
+
+--------------------------------------------------------------------------------
+TASK 8: POST /v1/lesson/undo-vote/:lessonId
+--------------------------------------------------------------------------------
+
+Title: POST /v1/lesson/undo-vote/:lessonId
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru USER role
+2. User-ul poate anula vote-ul existent (upvote sau downvote)
+3. Primește isUpVoted în body pentru a știi ce tip de vote să șteargă
+4. Decrementează upVotes sau downVotes count
+5. Returnează success message
+
+Cod sursă:
+- Controller: src/v1/Lesson/Controller/lesson.controller.ts:94-106
+- Service: src/v1/Lesson/Service/lessons.service.ts:120-131
+
+Request:
+POST /v1/lesson/undo-vote/456
+Headers: Authorization: Bearer {accessToken}
+Body:
+{
+  "isUpVoted": "true"  // String: "true" for upvote undo, "false" for downvote undo
+}
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Lesson has been un voted"
+}
+
+Response (Error 404 - lesson not found):
+{
+  "statusCode": 404,
+  "message": "Lesson not found"
+}
+
+Response (Error 400 - no vote to undo):
+{
+  "statusCode": 400,
+  "message": "User has not voted on this lesson"
+}
+
+Response (Error 403 - not USER role):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+
+Authorization:
+- AuthGuard('subscription-validation')
+- @Roles(UserRoles.USER) - DOAR USER
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- LessonsRepository.undoVoteOfLesson(lessonId, isUpVoted, userId)
+
+Undo Logic:
+- isUpVoted = "true" (string!) → șterge upvote
+- isUpVoted = "false" (string!) → șterge downvote
+- String comparison: isUpVoted === 'true' (convert to boolean)
+
+Notes:
+- **isUpVoted e STRING** în body, nu boolean
+- Controller convertește la boolean: isUpVoted === 'true'
+- Message: "un voted" (typo - ar trebui "unvoted")
+- Nu returnează updated vote counts
+
+Posibile îmbunătățiri .NET:
+- CHANGE isUpVoted la boolean type (nu string)
+- FIX typo: "unvoted" (nu "un voted")
+- AUTO-DETECT vote type (nu necesită isUpVoted param)
+- RETURN updated vote counts
+
+--------------------------------------------------------------------------------
+TASK 9: POST /v1/lesson
+--------------------------------------------------------------------------------
+
+Title: POST /v1/lesson
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru ADMIN role
+2. Creează un lesson nou într-un course existent
+3. Validare description: nu poate fi doar whitespace
+4. **AUTO-INCREMENT lesson count** în parent course (+1)
+5. Verifică dacă course-ul există (aruncă error dacă nu)
+6. Creează lesson în baza de date
+7. Returnează created lesson object
+
+Cod sursă:
+- Controller: src/v1/Lesson/Controller/lesson.controller.ts:108-115
+- Service: src/v1/Lesson/Service/lessons.service.ts:101-118
+
+Request:
+POST /v1/lesson
+Headers: Authorization: Bearer {accessToken}
+Body:
+{
+  "title": "Lecția 5: Funcții în Python",
+  "description": "În această lecție învățăm despre funcții...",
+  "courseId": 123,
+  "videoUrl": "https://vimeo.com/...",  // Optional
+  "displayOrder": 5,
+  "isActive": true
+}
+
+Response (Success 201):
+{
+  "id": 789,
+  "title": "Lecția 5: Funcții în Python",
+  "description": "În această lecție învățăm despre funcții...",
+  "courseId": 123,
+  "videoUrl": "https://vimeo.com/...",
+  "displayOrder": 5,
+  "isActive": true,
+  "upVotes": 0,
+  "downVotes": 0,
+  "createdAt": "2024-01-20T10:30:00.000Z"
+}
+
+Response (Error 400 - whitespace description):
+{
+  "statusCode": 400,
+  "message": "Lesson text can not be whitespace"
+}
+
+Response (Error 404 - course not found):
+{
+  "statusCode": 404,
+  "message": "Course could not found by given id"
+}
+
+Authorization:
+- AuthGuard('subscription-validation')
+- @Roles(UserRoles.ADMIN) - DOAR ADMIN
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- CourseService.updateLessonsCount(courseId, +1) - increment count
+- LessonsRepository.createLesson()
+
+CreateLessonDto Fields:
+- title: string (required)
+- description: string (required, trimmed, non-whitespace)
+- courseId: number (required, must exist)
+- videoUrl: string (optional)
+- displayOrder: number (optional)
+- isActive: boolean (optional, default false)
+
+Lesson Count Auto-Update:
+- BEFORE create: verifică dacă course există (via updateLessonsCount)
+- updateLessonsCount incrementează course.lessonCount cu 1
+- Dacă course nu există → aruncă NotFoundException
+
+Notes:
+- Description e trimmed de whitespace (replace /^\s+|\s+$/g, '')
+- authorId = authUser.id (creator-ul lesson-ului)
+- Lesson count în course e AUTO-MANAGED
+- videoUrl e opțional (poate fi adăugat mai târziu)
+
+Posibile îmbunătățiri .NET:
+- ADD slug generation (similar cu Course)
+- ADD validation pentru displayOrder unique per course
+- ADD default displayOrder = MAX(displayOrder) + 1
+- CONSIDER @Roles(CREATOR) also (nu doar ADMIN)
+
+--------------------------------------------------------------------------------
+TASK 10: DELETE /v1/lesson/:lessonId
+--------------------------------------------------------------------------------
+
+Title: DELETE /v1/lesson/:lessonId
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru ADMIN role
+2. Șterge un lesson din baza de date
+3. **AUTO-DECREMENT lesson count** în parent course (-1)
+4. Ownership check probabil în repository (admin sau creator)
+5. Returnează success message
+6. NU afectează alte entități (votes rămân în DB - posibil orphan data)
+
+Cod sursă:
+- Controller: src/v1/Lesson/Controller/lesson.controller.ts:117-124
+- Service: src/v1/Lesson/Service/lessons.service.ts:142-154
+
+Request:
+DELETE /v1/lesson/456
+Headers: Authorization: Bearer {accessToken}
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Lesson has been deleted"
+}
+
+Response (Error 404 - lesson not found):
+{
+  "statusCode": 404,
+  "message": "Lesson not found"
+}
+
+Response (Error 403 - not authorized):
+{
+  "statusCode": 403,
+  "message": "Not authorized to delete this lesson"
+}
+
+Authorization:
+- AuthGuard('subscription-validation')
+- @Roles(UserRoles.ADMIN) - DOAR ADMIN
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- LessonsRepository.deleteLesson(authorId, role, lessonId)
+- CourseService.updateLessonsCount(courseId, -1) - decrement count
+
+Delete Flow:
+1. Delete lesson from database (ownership check în repository)
+2. Get lesson.courseId from deleted lesson
+3. Decrement course.lessonCount by 1
+4. Return success message
+
+Lesson Count Auto-Update:
+- AFTER delete: decrement course.lessonCount cu 1
+- Course lessonCount e întotdeauna sync cu numărul real de lessons
+
+Notes:
+- Ownership check: admin SAU lesson.authorId === authUser.id
+- Vote data probabil rămâne în DB (orphan votes)
+- Analytics data pentru lesson probabil rămâne (orphan)
+
+Posibile îmbunătățiri .NET:
+- ADD cascade delete pentru votes
+- ADD cascade delete pentru analytics
+- ADD soft delete option (isDeleted flag)
+- ADD confirmation step
+
+--------------------------------------------------------------------------------
+TASK 11: DELETE /v1/lesson/all/:courseId
+--------------------------------------------------------------------------------
+
+Title: DELETE /v1/lesson/all/:courseId
+
+Description:
+
+Business Logic:
+1. Endpoint disponibil DOAR pentru ADMIN role
+2. Șterge TOATE lessons dintr-un course specific (BULK DELETE)
+3. Folosit când se șterge un course (cascade delete)
+4. **NU actualizează lesson count** în course (presupune că course-ul e șters anyway)
+5. Returnează success message cu courseId
+
+Cod sursă:
+- Controller: src/v1/Lesson/Controller/lesson.controller.ts:126-132
+- Service: src/v1/Lesson/Service/lessons.service.ts:170-173
+
+Request:
+DELETE /v1/lesson/all/123
+Headers: Authorization: Bearer {accessToken}
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Lessons of 123 has been deleted"
+}
+
+Response (Error 403 - not admin):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+
+Authorization:
+- AuthGuard('subscription-validation')
+- @Roles(UserRoles.ADMIN) - DOAR ADMIN
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- LessonsRepository.deleteLessonsBelongsToCourse(courseId)
+
+Bulk Delete Logic:
+- DELETE FROM lessons WHERE courseId = {courseId}
+- NU verifică dacă course există
+- NU actualizează course.lessonCount (presupune cascade delete de la course)
+
+Usage:
+- Called by CourseService.deleteCourse() înainte de course delete
+- Ensures toate lessons sunt șterse ÎNAINTE de course
+
+Notes:
+- DANGEROUS endpoint - șterge toate lessons dintr-o dată
+- NU necesită confirmation
+- Message include courseId pentru clarity
+- Votes și analytics pentru lessons probabil rămân (orphan data)
+
+Posibile îmbunătățiri .NET:
+- ADD confirmation parameter (requireConfirmation=true)
+- RETURN count of deleted lessons
+- ADD cascade delete pentru votes și analytics
+- ADD transaction support (rollback if fails)
+
+================================================================================
+END OF STORY
+================================================================================
+
+Summary:
+- Total Tasks: 11 (nu 7 cum e listat inițial)
+- Total Endpoints: 11 (4 GET, 3 POST vote-related, 1 POST create, 1 PATCH, 2 DELETE)
+- Complex Features: Voting system (upvote/downvote/undo), access control similar cu Course, auto-update lesson count, featured lesson
+- Security Issues: GET lesson no access check, PATCH no @Roles guard
+- Auto-management: Lesson count în parent course e auto-updated
+
+Migration Priority: MEDIUM-HIGH (dependent de Course Module, voting system important)
+Estimated Story Points: 21
+
+Special Notes:
+- Voting system cu upvote/downvote/undo
+- Access control filtering (șterge slug/videoUrl pentru lessons fără access)
+- Auto-increment/decrement lesson count în parent course
+- Featured lesson selection pentru preview
+- Bulk delete pentru course cascade
+- NO slug generation (diferit de Course)
+- Tag filtering support în lesson list
+- Vote counts per lesson (upVotes, downVotes separate)
+
+Critical Issues:
+1. GET /lesson/:lessonId nu verifică access control
+2. PATCH /lesson/:lessonId nu are @Roles guard
+3. Voting doar pentru USER role (nu ADMIN - logic ciudată)
+4. isUpVoted e string în undo-vote body (ar trebui boolean)
+5. Typo în message: "un voted" (ar trebui "unvoted")
+6. Votes și analytics nu sunt cascade-deleted (orphan data)

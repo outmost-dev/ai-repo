@@ -1,0 +1,1894 @@
+================================================================================
+JIRA STORY - ADMIN DASHBOARD: CATEGORIES MANAGEMENT MODULE
+================================================================================
+
+Story Title: Categories Management Module - React to Vue.js Migration
+
+Story Type: Story (Module-Level)
+
+Priority: HIGH
+
+Labels: admin-dashboard, categories-management, react-to-vue, migration, hierarchical-structure
+
+Epic Link: Admin Dashboard Migration
+
+================================================================================
+STORY DESCRIPTION
+================================================================================
+
+Modulul Categories Management gestionează categoriile în mod ierarhic (parent-child
+relationships), inclusiv CRUD (Create, Read, Update, Delete), navigare între nivele
+de ierarhie, tipuri de categorii (cursuri, taguri, abonamente), și flag pentru
+vizibilitate în filtre.
+
+**Caracteristici principale:**
+- Vizualizare listă categorii pentru un nivel ierarhic specific (identificat prin pageCategoryId în URL)
+- Creare și editare categorii cu validare
+- Structură ierarhică (parent-child) cu navigare între nivele
+- 3 tipuri de categorii: 1 = Categorii Cursuri (green), 2 = Taguri (purple), 3 = Abonamente
+- isOnFilter flag pentru vizibilitate pe dashboard în filtre
+- Sub-categories count + navigare la /dashboards/categories/:parentId
+- Ștergere cu confirmare
+- Statistici despre categorii (total categories = real data, rest = mock)
+- Drawer pentru formular (responsive: 640px desktop, 100% mobile)
+- Sync real-time a datelor după operațiuni CRUD
+- Parent category selection (main categories only)
+
+**Locație cod sursă:**
+- Page: admin/src/pages/dashboards/Categories.tsx
+- Table Component: admin/src/components/dashboard/categories/CategoriesCard/CategoriesCard.tsx
+- Form Component: admin/src/components/dashboard/categories/CategoriesForm/CategoriesForm.tsx
+- API Service: admin/src/utils/apiService.tsx (getMainCategoriesApi, handlePushCategoryApi, handleDeleteCategoryApi)
+- Types: admin/src/types/categories.ts
+
+**Endpoints utilizate:**
+- GET /v1/categories/:parentCategoryId (or MAIN for root level) - Get categories by parent
+- POST /v1/categories - Create category
+- PATCH /v1/categories/:id - Update category
+- DELETE /v1/categories/:id - Delete category
+
+**Dependencies:**
+- None (Categories este independent module, dar folosit de Courses și Lessons pentru tags)
+
+**Tech Stack (Current - React):**
+- React 18.2.0 + TypeScript 5.0.2
+- Ant Design 5.20.1 (Table, Drawer, Form, Select, Radio, Tag)
+- dayjs (date formatting)
+- react-responsive (useMediaQuery)
+- React Router (useParams pentru pageCategoryId)
+
+**Tech Stack (Target - Vue.js 3):**
+- Vue 3.4+ Composition API
+- Ant Design Vue 4.x
+- dayjs (same)
+- @vueuse/core (useMediaQuery → useBreakpoints)
+- Vue Router (useRoute pentru pageCategoryId)
+
+**Category Type:**
+```typescript
+type Category = {
+  id?: number;
+  parentCategoryId?: number;
+  title: string;
+  description: string;
+  type?: string; // '1' = Cursuri, '2' = Taguri, '3' = Abonamente
+  isOnFilter?: boolean; // Vizibilă în dashboard filters
+  ancestors?: string[]; // Array of ancestor IDs (hierarchical path)
+  children?: Category[]; // Child categories
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+```
+
+**Notes:**
+- **Hierarchical Navigation**: pageCategoryId din URL determină ce nivel de ierarhie să afișeze
+- **MAIN Constant**: "-1" sau "main" pentru root level categories (fără parent)
+- **syncAfterCreate Logic**: Doar adaugă în UI dacă newRecord.parentCategoryId === pageCategoryId (prevents showing children of other parents)
+- **Type Values**: 1 (green tag), 2 (purple tag), 3 (not used in UI currently)
+- **isOnFilter**: Boolean flag pentru vizibilitate pe dashboard în filtre (afișat ca blue tag "[pe filtru]")
+- **Children Count**: Afișat în tabel ca link către sub-categories (/dashboards/categories/:parentId)
+- **Parent Selection**: Dropdown cu main categories only (nu permite nested parents - simplificare)
+
+================================================================================
+TASKS (8 COMPONENTS / FEATURES)
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 1: Categories Page Layout & Hierarchical Navigation
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Pagina Categories Management afișează categoriile pentru un nivel ierarhic specific
+(identificat prin pageCategoryId în URL). Utilizatorul vede statistici despre categorii
+în partea de sus, apoi tabelul cu categorii în centru. Click pe "children count" →
+navighează la sub-categoriile acelei categorii (un nivel mai adânc în ierarhie).
+
+**User Flow:**
+1. Admin navighează la /dashboards/categories (root level, pageCategoryId = undefined)
+2. Sistemul încarcă toate categoriile root (GET /v1/categories/main sau /v1/categories/-1)
+3. Se afișează 4 stats cards (total categories = real, rest = mock data)
+4. Se afișează tabelul cu categorii root
+5. Admin click pe "children count" (ex: 5) → navighează la /dashboards/categories/:parentId
+6. Sistemul încarcă sub-categoriile pentru acel parent (GET /v1/categories/:parentId)
+7. Admin poate crea/edita/șterge categorii la orice nivel
+
+**Cod sursă:**
+- File: admin/src/pages/dashboards/Categories.tsx:1-219
+- Main states: categoriesData, modalAction, categoryToUpdate, editModalWidth, pageCategoryId (from URL)
+- Hooks: useParams (pageCategoryId), useMediaQuery (responsive), useAuth (JWT token)
+
+**Current Implementation (React):**
+```typescript
+import { useState, useEffect, useCallback } from 'react';
+import { useParams } from 'react-router-dom';
+import { useMediaQuery } from 'react-responsive';
+import { getMainCategoriesApi, handleDeleteCategoryApi } from '../../utils/apiService';
+
+export const CategoriesDashboardPage = () => {
+  const { pageCategoryId } = useParams(); // pageCategoryId from URL (or undefined for root)
+  const { authUser, countUsers } = useAuth();
+  const [editModalWidth, setEditModalWidth] = useState<string>();
+  const [modalAction, setModalAction] = useState<MODAL_ACTIONS>(CLOSE);
+  const [categoryToUpdate, setCategoryToUpdate] = useState<Category>();
+  const [loading, setLoading] = useState(true);
+  const [categoriesData, setCategoryData] = useState<Category[]>([]);
+
+  const isLarge = useMediaQuery({ minWidth: 960 });
+
+  useEffect(() => {
+    if (isLarge) {
+      setEditModalWidth('640');
+    } else {
+      setEditModalWidth('100%');
+    }
+  }, [isLarge]);
+
+  useEffect(() => {
+    // Fetch categories for this level (pageCategoryId = parent, or MAIN for root)
+    getMainCategoriesApi(pageCategoryId, setLoading, authUser?.accessToken ?? "").then((res: ResponseT) => {
+      if ([200, 201].includes(res?.status)) {
+        const categoriesData = (res.data as CategoryResponse)?.categories;
+        setCategoryData(categoriesData);
+      }
+    });
+  }, []);
+
+  const handleDeleteCategory = useCallback(async (recordId: number) => {
+    const res: ResponseT = await handleDeleteCategoryApi(recordId) as ResponseT;
+    if ([200, 201].includes(res?.status)) {
+      syncAfterDelete(recordId);
+      message.open({ 'type': 'success', 'content': `Category ${recordId} deleted successfully` });
+    } else {
+      message.open({ 'type': 'error', 'content': `Category ${recordId} cannot be deleted` });
+    }
+  }, []);
+
+  const handleEditModal = (action: MODAL_ACTIONS, handledRecord?: Category) => {
+    setModalAction(action);
+    setCategoryToUpdate(handledRecord);
+
+    if (action === SYNC && handledRecord) {
+      syncAfterUpdate(handledRecord as Category);
+      setModalAction(CLOSE);
+      setCategoryToUpdate(undefined);
+    }
+    if (action === CREATE && handledRecord) {
+      syncAfterCreate(handledRecord as Category);
+      setModalAction(CLOSE);
+      setCategoryToUpdate(undefined);
+    }
+  }
+
+  const syncAfterUpdate = (newRecord: Category) => {
+    setCategoryData(prevState => prevState?.map(item =>
+      Number(item.id) === Number(newRecord?.id) ? newRecord : item
+    ));
+  }
+
+  const syncAfterCreate = (newRecord: Category) => {
+    // IMPORTANT: Only add if newRecord belongs to current page level
+    if (newRecord?.parentCategoryId?.toString() === pageCategoryId?.toString()) {
+      setCategoryData(prevState => [newRecord, ...prevState]);
+    }
+  }
+
+  const syncAfterDelete = (recordId: number) => {
+    setCategoryData(prevState => prevState?.filter(item => item.id !== recordId));
+  }
+
+  return (
+    <div>
+      <Helmet>
+        <title>Categorii | Dashboard</title>
+      </Helmet>
+      <PageHeader
+        title="Categorii | dashboard"
+        breadcrumbs={[...]}
+      />
+      <Row {...stylesContext?.rowProps}>
+        <Col xs={24} xl={24}>
+          <Row {...stylesContext?.rowProps}>
+            {/* 4 Stats Cards */}
+            <Col xs={24} sm={12} xl={6}>
+              <LearningStatsCard
+                title="Categorii prezente în platformă"
+                value={categoriesData?.length}
+                icon={SafetyCertificateOutlined}
+                color="blue"
+                progress={76}
+                style={{ height: '100%' }}
+              />
+            </Col>
+            {/* ... 3 more stats cards with mock data ... */}
+
+            <Col span={24}>
+              <CategoriesCard
+                data={categoriesData}
+                loading={loading}
+                handleEditModal={handleEditModal}
+                handleDeleteCategory={handleDeleteCategory}
+              />
+            </Col>
+          </Row>
+        </Col>
+      </Row>
+
+      <Drawer
+        title={`${modalAction === UPDATE ? 'Updateaza' : 'Creeaza'} o categorie`}
+        width={editModalWidth}
+        placement="right"
+        open={modalAction !== CLOSE}
+        onClose={() => handleEditModal(CLOSE)}
+      >
+        {!!((categoryToUpdate) || modalAction === CREATE) && (
+          <CategoriesForm
+            recordToUpdate={categoryToUpdate}
+            pageCategoryId={pageCategoryId}
+            handleEditModal={handleEditModal}
+          />
+        )}
+      </Drawer>
+    </div>
+  );
+};
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useBreakpoints } from '@vueuse/core'
+import { message } from 'ant-design-vue'
+import { getMainCategoriesApi, handleDeleteCategoryApi } from '@/utils/apiService'
+import { useAuthStore } from '@/stores/auth'
+import type { Category, CategoryResponse, ResponseT } from '@/types'
+
+const route = useRoute()
+const router = useRouter()
+const authStore = useAuthStore()
+
+// Reactive state
+const pageCategoryId = computed(() => route.params.pageCategoryId as string | undefined)
+const modalAction = ref<MODAL_ACTIONS>('CLOSE')
+const categoryToUpdate = ref<Category | undefined>()
+const loading = ref(true)
+const categoriesData = ref<Category[]>([])
+
+// Responsive drawer width
+const breakpoints = useBreakpoints({ large: 960 })
+const isLarge = breakpoints.greaterOrEqual('large')
+const editModalWidth = computed(() => isLarge.value ? '640px' : '100%')
+
+// Fetch categories for this level
+const fetchCategories = async () => {
+  try {
+    loading.value = true
+    const res = await getMainCategoriesApi(
+      pageCategoryId.value,
+      authStore.accessToken
+    ) as ResponseT
+
+    if ([200, 201].includes(res?.status)) {
+      categoriesData.value = (res.data as CategoryResponse)?.categories
+    }
+  } catch (error) {
+    message.error('Failed to load categories')
+    console.error(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+// Delete category
+const handleDeleteCategory = async (recordId: number) => {
+  try {
+    const res = await handleDeleteCategoryApi(recordId) as ResponseT
+    if ([200, 201].includes(res?.status)) {
+      syncAfterDelete(recordId)
+      message.success(`Category ${recordId} deleted successfully`)
+    } else {
+      message.error(`Category ${recordId} cannot be deleted`)
+    }
+  } catch (error) {
+    message.error('Failed to delete category')
+    console.error(error)
+  }
+}
+
+// Handle modal actions
+const handleEditModal = (action: MODAL_ACTIONS, handledRecord?: Category) => {
+  modalAction.value = action
+  categoryToUpdate.value = handledRecord
+
+  if (action === 'SYNC' && handledRecord) {
+    syncAfterUpdate(handledRecord)
+    modalAction.value = 'CLOSE'
+    categoryToUpdate.value = undefined
+  }
+  if (action === 'CREATE' && handledRecord) {
+    syncAfterCreate(handledRecord)
+    modalAction.value = 'CLOSE'
+    categoryToUpdate.value = undefined
+  }
+}
+
+// Sync methods
+const syncAfterUpdate = (newRecord: Category) => {
+  categoriesData.value = categoriesData.value.map(item =>
+    Number(item.id) === Number(newRecord?.id) ? newRecord : item
+  )
+}
+
+const syncAfterCreate = (newRecord: Category) => {
+  // IMPORTANT: Only add if newRecord belongs to current page level
+  if (newRecord?.parentCategoryId?.toString() === pageCategoryId.value?.toString()) {
+    categoriesData.value = [newRecord, ...categoriesData.value]
+  }
+}
+
+const syncAfterDelete = (recordId: number) => {
+  categoriesData.value = categoriesData.value.filter(item => item.id !== recordId)
+}
+
+onMounted(() => {
+  fetchCategories()
+})
+
+// Watch pageCategoryId changes (when navigating between levels)
+watch(() => route.params.pageCategoryId, () => {
+  fetchCategories()
+})
+</script>
+
+<template>
+  <div>
+    <a-page-header
+      title="Categorii | dashboard"
+      :breadcrumb="breadcrumbs"
+    />
+
+    <a-row :gutter="[16, 16]">
+      <a-col :xs="24" :xl="24">
+        <a-row :gutter="[16, 16]">
+          <!-- 4 Stats Cards -->
+          <a-col :xs="24" :sm="12" :xl="6">
+            <LearningStatsCard
+              title="Categorii prezente în platformă"
+              :value="categoriesData.length"
+              icon="SafetyCertificateOutlined"
+              color="blue"
+              :progress="76"
+              style="height: 100%"
+            />
+          </a-col>
+          <!-- ... 3 more stats cards with mock data ... -->
+
+          <a-col :span="24">
+            <CategoriesCard
+              :data="categoriesData"
+              :loading="loading"
+              :handleEditModal="handleEditModal"
+              :handleDeleteCategory="handleDeleteCategory"
+            />
+          </a-col>
+        </a-row>
+      </a-col>
+    </a-row>
+
+    <!-- Drawer pentru formular -->
+    <a-drawer
+      :title="`${modalAction === 'UPDATE' ? 'Updateaza' : 'Creeaza'} o categorie`"
+      :width="editModalWidth"
+      placement="right"
+      :open="modalAction !== 'CLOSE'"
+      @close="handleEditModal('CLOSE')"
+    >
+      <CategoriesForm
+        v-if="categoryToUpdate || modalAction === 'CREATE'"
+        :recordToUpdate="categoryToUpdate"
+        :pageCategoryId="pageCategoryId"
+        :handleEditModal="handleEditModal"
+      />
+    </a-drawer>
+  </div>
+</template>
+```
+
+**Notes:**
+- **pageCategoryId**: Undefined pentru root level, sau ID pentru sub-categories
+- **Hierarchical Navigation**: Click pe children count → router.push(`/dashboards/categories/${parentId}`)
+- **syncAfterCreate Logic**: CRITICAL - doar adaugă în UI dacă newRecord.parentCategoryId === pageCategoryId (prevents pollution)
+- **Watch Route Changes**: Trebuie să watch pageCategoryId și să fetch categories la schimbare (pentru navigare între nivele)
+- **Stats Cards**: Primul card afișează număr real de categorii, restul sunt mock data
+
+**Recommendations:**
+1. **Breadcrumbs**: Afișează breadcrumbs cu ancestors pentru navigare înapoi (ex: Root > Category 1 > Subcategory)
+2. **Back Button**: Adaugă buton "Inapoi la nivel superior" pentru navigare up în ierarhie
+3. **URL State**: Folosește URL params pentru pageCategoryId (deja implementat)
+4. **Loading States**: Separate loading states pentru categories și stats
+5. **Empty State**: Afișează message când nu există categorii la acest nivel ("Nu există categorii. Creează prima categorie!")
+6. **Nested Levels Indicator**: Afișează în PageHeader la ce nivel te afli (ex: "Nivel 2 - Subcategorii")
+
+**Migration Complexity**: MEDIUM (hierarchical navigation, URL params, sync logic with parentCategoryId check)
+
+**Estimated Effort**: 1-2 zile (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 2: Categories Table with Hierarchical Navigation
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Tabelul afișează toate categoriile pentru nivelul curent, cu coloane pentru ID,
+titlu (clickable pentru edit), sub-categories count (clickable pentru navigare),
+tip (3 tipuri cu colored tags), isOnFilter flag, dată creare, și delete button.
+
+**User Flow:**
+1. Admin vede tabelul cu toate categoriile pentru nivelul curent
+2. Click pe titlu → deschide Drawer cu formular de editare
+3. Click pe "children count" (ex: 5) → navighează la /dashboards/categories/:parentId (vezi sub-categoriile)
+4. Type afișat ca colored tag: 1 = "categorii de cursuri" (green), 2 = "taguri" (purple)
+5. isOnFilter afișat ca blue tag "[pe filtru]" dacă true
+6. Click pe Delete → confirmă ștergerea → categoria este ștearsă
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/categories/CategoriesCard/CategoriesCard.tsx:1-100
+- Props: data (categories), loading, handleEditModal, handleDeleteCategory
+- Columns: 6 columns (ID, Title, Sub-categories, Type, Date, Delete)
+
+**Current Implementation (React):**
+```typescript
+import { Table, Button, Popconfirm, Tooltip, Tag } from 'antd/lib';
+import { PlusOutlined, DeleteOutlined, BarsOutlined } from '@ant-design/icons';
+import dayjs from 'dayjs';
+
+type Props = {
+  data?: Category[];
+  loading?: boolean;
+  handleEditModal: (modalAction: MODAL_ACTIONS, category?: Category) => void;
+  handleDeleteCategory: (categoryId: number) => void;
+} & CardProps;
+
+export const CategoriesCard = ({ data, loading, handleEditModal, handleDeleteCategory, ...others }: Props) => {
+
+  const CATEGORIES_COLUMNS: ColumnsType<Category> = [
+    {
+      title: '#Id',
+      dataIndex: 'id',
+      key: 'id',
+      render: (id: string) => <span className="text-capitalize">#{id}</span>,
+    },
+    {
+      title: 'Titlu',
+      dataIndex: 'title',
+      key: 'title',
+      render: (title: string, record: Category) => <a onClick={() => { handleEditModal(UPDATE, record) }}>
+        <Tooltip title="editeaza categoria" color="#999" mouseEnterDelay={0.3}>
+          <span className="text-capitalize">{title}</span>
+        </Tooltip>
+      </a>,
+    },
+    {
+      title: 'sub categorii',
+      dataIndex: 'children',
+      key: 'children',
+      render: (children: number, { id: parentCategoryId }) =>
+      (<>
+        <Tooltip title="vezi sub-categoriile" color="#999" mouseEnterDelay={0.3}>
+          <Button type="link" href={`/dashboards/categories/${parentCategoryId}`}>
+            <BarsOutlined />
+            {children}
+          </Button>
+        </Tooltip>
+      </>),
+    },
+    {
+      title: 'Tip',
+      dataIndex: 'type',
+      key: 'type',
+      render: (type: number, { isOnFilter }) => <><Tag color={Number(type) === 1 ? 'green' : 'purple'}>
+        {Number(type) === 1 && 'categorii de cursuri'}
+        {Number(type) === 2 && 'taguri'}
+        {Number(type) === 3 && 'de abonamente'}
+      </Tag>
+        {isOnFilter && <Tag color="blue">[pe filtru]</Tag>}
+      </>,
+    },
+    {
+      title: 'Data Crearii',
+      dataIndex: 'createdAt',
+      key: 'createdAt',
+      render: (createdAt: string) => <span className="text-capitalize">{dayjs(createdAt).format('DD.MM.YY')}</span>,
+    },
+    {
+      title: 'Delete',
+      dataIndex: 'delete',
+      key: 'delete',
+      render: (_: string, record: Category) => (
+        <Popconfirm title="Are you sure to delete this category?" onConfirm={() => handleDeleteCategory(record.id as number)} okText="Yes" cancelText="No" >
+          <Button type="link" danger>
+            <DeleteOutlined />
+          </Button>
+        </Popconfirm>
+      )
+    }
+  ];
+
+  return (
+    <Card
+      title="Lista Categorii"
+      extra={<Button icon={<PlusOutlined />} onClick={() => { handleEditModal(CREATE) }} />}
+      {...others}
+    >
+      <Table
+        dataSource={data?.length ? data : []}
+        columns={CATEGORIES_COLUMNS}
+        loading={loading}
+        className="overflow-scroll"
+        rowKey="id"
+      />
+    </Card>
+  );
+};
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { computed, h } from 'vue'
+import { Button, Tag, Popconfirm, Tooltip, type TableColumnsType } from 'ant-design-vue'
+import { PlusOutlined, DeleteOutlined, BarsOutlined } from '@ant-design/icons-vue'
+import dayjs from 'dayjs'
+import { useRouter } from 'vue-router'
+import type { Category } from '@/types'
+
+interface Props {
+  data?: Category[]
+  loading?: boolean
+  handleEditModal: (modalAction: string, category?: Category) => void
+  handleDeleteCategory: (categoryId: number) => void
+}
+
+const props = defineProps<Props>()
+const router = useRouter()
+
+const columns = computed<TableColumnsType<Category>>(() => [
+  {
+    title: '#Id',
+    dataIndex: 'id',
+    key: 'id',
+    customRender: ({ text }) => `#${text}`
+  },
+  {
+    title: 'Titlu',
+    dataIndex: 'title',
+    key: 'title',
+    customRender: ({ text, record }) => h(
+      Tooltip,
+      { title: 'editeaza categoria', color: '#999', mouseEnterDelay: 0.3 },
+      () => h('a', { onClick: () => props.handleEditModal('UPDATE', record) }, text)
+    )
+  },
+  {
+    title: 'sub categorii',
+    dataIndex: 'children',
+    key: 'children',
+    customRender: ({ text: childrenCount, record }) => {
+      if (!childrenCount || childrenCount === 0) return '-'
+
+      return h(
+        Tooltip,
+        { title: 'vezi sub-categoriile', color: '#999', mouseEnterDelay: 0.3 },
+        () => h(
+          Button,
+          {
+            type: 'link',
+            onClick: () => router.push(`/dashboards/categories/${record.id}`)
+          },
+          () => [h(BarsOutlined), ` ${childrenCount}`]
+        )
+      )
+    }
+  },
+  {
+    title: 'Tip',
+    dataIndex: 'type',
+    key: 'type',
+    customRender: ({ text: type, record }) => {
+      const typeNum = Number(type)
+      const tags = []
+
+      // Type tag
+      const typeLabel = typeNum === 1 ? 'categorii de cursuri' : typeNum === 2 ? 'taguri' : 'de abonamente'
+      const typeColor = typeNum === 1 ? 'green' : 'purple'
+      tags.push(h(Tag, { color: typeColor }, () => typeLabel))
+
+      // isOnFilter tag
+      if (record.isOnFilter) {
+        tags.push(h(Tag, { color: 'blue' }, () => '[pe filtru]'))
+      }
+
+      return tags
+    }
+  },
+  {
+    title: 'Data Crearii',
+    dataIndex: 'createdAt',
+    key: 'createdAt',
+    customRender: ({ text }) => dayjs(text).format('DD.MM.YY')
+  },
+  {
+    title: 'Delete',
+    dataIndex: 'delete',
+    key: 'delete',
+    customRender: ({ record }) => h(
+      Popconfirm,
+      {
+        title: 'Are you sure to delete this category?',
+        onConfirm: () => props.handleDeleteCategory(record.id as number),
+        okText: 'Yes',
+        cancelText: 'No'
+      },
+      () => h(Button, { type: 'link', danger: true }, () => h(DeleteOutlined))
+    )
+  }
+])
+
+const dataSource = computed(() => props.data?.length ? props.data : [])
+</script>
+
+<template>
+  <a-card title="Lista Categorii">
+    <template #extra>
+      <a-button :icon="h(PlusOutlined)" @click="handleEditModal('CREATE')" />
+    </template>
+
+    <a-table
+      :dataSource="dataSource"
+      :columns="columns"
+      :loading="loading"
+      class="overflow-scroll"
+      rowKey="id"
+    />
+  </a-card>
+</template>
+```
+
+**Notes:**
+- **Sub-categories Navigation**: href vs router.push - în Vue folosim router.push pentru programmatic navigation
+- **Type Tags**: 3 valori posibile (1 = green, 2 = purple, 3 = purple) + isOnFilter (blue)
+- **Children Count**: 0 sau undefined → afișează "-" (nu există sub-categorii)
+- **Hierarchical Link**: Click pe children count → navighează la /dashboards/categories/:parentId
+
+**Recommendations:**
+1. **Children Count 0**: Afișează "-" sau "0" în loc de link când nu există sub-categorii
+2. **Type 3**: Adaugă label pentru type 3 ("de abonamente") dacă e folosit
+3. **Sorting**: Adaugă sorting pentru Title și Date columns
+4. **Filter**: Adaugă filter pentru Type column (filtrare după tip: cursuri, taguri, abonamente)
+5. **isOnFilter Column**: Separează într-o coloană distinctă cu Badge (success/default) în loc de tag în Type column
+6. **Ancestors Display**: Opțional: afișează ancestors[] ca breadcrumb în fiecare row (pentru context)
+
+**Migration Complexity**: MEDIUM (6 columns, router navigation, multiple tags rendering)
+
+**Estimated Effort**: 3-4 ore (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 3: Category Form with Parent Selection & Type
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Formularul permite crearea și editarea categoriilor. Admin completează titlu,
+descriere, categorie părinte (select din main categories), tip (cursuri/taguri),
+și isOnFilter flag (vizibilitate în filtre). La submit, categoria este creată sau
+actualizată, iar UI-ul este sincronizat automat.
+
+**User Flow:**
+1. Admin click pe "+" sau pe titlu categorie → Drawer se deschide
+2. Formularul se populează cu date existente (edit mode) sau e gol (create mode)
+3. Admin completează toate câmpurile:
+   - Titlu (required, min 4 chars)
+   - Descriere (optional)
+   - Categorie Părinte (select: "No Parent" sau main categories)
+   - Tip (select: "Categorie Cursuri" sau "Taguri")
+   - isOnFilter (radio: "Visibila in filtru" sau "NU")
+4. Admin click "Salveaza" → validare → POST/PATCH request → success message → sync UI
+5. Drawer se închide automat după submit success
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/categories/CategoriesForm/CategoriesForm.tsx:1-169
+- Props: recordToUpdate (category to edit), handleEditModal (callback), pageCategoryId (current page level - default '-1')
+- Fields: id (hidden), title, description, parentCategoryId (select), type (select), isOnFilter (radio)
+- Validation: title (min 4 chars), type (required), isOnFilter (required)
+
+**Current Implementation (React):**
+```typescript
+import { Button, Col, Form, Input, message, Radio, Row, Select } from 'antd';
+import { SaveOutlined } from '@ant-design/icons';
+import { Category, ResponseT, SelectType } from '../../../../types';
+import { MODAL_ACTIONS, MAIN } from '../../../../constants';
+import { getMainCategoriesApi, handlePushCategoryApi } from '../../../../utils/apiService';
+import { useEffect, useState } from 'react';
+import { useAuth } from '../../../../context/auth';
+import { Loader } from '../../../Loader/Loader';
+
+export type CategoryFieldType = Category & { subscription: string };
+
+type Props = {
+  recordToUpdate: (Category | undefined),
+  handleEditModal: (action: MODAL_ACTIONS, newCategory?: Category) => void,
+  pageCategoryId?: string // Current page level (for default parent)
+}
+
+export const CategoriesForm = ({ recordToUpdate, handleEditModal, pageCategoryId = '-1' }: Props) => {
+
+  const [form] = Form.useForm();
+  const { authUser } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [categoryOptions, setCategoryOptions] = useState<SelectType[]>([]);
+  const categoryTypeOptions = [
+    { value: '1', label: 'Categorie Cursuri' },
+    { value: '2', label: 'Taguri' }
+  ];
+
+  useEffect(() => {
+    // Fetch main categories (root level) for parent selection
+    getMainCategoriesApi(MAIN, undefined, authUser?.accessToken ?? "").then((res: ResponseT) => {
+      if ([200, 201].includes(res?.status)) {
+        const categoriesData = (res.data as CategoryResponse)?.categories;
+        setCategoryOptions([
+          ...[{ value: '-1', label: 'No Parent' }],
+          ...(categoriesData.map((category) => ({
+            value: category.id?.toString() ?? '-1',
+            label: category.title
+          })))
+        ]);
+        setLoading(false);
+      }
+    });
+  }, []);
+
+  const onFinish = async (formBody: CategoryFieldType) => {
+    const fetchMethod = formBody?.id ? 'PATCH' : 'POST';
+    formBody.isOnFilter = formBody.isOnFilter?.toString() === 'true';
+
+    const res: ResponseT = await handlePushCategoryApi(fetchMethod, formBody) as unknown as ResponseT;
+
+    if ([200, 201].includes(res?.status)) {
+      const modalAction = formBody?.id ? SYNC : CREATE;
+      handleEditModal(modalAction, res.data as unknown as Category);
+
+      message.open({
+        type: 'success',
+        content: `Category ${(res.data as unknown as Category).id} ${formBody?.id ? 'updated' : 'created'} successfully`
+      });
+      console.log('Success:', (res.data as unknown as Category).id);
+    } else {
+      console.log('Failed:', res);
+    }
+  };
+
+  const onFinishFailed = (errorInfo: unknown) => {
+    console.log('Failed:', errorInfo);
+    message.open({
+      type: 'error',
+      content: 'Could not save category details. Please try again later!',
+    });
+  };
+
+  return (
+    !loading &&
+    <Form
+      form={form}
+      name="category-form"
+      layout="vertical"
+      initialValues={
+        (recordToUpdate && ({
+          id: recordToUpdate?.id,
+          title: recordToUpdate?.title,
+          description: recordToUpdate?.description,
+          parentCategoryId: pageCategoryId.toString() || '-1', // Use current page level as default parent
+          type: recordToUpdate?.type?.toString() ?? '1',
+          isOnFilter: recordToUpdate?.isOnFilter ? 'true' : 'false'
+        })) || {}}
+      onFinish={onFinish}
+      onFinishFailed={onFinishFailed}
+      autoComplete="on"
+      requiredMark={false}
+    >
+      <Row gutter={[16, 0]}>
+        <Form.Item<CategoryFieldType> name="id">
+          <Input type="hidden" />
+        </Form.Item>
+
+        <Col sm={24} lg={24}>
+          <Form.Item<CategoryFieldType>
+            label="Titlu"
+            name="title"
+            rules={[{ required: true, min: 4, message: 'Please input category title!' }]}
+          >
+            <Input />
+          </Form.Item>
+        </Col>
+
+        <Col sm={24} lg={24}>
+          <Form.Item<CategoryFieldType>
+            label="Descriere"
+            name="description"
+            rules={[]}
+          >
+            <Input type="textarea" />
+          </Form.Item>
+        </Col>
+
+        <Col sm={24} lg={12}>
+          {loading ? (
+            <Loader />) :
+            <Form.Item<CategoryFieldType>
+              label="Categorie Parinte"
+              name="parentCategoryId"
+            >
+              <Select options={categoryOptions} />
+            </Form.Item>
+          }
+        </Col>
+
+        <Col sm={24} lg={12}>
+          <Form.Item<CategoryFieldType>
+            label="Tip"
+            name="type"
+            rules={[{ required: true, message: 'Please select your subscription!' }]}
+          >
+            <Select options={categoryTypeOptions} />
+          </Form.Item>
+        </Col>
+
+        <Col span={12}>
+          <Form.Item<CategoryFieldType>
+            label="Vizibila pe dashboard in filtre"
+            name="isOnFilter"
+            rules={[{ required: true, message: 'Please select status!' }]}
+          >
+            <Radio.Group>
+              <Radio value="true">Visibila in filtru</Radio>
+              <Radio value="false">NU</Radio>
+            </Radio.Group>
+          </Form.Item>
+        </Col>
+      </Row>
+
+      <Form.Item>
+        <Button type="primary" htmlType="submit" icon={<SaveOutlined />}>
+          Salveaza
+        </Button>
+      </Form.Item>
+    </Form>
+  );
+};
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref, onMounted, computed } from 'vue'
+import { Form, Input, Button, Radio, Select, message } from 'ant-design-vue'
+import { SaveOutlined } from '@ant-design/icons-vue'
+import { getMainCategoriesApi, handlePushCategoryApi } from '@/utils/apiService'
+import { useAuthStore } from '@/stores/auth'
+import type { Category, ResponseT, SelectType, CategoryResponse } from '@/types'
+import { MAIN } from '@/constants'
+
+interface Props {
+  recordToUpdate?: Category
+  handleEditModal: (action: string, newCategory?: Category) => void
+  pageCategoryId?: string // Current page level (default '-1')
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  pageCategoryId: '-1'
+})
+
+const authStore = useAuthStore()
+const loading = ref(true)
+const categoryOptions = ref<SelectType[]>([])
+const formRef = ref()
+
+const categoryTypeOptions = [
+  { value: '1', label: 'Categorie Cursuri' },
+  { value: '2', label: 'Taguri' }
+]
+
+const isEditMode = computed(() => !!props.recordToUpdate)
+
+const initialValues = computed(() => {
+  if (!props.recordToUpdate) {
+    return {
+      parentCategoryId: props.pageCategoryId || '-1', // Default to current page level
+      type: '1', // Default: Categorie Cursuri
+      isOnFilter: false
+    }
+  }
+
+  return {
+    id: props.recordToUpdate.id,
+    title: props.recordToUpdate.title,
+    description: props.recordToUpdate.description,
+    parentCategoryId: props.pageCategoryId.toString() || '-1',
+    type: props.recordToUpdate.type?.toString() ?? '1',
+    isOnFilter: props.recordToUpdate.isOnFilter
+  }
+})
+
+const onFinish = async (values: any) => {
+  try {
+    const formBody = {
+      ...values,
+      isOnFilter: Boolean(values.isOnFilter)
+    }
+
+    const fetchMethod = formBody.id ? 'PATCH' : 'POST'
+    const res = await handlePushCategoryApi(fetchMethod, formBody) as ResponseT
+
+    if ([200, 201].includes(res?.status)) {
+      const modalAction = formBody.id ? 'SYNC' : 'CREATE'
+      props.handleEditModal(modalAction, res.data as Category)
+
+      message.success(
+        `Category ${(res.data as Category).id} ${formBody.id ? 'updated' : 'created'} successfully`
+      )
+    } else {
+      message.error('Could not save category details. Please try again later!')
+    }
+  } catch (error) {
+    message.error('Could not save category details. Please try again later!')
+    console.error('Failed:', error)
+  }
+}
+
+const onFinishFailed = (errorInfo: any) => {
+  console.error('Failed:', errorInfo)
+  message.error('Could not save category details. Please try again later!')
+}
+
+const fetchMainCategories = async () => {
+  try {
+    loading.value = true
+    const res = await getMainCategoriesApi(MAIN, undefined, authStore.accessToken) as ResponseT
+
+    if ([200, 201].includes(res?.status)) {
+      const categoriesData = (res.data as CategoryResponse)?.categories
+      categoryOptions.value = [
+        { value: '-1', label: 'No Parent' },
+        ...categoriesData.map((category) => ({
+          value: category.id?.toString() ?? '-1',
+          label: category.title
+        }))
+      ]
+    }
+  } catch (error) {
+    message.error('Failed to load categories')
+    console.error(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  fetchMainCategories()
+})
+</script>
+
+<template>
+  <a-form
+    v-if="!loading"
+    ref="formRef"
+    name="category-form"
+    layout="vertical"
+    :model="initialValues"
+    @finish="onFinish"
+    @finishFailed="onFinishFailed"
+    :requiredMark="false"
+  >
+    <a-row :gutter="[16, 0]">
+      <a-form-item name="id" hidden>
+        <a-input type="hidden" />
+      </a-form-item>
+
+      <a-col :sm="24" :lg="24">
+        <a-form-item
+          label="Titlu"
+          name="title"
+          :rules="[{ required: true, min: 4, message: 'Please input category title!' }]"
+        >
+          <a-input />
+        </a-form-item>
+      </a-col>
+
+      <a-col :sm="24" :lg="24">
+        <a-form-item label="Descriere" name="description">
+          <a-textarea />
+        </a-form-item>
+      </a-col>
+
+      <a-col :sm="24" :lg="12">
+        <a-form-item label="Categorie Parinte" name="parentCategoryId">
+          <a-select
+            v-if="!loading && categoryOptions.length"
+            :options="categoryOptions"
+          />
+          <a-spin v-else size="small" />
+        </a-form-item>
+      </a-col>
+
+      <a-col :sm="24" :lg="12">
+        <a-form-item
+          label="Tip"
+          name="type"
+          :rules="[{ required: true, message: 'Please select type!' }]"
+        >
+          <a-select :options="categoryTypeOptions" />
+        </a-form-item>
+      </a-col>
+
+      <a-col :span="12">
+        <a-form-item
+          label="Vizibila pe dashboard in filtre"
+          name="isOnFilter"
+          :rules="[{ required: true, message: 'Please select status!' }]"
+        >
+          <a-radio-group>
+            <a-radio :value="true">Visibila in filtru</a-radio>
+            <a-radio :value="false">NU</a-radio>
+          </a-radio-group>
+        </a-form-item>
+      </a-col>
+    </a-row>
+
+    <a-form-item>
+      <a-button type="primary" html-type="submit" :icon="h(SaveOutlined)">
+        Salveaza
+      </a-button>
+    </a-form-item>
+  </a-form>
+  <a-spin v-else />
+</template>
+```
+
+**Notes:**
+- **pageCategoryId Default**: '-1' pentru root level (no parent)
+- **Parent Selection**: Fetch doar main categories (MAIN constant) pentru simplificare (nu permite nested parents)
+- **Type Options**: Doar 2 opțiuni (1 = Cursuri, 2 = Taguri) - type 3 (Abonamente) nu e folosit în form
+- **isOnFilter**: Radio buttons cu boolean values (nu string 'true'/'false' ca în alte forme)
+- **Loading State**: Afișează Loader în timpul fetch-ului categoriilor pentru parent dropdown
+
+**Recommendations:**
+1. **Boolean Radio Values**: Folosește boolean direct în Radio.Group (nu string 'true'/'false' conversion)
+2. **Parent Category Validation**: Prevent selecting current category as parent (circular reference)
+3. **Type 3 Option**: Adaugă opțiunea "Abonamente" dacă e folosită în sistem
+4. **Description Length**: Adaugă maxLength pentru description (ex: 500 chars)
+5. **Form Reset**: Reset form după submit success (pentru create mode)
+6. **Help Text**: Adaugă help text pentru isOnFilter ("Categoriile vizibile în filtre apar pe dashboard pentru filtrare rapidă")
+
+**Migration Complexity**: MEDIUM (5 fields, main categories fetch, boolean conversion)
+
+**Estimated Effort**: 3-4 ore (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 4: Delete Category with Popconfirm
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Admin poate șterge o categorie prin click pe Delete button în tabel. Se afișează
+Popconfirm pentru confirmare, apoi se execută DELETE request, și UI-ul este
+sincronizat automat (categoria dispare din tabel).
+
+**User Flow:**
+1. Admin click pe Delete icon în tabel
+2. Popconfirm se afișează: "Are you sure to delete this category?" cu Yes/No
+3. Admin confirmă (Yes) → DELETE /v1/categories/:id request
+4. Success → message.success + syncAfterDelete (remove din categoriesData)
+5. Error → message.error + categoria rămâne în tabel
+
+**Cod sursă:**
+- File: admin/src/pages/dashboards/Categories.tsx:61-69 (handleDeleteCategory)
+- File: admin/src/pages/dashboards/Categories.tsx:104-106 (syncAfterDelete)
+- File: admin/src/components/dashboard/categories/CategoriesCard/CategoriesCard.tsx:70-80 (Popconfirm column)
+- API: handleDeleteCategoryApi(categoryId) → DELETE /v1/categories/:id
+
+**Current Implementation (React):**
+```typescript
+// In Categories.tsx
+const handleDeleteCategory = useCallback(async (recordId: number) => {
+  const res: ResponseT = await handleDeleteCategoryApi(recordId) as ResponseT;
+  if ([200, 201].includes(res?.status)) {
+    syncAfterDelete(recordId);
+    message.open({ 'type': 'success', 'content': `Category ${recordId} deleted successfully` });
+  } else {
+    message.open({ 'type': 'error', 'content': `Category ${recordId} cannot be deleted` });
+  }
+}, []);
+
+const syncAfterDelete = (recordId: number) => {
+  setCategoryData(prevState => prevState?.filter(item => item.id !== recordId));
+}
+
+// In CategoriesCard.tsx (Table column)
+{
+  title: 'Delete',
+  dataIndex: 'delete',
+  key: 'delete',
+  render: (_: string, record: Category) => (
+    <Popconfirm
+      title="Are you sure to delete this category?"
+      onConfirm={() => handleDeleteCategory(record.id as number)}
+      okText="Yes"
+      cancelText="No"
+    >
+      <Button type="link" danger>
+        <DeleteOutlined />
+      </Button>
+    </Popconfirm>
+  )
+}
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+// In Categories.vue
+import { ref } from 'vue'
+import { message } from 'ant-design-vue'
+import { handleDeleteCategoryApi } from '@/utils/apiService'
+import type { ResponseT } from '@/types'
+
+const categoriesData = ref<Category[]>([])
+
+const handleDeleteCategory = async (recordId: number) => {
+  try {
+    const res = await handleDeleteCategoryApi(recordId) as ResponseT
+
+    if ([200, 201].includes(res?.status)) {
+      syncAfterDelete(recordId)
+      message.success(`Category ${recordId} deleted successfully`)
+    } else {
+      message.error(`Category ${recordId} cannot be deleted`)
+    }
+  } catch (error) {
+    message.error('Failed to delete category. Please try again.')
+    console.error(error)
+  }
+}
+
+const syncAfterDelete = (recordId: number) => {
+  categoriesData.value = categoriesData.value.filter(item => item.id !== recordId)
+}
+</script>
+
+<script setup lang="ts">
+// In CategoriesCard.vue (Table column)
+import { h } from 'vue'
+import { Button, Popconfirm } from 'ant-design-vue'
+import { DeleteOutlined } from '@ant-design/icons-vue'
+
+const columns = computed(() => [
+  // ... other columns ...
+  {
+    title: 'Delete',
+    dataIndex: 'delete',
+    key: 'delete',
+    customRender: ({ record }) => h(
+      Popconfirm,
+      {
+        title: 'Are you sure to delete this category?',
+        onConfirm: () => props.handleDeleteCategory(record.id as number),
+        okText: 'Yes',
+        cancelText: 'No'
+      },
+      () => h(Button, { type: 'link', danger: true }, () => h(DeleteOutlined))
+    )
+  }
+])
+</script>
+```
+
+**Notes:**
+- Same logic as other delete operations (Courses, Lessons)
+- Popconfirm wrapper pentru Button (same API în Ant Design Vue)
+- Filter pentru ștergere din array (syncAfterDelete)
+
+**Recommendations:**
+1. **Cascade Delete Check**: Verifică dacă categoria are sub-categorii înainte de ștergere
+2. **Confirmation Text**: Mai detaliat: "Are you sure to delete category '{title}'? This will also delete {childrenCount} sub-categories."
+3. **Loading State**: Adaugă loading spinner pe buton în timpul ștergerii
+4. **Optimistic Update**: Șterge din UI imediat, revert dacă request eșuează
+5. **Soft Delete**: Opțional: soft delete în loc de hard delete (isDeleted flag)
+
+**Migration Complexity**: LOW (simple delete logic, same Popconfirm API)
+
+**Estimated Effort**: 1-2 ore (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 5: Category Types with Colored Tags
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Categoriile au 3 tipuri: 1 = Categorii Cursuri (green tag), 2 = Taguri (purple tag),
+3 = Abonamente (purple tag). Tipul este afișat în tabel ca colored tag, și selectat
+în formular printr-un dropdown cu 2 opțiuni (1 și 2).
+
+**User Flow:**
+1. Admin selectează tip în formular: "Categorie Cursuri" (1) sau "Taguri" (2)
+2. La save, tipul este trimis ca string '1' sau '2' la backend
+3. Tabelul afișează tipul ca colored tag: green pentru type 1, purple pentru type 2 sau 3
+4. Type 3 (Abonamente) nu e disponibil în formular (doar 1 și 2)
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/categories/CategoriesCard/CategoriesCard.tsx:52-62 (Type column rendering)
+- File: admin/src/components/dashboard/categories/CategoriesForm/CategoriesForm.tsx:28, 133-144 (Type dropdown)
+- Type values: '1' (string), '2' (string), '3' (string)
+
+**Current Implementation (React):**
+```typescript
+// In CategoriesCard.tsx (Table column)
+{
+  title: 'Tip',
+  dataIndex: 'type',
+  key: 'type',
+  render: (type: number, { isOnFilter }) => <><Tag color={Number(type) === 1 ? 'green' : 'purple'}>
+    {Number(type) === 1 && 'categorii de cursuri'}
+    {Number(type) === 2 && 'taguri'}
+    {Number(type) === 3 && 'de abonamente'}
+  </Tag>
+    {isOnFilter && <Tag color="blue">[pe filtru]</Tag>}
+  </>,
+}
+
+// In CategoriesForm.tsx (Type dropdown)
+const categoryTypeOptions = [
+  { value: '1', label: 'Categorie Cursuri' },
+  { value: '2', label: 'Taguri' }
+];
+
+<Col sm={24} lg={12}>
+  <Form.Item<CategoryFieldType>
+    label="Tip"
+    name="type"
+    rules={[{ required: true, message: 'Please select your subscription!' }]}
+  >
+    <Select options={categoryTypeOptions} />
+  </Form.Item>
+</Col>
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+// In CategoriesCard.vue (Table column)
+import { computed, h } from 'vue'
+import { Tag } from 'ant-design-vue'
+
+const columns = computed(() => [
+  {
+    title: 'Tip',
+    dataIndex: 'type',
+    key: 'type',
+    filters: [
+      { text: 'Categorii Cursuri', value: '1' },
+      { text: 'Taguri', value: '2' },
+      { text: 'Abonamente', value: '3' }
+    ],
+    onFilter: (value, record) => record.type === value,
+    customRender: ({ text: type, record }) => {
+      const typeNum = Number(type)
+      const tags = []
+
+      // Type tag
+      const typeLabel = typeNum === 1 ? 'categorii de cursuri'
+                      : typeNum === 2 ? 'taguri'
+                      : 'de abonamente'
+      const typeColor = typeNum === 1 ? 'green' : 'purple'
+      tags.push(h(Tag, { color: typeColor }, () => typeLabel))
+
+      // isOnFilter tag
+      if (record.isOnFilter) {
+        tags.push(h(Tag, { color: 'blue' }, () => '[pe filtru]'))
+      }
+
+      return tags
+    }
+  }
+])
+</script>
+
+<script setup lang="ts">
+// In CategoriesForm.vue (Type dropdown)
+const categoryTypeOptions = [
+  { value: '1', label: 'Categorie Cursuri' },
+  { value: '2', label: 'Taguri' }
+]
+</script>
+
+<template>
+  <a-col :sm="24" :lg="12">
+    <a-form-item
+      label="Tip"
+      name="type"
+      :rules="[{ required: true, message: 'Please select type!' }]"
+    >
+      <a-select :options="categoryTypeOptions" />
+    </a-form-item>
+  </a-col>
+</template>
+```
+
+**Notes:**
+- Type stored as string ('1', '2', '3') în backend
+- Type 3 (Abonamente) există în sistem dar nu e disponibil în formular (doar 1 și 2)
+- isOnFilter tag afișat împreună cu type tag în aceeași coloană
+
+**Recommendations:**
+1. **Type 3 Option**: Adaugă opțiunea "Abonamente" (3) în formular dacă e necesară
+2. **Enum Values**: Folosește enum pentru type values (mai type-safe)
+3. **Color Mapping**: Creează color mapping object pentru type colors (mai ușor de mentinut)
+4. **Table Filter**: Adaugă filter în table column pentru filtrare după tip (already added in target implementation)
+5. **Type Icons**: Adaugă icon-uri pentru fiecare tip (BookOutlined pentru Cursuri, TagsOutlined pentru Taguri, etc.)
+
+**Migration Complexity**: LOW (simple select + tag rendering)
+
+**Estimated Effort**: 1-2 ore (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 6: isOnFilter Flag for Dashboard Visibility
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+isOnFilter este un boolean flag care determină dacă categoria este vizibilă pe
+dashboard în filtre pentru filtrare rapidă. Admin setează flag-ul prin Radio buttons
+în formular, iar în tabel este afișat ca blue tag "[pe filtru]" dacă true.
+
+**User Flow:**
+1. Admin setează isOnFilter în formular: "Visibila in filtru" (true) sau "NU" (false)
+2. La save, isOnFilter este trimis ca boolean la backend
+3. Tabelul afișează blue tag "[pe filtru]" în Type column dacă isOnFilter === true
+4. Categoriile cu isOnFilter=true apar în dashboard filters pentru filtrare rapidă
+
+**Cod sursă:**
+- File: admin/src/components/dashboard/categories/CategoriesForm/CategoriesForm.tsx:47, 145-158 (Radio buttons)
+- File: admin/src/components/dashboard/categories/CategoriesCard/CategoriesCard.tsx:55-61 (Blue tag rendering)
+- Conversion: string 'true'/'false' → boolean true/false
+
+**Current Implementation (React):**
+```typescript
+// In CategoriesForm.tsx
+const onFinish = async (formBody: CategoryFieldType) => {
+  const fetchMethod = formBody?.id ? 'PATCH' : 'POST';
+  formBody.isOnFilter = formBody.isOnFilter?.toString() === 'true'; // Convert string to boolean
+  // ... rest of submit logic
+};
+
+<Form
+  initialValues={{
+    // ... other fields
+    isOnFilter: recordToUpdate?.isOnFilter ? 'true' : 'false' // Convert boolean to string
+  }}
+>
+  <Col span={12}>
+    <Form.Item<CategoryFieldType>
+      label="Vizibila pe dashboard in filtre"
+      name="isOnFilter"
+      rules={[{ required: true, message: 'Please select status!' }]}
+    >
+      <Radio.Group>
+        <Radio value="true">Visibila in filtru</Radio>
+        <Radio value="false">NU</Radio>
+      </Radio.Group>
+    </Form.Item>
+  </Col>
+</Form>
+
+// In CategoriesCard.tsx (Table column - Type column)
+{
+  title: 'Tip',
+  dataIndex: 'type',
+  key: 'type',
+  render: (type: number, { isOnFilter }) => <><Tag color={Number(type) === 1 ? 'green' : 'purple'}>
+    {Number(type) === 1 && 'categorii de cursuri'}
+    {Number(type) === 2 && 'taguri'}
+    {Number(type) === 3 && 'de abonamente'}
+  </Tag>
+    {isOnFilter && <Tag color="blue">[pe filtru]</Tag>}
+  </>,
+}
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+// In CategoriesForm.vue
+import { ref, computed } from 'vue'
+import { Form, Radio } from 'ant-design-vue'
+
+const props = defineProps<{ recordToUpdate?: Category }>()
+
+const initialValues = computed(() => {
+  if (!props.recordToUpdate) {
+    return {
+      isOnFilter: false // Default: NU (not visible in filter)
+    }
+  }
+
+  return {
+    // ... other fields
+    isOnFilter: props.recordToUpdate.isOnFilter // Keep as boolean, no conversion needed
+  }
+})
+
+const onFinish = async (values: any) => {
+  const formBody = {
+    ...values,
+    isOnFilter: Boolean(values.isOnFilter) // Ensure boolean type
+  }
+  // ... rest of submit logic
+}
+</script>
+
+<template>
+  <a-col :span="12">
+    <a-form-item
+      label="Vizibila pe dashboard in filtre"
+      name="isOnFilter"
+      :rules="[{ required: true, message: 'Please select status!' }]"
+    >
+      <a-radio-group>
+        <a-radio :value="true">Visibila in filtru</a-radio>
+        <a-radio :value="false">NU</a-radio>
+      </a-radio-group>
+    </a-form-item>
+  </a-col>
+</template>
+
+<script setup lang="ts">
+// In CategoriesCard.vue (Table column - Type column)
+const columns = computed(() => [
+  {
+    title: 'Tip',
+    dataIndex: 'type',
+    key: 'type',
+    customRender: ({ text: type, record }) => {
+      const typeNum = Number(type)
+      const tags = []
+
+      // Type tag
+      const typeLabel = typeNum === 1 ? 'categorii de cursuri'
+                      : typeNum === 2 ? 'taguri'
+                      : 'de abonamente'
+      const typeColor = typeNum === 1 ? 'green' : 'purple'
+      tags.push(h(Tag, { color: typeColor }, () => typeLabel))
+
+      // isOnFilter tag (blue badge)
+      if (record.isOnFilter) {
+        tags.push(h(Tag, { color: 'blue' }, () => '[pe filtru]'))
+      }
+
+      return tags
+    }
+  }
+])
+</script>
+
+<!-- Alternative: Separate isOnFilter column -->
+<script setup lang="ts">
+const columns = computed(() => [
+  // ... Type column (without isOnFilter tag)
+  {
+    title: 'Vizibil în Filtre',
+    dataIndex: 'isOnFilter',
+    key: 'isOnFilter',
+    filters: [
+      { text: 'Vizibil', value: true },
+      { text: 'Ascuns', value: false }
+    ],
+    onFilter: (value, record) => record.isOnFilter === value,
+    customRender: ({ text: isOnFilter }) => {
+      return h(Badge, {
+        status: isOnFilter ? 'success' : 'default',
+        text: isOnFilter ? 'Vizibil' : 'Ascuns'
+      })
+    }
+  }
+])
+</script>
+```
+
+**Notes:**
+- React: Radio.Group cu string values ('true'/'false'), conversion la submit
+- Vue: Radio.Group cu boolean values (true/false), no conversion needed
+- isOnFilter tag afișat în Type column (împreună cu type tag) - se poate separa într-o coloană distinctă
+- Default value pentru create mode: false (NU - not visible in filter)
+
+**Recommendations:**
+1. **Boolean Radio Values**: Folosește boolean direct în Radio.Group (no string conversion)
+2. **Separate Column**: Creează coloană separată pentru isOnFilter cu Badge (success/default) în loc de tag în Type column
+3. **Default Value**: Set default isOnFilter=false pentru create mode
+4. **Help Text**: Adaugă help text: "Categoriile vizibile în filtre apar pe dashboard pentru filtrare rapidă a cursurilor"
+5. **Switch Component**: Alternative: folosește Switch în loc de Radio.Group (mai compact)
+6. **Table Filter**: Adaugă filter în table column pentru filtrare Vizibil/Ascuns
+
+**Migration Complexity**: LOW (simple Radio.Group with boolean values)
+
+**Estimated Effort**: 1-2 ore (1 developer)
+
+--------------------------------------------------------------------------------
+TASK 7: Statistics Cards (Total Categories)
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Pagina afișează 4 statistics cards în partea de sus. Primul card (total categorii)
+afișează numărul real de categorii pentru nivelul curent, restul sunt mock data.
+
+**User Flow:**
+1. Sistemul încarcă toate categoriile pentru nivelul curent
+2. Card 1: "Categorii prezente în platformă" → categoriesData.length (real data)
+3. Card 2: "Cursuri completate" → 5 (mock data)
+4. Card 3: "Cursuri în desfășurare" → 3 (mock data)
+5. Card 4: "Conturi active" → countUsers (real data from auth context)
+
+**Cod sursă:**
+- File: admin/src/pages/dashboards/Categories.tsx:147-186 (4 LearningStatsCard components)
+- Component: LearningStatsCard (shared component)
+- Real data: categoriesData.length (total categories), countUsers (active accounts)
+- Mock data: 5, 3, 76%, 90%, 30%, 78% (hardcoded values)
+
+**Current Implementation (React):**
+```typescript
+// In Categories.tsx
+import { LearningStatsCard } from '../../components';
+import {
+  FileProtectOutlined,
+  FileSyncOutlined,
+  SafetyCertificateOutlined,
+  UsergroupAddOutlined,
+} from '@ant-design/icons';
+
+const { countUsers } = useAuth(); // Real data from auth context
+const [categoriesData, setCategoryData] = useState<Category[]>([]);
+
+return (
+  <Row {...stylesContext?.rowProps}>
+    <Col xs={24} sm={12} xl={6}>
+      <LearningStatsCard
+        title="Categorii prezente în platformă"
+        value={categoriesData?.length} // Real data
+        icon={SafetyCertificateOutlined}
+        color="blue"
+        progress={76} // Mock data
+        style={{ height: '100%' }}
+      />
+    </Col>
+    <Col xs={24} sm={12} xl={6}>
+      <LearningStatsCard
+        title="Cursuri completate"
+        value={5} // Mock data
+        icon={FileProtectOutlined}
+        color="green"
+        progress={90} // Mock data
+        style={{ height: '100%' }}
+      />
+    </Col>
+    <Col xs={24} sm={12} xl={6}>
+      <LearningStatsCard
+        title="Cursuri în desfășurare"
+        value={3} // Mock data
+        icon={FileSyncOutlined}
+        color="teal"
+        progress={30} // Mock data
+        style={{ height: '100%' }}
+      />
+    </Col>
+    <Col xs={24} sm={12} xl={6}>
+      <LearningStatsCard
+        title="Conturi active"
+        value={countUsers} // Real data
+        icon={UsergroupAddOutlined}
+        color="purple"
+        progress={78} // Mock data
+        style={{ height: '100%' }}
+      />
+    </Col>
+  </Row>
+);
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+import LearningStatsCard from '@/components/LearningStatsCard.vue'
+import {
+  SafetyCertificateOutlined,
+  FileProtectOutlined,
+  FileSyncOutlined,
+  UsergroupAddOutlined
+} from '@ant-design/icons-vue'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
+const categoriesData = ref<Category[]>([])
+
+// Real data stats
+const totalCategories = computed(() => categoriesData.value.length)
+const activeAccounts = computed(() => authStore.countUsers) // Real data
+
+// Mock data (to be replaced with real analytics)
+const completedCourses = ref(5)
+const inProgressCourses = ref(3)
+const totalProgress = ref(76)
+const completedProgress = ref(90)
+const inProgressProgress = ref(30)
+const activeAccountsProgress = ref(78)
+</script>
+
+<template>
+  <a-row :gutter="[16, 16]">
+    <a-col :xs="24" :sm="12" :xl="6">
+      <LearningStatsCard
+        title="Categorii prezente în platformă"
+        :value="totalCategories"
+        :icon="SafetyCertificateOutlined"
+        color="blue"
+        :progress="totalProgress"
+        style="height: 100%"
+      />
+    </a-col>
+
+    <a-col :xs="24" :sm="12" :xl="6">
+      <LearningStatsCard
+        title="Cursuri completate"
+        :value="completedCourses"
+        :icon="FileProtectOutlined"
+        color="green"
+        :progress="completedProgress"
+        style="height: 100%"
+      />
+    </a-col>
+
+    <a-col :xs="24" :sm="12" :xl="6">
+      <LearningStatsCard
+        title="Cursuri în desfășurare"
+        :value="inProgressCourses"
+        :icon="FileSyncOutlined"
+        color="teal"
+        :progress="inProgressProgress"
+        style="height: 100%"
+      />
+    </a-col>
+
+    <a-col :xs="24" :sm="12" :xl="6">
+      <LearningStatsCard
+        title="Conturi active"
+        :value="activeAccounts"
+        :icon="UsergroupAddOutlined"
+        color="purple"
+        :progress="activeAccountsProgress"
+        style="height: 100%"
+      />
+    </a-col>
+  </a-row>
+</template>
+```
+
+**Notes:**
+- LearningStatsCard este shared component (să fie migrat separat)
+- Doar primul card (total categories) și ultimul (active accounts) afișează date reale
+- Cards 2 și 3 sunt mock data - nu au legătură cu categories (probabil au fost copiate din altă pagină)
+- Progress bars sunt hardcoded
+
+**Recommendations:**
+1. **Replace Mock Data**: Cards 2 și 3 ar trebui să afișeze statistici relevante pentru categorii:
+   - "Total Cursuri" (număr cursuri asociate cu categoriile)
+   - "Total Lectii" (număr lectii asociate cu categoriile)
+   - "Sub-categorii" (număr total de sub-categorii)
+2. **Progress Calculation**: Calculează progress bars dinamic
+3. **Loading States**: Adaugă loading skeleton pentru stats cards
+4. **Click Actions**: Face cards clickable pentru filtrare (ex: click pe total categories → vezi toate categoriile)
+5. **Tooltips**: Adaugă tooltips cu mai multe detalii
+
+**Migration Complexity**: LOW (simple component rendering, mostly mock data)
+
+**Estimated Effort**: 1-2 ore (1 developer) - excludes real data integration
+
+--------------------------------------------------------------------------------
+TASK 8: Responsive Drawer Width for Category Form
+--------------------------------------------------------------------------------
+
+**Descriere Business:**
+Formularul de creare/editare categorie se deschide într-un Drawer lateral (right side).
+Drawer-ul are width responsive: 640px pentru desktop (≥960px) și 100% pentru
+mobile/tablet (<960px), asigurând o experiență optimă pe toate device-urile.
+
+**User Flow:**
+1. Desktop (≥960px): Drawer width = 640px
+2. Tablet/Mobile (<960px): Drawer width = 100% (full screen)
+3. Drawer se deschide din dreapta (placement="right")
+4. La resize window, width-ul se ajustează automat (reactive)
+
+**Cod sursă:**
+- File: admin/src/pages/dashboards/Categories.tsx:35, 41-50, 205-216 (editModalWidth state + useMediaQuery + Drawer)
+- Breakpoint: 960px (minWidth)
+- Hook: useMediaQuery({ minWidth: 960 }) din react-responsive
+- Drawer: width={editModalWidth}, placement="right", open={modalAction !== CLOSE}
+
+**Current Implementation (React):**
+```typescript
+// In Categories.tsx
+import { useMediaQuery } from 'react-responsive';
+import { Drawer } from 'antd/lib';
+
+const [editModalWidth, setEditModalWidth] = useState<string>();
+const isLarge = useMediaQuery({ minWidth: 960 });
+
+useEffect(() => {
+  if (isLarge) {
+    setEditModalWidth('640');
+  } else {
+    setEditModalWidth('100%');
+  }
+}, [isLarge]);
+
+return (
+  <Drawer
+    title={`${modalAction === UPDATE ? 'Updateaza' : 'Creeaza'} o categorie`}
+    width={editModalWidth}
+    placement="right"
+    open={modalAction !== CLOSE}
+    onClose={() => handleEditModal(CLOSE)}
+  >
+    {!!((categoryToUpdate) || modalAction === CREATE) && (
+      <CategoriesForm
+        recordToUpdate={categoryToUpdate}
+        pageCategoryId={pageCategoryId}
+        handleEditModal={handleEditModal}
+      />
+    )}
+  </Drawer>
+);
+```
+
+**Target Implementation (Vue.js 3):**
+```vue
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useBreakpoints } from '@vueuse/core'
+import { Drawer } from 'ant-design-vue'
+
+const breakpoints = useBreakpoints({ large: 960 })
+const isLarge = breakpoints.greaterOrEqual('large')
+const editModalWidth = computed(() => isLarge.value ? '640px' : '100%')
+
+const modalAction = ref<MODAL_ACTIONS>('CLOSE')
+const categoryToUpdate = ref<Category | undefined>()
+const pageCategoryId = computed(() => route.params.pageCategoryId as string | undefined)
+</script>
+
+<template>
+  <a-drawer
+    :title="`${modalAction === 'UPDATE' ? 'Updateaza' : 'Creeaza'} o categorie`"
+    :width="editModalWidth"
+    placement="right"
+    :open="modalAction !== 'CLOSE'"
+    @close="handleEditModal('CLOSE')"
+  >
+    <CategoriesForm
+      v-if="categoryToUpdate || modalAction === 'CREATE'"
+      :recordToUpdate="categoryToUpdate"
+      :pageCategoryId="pageCategoryId"
+      :handleEditModal="handleEditModal"
+    />
+  </a-drawer>
+</template>
+```
+
+**Notes:**
+- Same responsive logic as Courses and Lessons modules
+- react-responsive → @vueuse/core (useBreakpoints)
+- Computed property elimină need pentru separate state + useEffect
+
+**Recommendations:**
+- Same as other modules (VueUse, computed property, SSR support)
+
+**Migration Complexity**: VERY LOW (same as other modules)
+
+**Estimated Effort**: 30 min - 1 oră (1 developer)
+
+================================================================================
+SUMMARY - CATEGORIES MANAGEMENT MODULE
+================================================================================
+
+**Total Tasks**: 8 components/features
+
+**Total Estimated Effort**: 6-9 zile (1 developer)
+
+**Migration Priority**:
+- HIGH: Page layout with hierarchical navigation, Table component, Form component (core functionality)
+- MEDIUM: Delete, Type tags, isOnFilter flag (important features)
+- LOW: Stats cards, Responsive drawer (nice-to-have improvements)
+
+**Critical Dependencies**:
+1. LearningStatsCard shared component migration
+2. Understanding of hierarchical category structure (parent-child relationships)
+3. pageCategoryId URL param for navigation between levels
+
+**Key Features (Hierarchical Structure)**:
+1. **URL-Based Navigation**: pageCategoryId determines which level to display
+2. **Main Categories Fetch**: MAIN constant ('-1' or 'main') for root level
+3. **Sub-categories Navigation**: Click on children count → navigate to /dashboards/categories/:parentId
+4. **syncAfterCreate Logic**: Only adds to UI if newRecord.parentCategoryId === pageCategoryId
+5. **Parent Selection**: Dropdown with main categories only (simplified - no nested parents)
+
+**Category Types**:
+- Type 1: Categorii Cursuri (green tag) - used by Courses module
+- Type 2: Taguri (purple tag) - used by Lessons module
+- Type 3: Abonamente (purple tag) - not used in current implementation
+
+**isOnFilter Flag**:
+- Boolean flag for dashboard filter visibility
+- Displayed as blue tag "[pe filtru]" in table
+- Set via Radio buttons in form
+
+**Risks**:
+1. Hierarchical navigation complexity (URL params, watch route changes)
+2. syncAfterCreate logic - CRITICAL pentru correct UI updates
+3. Parent-child relationships - prevent circular references
+4. Cascade delete - check if category has children before delete
+5. Stats cards mock data - need real data integration
+
+**Testing Checklist**:
+- [ ] CRUD operations (create, read, update, delete categories)
+- [ ] Hierarchical navigation (root → sub-categories → nested sub-categories)
+- [ ] Parent category selection (main categories only)
+- [ ] Type selection (1 = Cursuri, 2 = Taguri)
+- [ ] isOnFilter flag toggle (Visibil/Ascuns)
+- [ ] Delete confirmation (with children check)
+- [ ] Responsive drawer (960px breakpoint)
+- [ ] Loading states (categories fetch, form submit)
+- [ ] Error handling (API failures, network errors)
+- [ ] Stats cards display (total categories = real, rest = mock)
+- [ ] Form validation (required fields, min length)
+- [ ] URL params (pageCategoryId for hierarchical levels)
+
+**Post-Migration Tasks**:
+- [ ] Add breadcrumbs with ancestors for navigation context
+- [ ] Add "Back to parent" button for hierarchical navigation
+- [ ] Implement cascade delete check (prevent delete if has children)
+- [ ] Add Type 3 option ("Abonamente") if needed
+- [ ] Separate isOnFilter into distinct column with Badge
+- [ ] Replace mock stats data with real course/lesson counts
+- [ ] Add drag & drop for category reordering (optional)
+- [ ] Add bulk actions (delete multiple categories)
+- [ ] Add search/filter in table
+- [ ] Translate validation messages to Romanian
+- [ ] Add unit tests (Vitest) for hierarchical logic
+- [ ] Add E2E tests (Playwright) for navigation flow
+
+================================================================================
+END OF JIRA STORY - CATEGORIES MANAGEMENT MODULE
+================================================================================

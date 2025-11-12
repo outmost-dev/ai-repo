@@ -1,0 +1,854 @@
+================================================================================
+JIRA STORY: STRIPE SERVICE (INTEGRATION SERVICE)
+================================================================================
+
+Story Title: Stripe Service Integration
+
+Story Type: Story (Service Layer - No Direct Endpoints)
+
+Epic: Somaway Backend Migration to .NET
+
+Story Description:
+------------------
+Stripe Service integrează API-ul Stripe pentru procesarea plăților online,
+gestionarea abonamentelor recurente, și automatizarea facturării. Serviciul
+gestionează fluxuri complexe de subscription scheduling, PaymentIntent creation,
+și webhook event processing pentru notificări real-time.
+
+Stripe este furnizor global de procesare plăți online, oferind API REST pentru
+card payments, recurring subscriptions, și invoice management.
+
+Locație cod sursă: server/src/v1/Stripe/Services/
+
+Metode implementate: 11 core methods
+- createCustomer() - create Stripe customer
+- createAccount() - create Stripe Connect account (TEST payload)
+- updateAccount() - update TOS acceptance
+- createPaymentIntent() - create one-time payment intent
+- createStripeSubscription() - create recurring subscription with complex scheduling
+- generatePayNowInvoiceAndAddCreditForNextInvoice() - pay now, credit for future
+- cancelPaymentSubscription() - cancel subscription at period end
+- retrieveActivePaymentSubscriptions() - list active subscriptions
+- getSubscriptionById() - retrieve subscription details
+- retrievePaymentIntent() - retrieve payment intent details
+- constructEvent() - verify Stripe webhook signature
+
+Used by:
+- PaymentsService (webhook processing, subscription management)
+- SubscriptionService (payment intent creation, subscription lifecycle)
+- PaymentsController (account creation, TOS update, subscription cancellation)
+
+External Dependencies:
+- Stripe API v2024+ (https://api.stripe.com)
+- Stripe Node.js SDK: 'stripe' npm package
+- OAuth 2.0 Secret Key authentication
+
+Configuration:
+- Account ID: acct_1L14ojLeqDzV4xgN
+- Currency: RON (Romanian Leu)
+- Webhook Secret: from environment variable STRIPE_WEBHOOK_SECRET
+- Secret Key: from config (app.stripe.secret)
+
+Subscription Strategy:
+- Scenario AA: No active Stripe subscription
+  - AA1: No internal sub → create normal Stripe subscription
+  - AA2: Active internal sub → create scheduled subscription (future start date)
+- Scenario BB: Active Stripe subscription exists
+  - Create subscription schedule with phased pricing
+  - Charge immediately for future subscription period
+  - Add negative customer balance to avoid double billing
+
+Payment Flow:
+1. User selects subscription type
+2. Create PaymentIntent with metadata (subscriptionId, clientId, etc.)
+3. Frontend uses Stripe.js to collect payment
+4. Webhook receives payment_intent.succeeded event
+5. PaymentsService processes webhook → activates subscription
+6. Generate SmartBill invoice
+
+Recurring Subscription Flow:
+1. User subscribes to recurring plan (e.g., every 3 months)
+2. Stripe creates subscription with auto-renewal
+3. On billing cycle: invoice.payment_succeeded webhook
+4. PaymentsService creates new Order/Payment entities
+5. Extend internal subscription endDate
+6. Generate SmartBill invoice for recurring payment
+
+Notes:
+- Complex subscription scheduling logic (phases, iterations)
+- Dual subscription system: Stripe (payment) + Internal (access control)
+- Pay-now + future credit mechanism for scheduled subscriptions
+- Customer balance manipulation to avoid double billing
+- Metadata used to link Stripe entities with internal database
+- Romanian market (RON currency)
+
+================================================================================
+TASKS (11 SERVICE METHODS)
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 1: createCustomer() - Create Stripe Customer
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Creează un customer în Stripe pentru a asocia plățile și abonamentele viitoare.
+Customer-ul este creat la primul sign-up și salvat în Users.stripeCustomer field.
+
+Flow:
+1. Primește email și name
+2. Apelează stripe.customers.create()
+3. Returnează customer object cu id (cus_xxxxx)
+4. Caller salvează customer.id în Users.stripeCustomer
+
+Cod sursă:
+- Service: src/v1/Stripe/Services/stripe.service.ts:97-103
+
+Method Signature:
+async createCustomer(email: string, name: string)
+
+Stripe API Call:
+stripe.customers.create({
+  email: "user@example.com",
+  name: "John Doe"
+})
+
+Response:
+{
+  "id": "cus_xxxxx",
+  "email": "user@example.com",
+  "name": "John Doe",
+  "created": 1730567890,
+  ...
+}
+
+Dependencies:
+- Stripe SDK
+
+Notes:
+- Called once per user (at first purchase or signup)
+- Customer ID stored in Users.stripeCustomer
+- Used for all future payments and subscriptions
+
+Recommendations for .NET:
+- Use Stripe.NET SDK
+- Add idempotency check (don't create duplicate customers for same email)
+- Store Stripe customer ID in database immediately
+- Add error handling for duplicate email
+
+--------------------------------------------------------------------------------
+TASK 2: createAccount() - Create Stripe Connect Account (TEST)
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+⚠️ TEST METHOD - Creează un Stripe Connect account pentru processing custom payments.
+Conține hardcoded test data (address, DOB, bank account). NU este folosit în producție.
+
+Flow:
+1. Primește email și remoteAddress (IP for TOS acceptance)
+2. Construiește payload cu test data hardcoded
+3. Apelează stripe.accounts.create()
+4. Salvează account.id în this.stripeAccountId
+5. Returnează account object
+
+Cod sursă:
+- Service: src/v1/Stripe/Services/stripe.service.ts:29-83
+
+Method Signature:
+async createAccount(email: string, remoteAddress: string)
+
+Test Payload (hardcoded):
+{
+  "type": "custom",
+  "country": "RO",
+  "email": email,
+  "business_type": "individual",
+  "individual": {
+    "address": {
+      "country": "RO",
+      "city": "Bucharest",
+      "line1": "Bd. Regina Elisabeta, Sector 3",
+      "postal_code": "13017"
+    },
+    "phone": "+40721751790",
+    "email": email,
+    "dob": { "day": 30, "month": 3, "year": 1989 },
+    "first_name": "Denio",
+    "last_name": "Camino",
+    "id_number": "000000000"
+  },
+  "business_profile": {
+    "mcc": "7311",
+    "url": "https://somaway.ro"
+  },
+  "external_account": {
+    "object": "bank_account",
+    "account_number": "DE89370400440532013000",
+    "country": "de",
+    "currency": "eur",
+    "account_holder_name": "Denk Camino",
+    "account_holder_type": "individual"
+  },
+  "tos_acceptance": {
+    "date": Math.floor(Date.now() / 1000),
+    "ip": remoteAddress
+  },
+  "capabilities": {
+    "card_payments": { "requested": true },
+    "transfers": { "requested": true }
+  }
+}
+
+Dependencies:
+- Stripe SDK
+
+Notes:
+- ⚠️ TEST METHOD - hardcoded test data
+- NOT used in production flow
+- Stripe Connect for custom payment processing
+- TOS acceptance requires IP address
+
+Recommendations for .NET:
+- DO NOT migrate this method as-is
+- If Stripe Connect needed: create proper account creation with real user data
+- Remove all hardcoded test data
+- Add proper validation and error handling
+
+--------------------------------------------------------------------------------
+TASK 3: updateAccount() - Update TOS Acceptance
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Actualizează acceptarea termenilor și condițiilor Stripe pentru un account.
+Necesită IP-ul utilizatorului pentru compliance Stripe.
+
+Flow:
+1. Primește remoteAddress (user IP)
+2. Apelează stripe.accounts.update() cu TOS acceptance timestamp + IP
+3. Returnează updated account object
+
+Cod sursă:
+- Service: src/v1/Stripe/Services/stripe.service.ts:86-95
+
+Method Signature:
+async updateAccount(remoteAddress)
+
+Stripe API Call:
+stripe.accounts.update(this.stripeAccountId, {
+  tos_acceptance: {
+    date: Math.floor(Date.now() / 1000),
+    ip: remoteAddress
+  }
+})
+
+Dependencies:
+- Stripe SDK
+- this.stripeAccountId (from config or createAccount)
+
+Notes:
+- Requires IP address for Stripe compliance
+- Unix timestamp for acceptance date
+
+Recommendations for .NET:
+- Use IHttpContextAccessor for IP address
+- Handle X-Forwarded-For for proxy scenarios
+- Log TOS acceptance for audit trail
+
+--------------------------------------------------------------------------------
+TASK 4: createPaymentIntent() - Create One-Time Payment Intent
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Creează un PaymentIntent pentru plată unică (non-recurring). PaymentIntent-ul
+este folosit de frontend cu Stripe.js pentru colectarea detaliilor cardului
+și confirmarea plății.
+
+Flow:
+1. Primește parametri:
+   - subscription: internal subscription entity
+   - amount: price în RON (e.g., 99.00)
+   - stripeCustomerId: customer ID (cus_xxxxx)
+2. Construiește payload:
+   - amount: amount * 100 (convert to bani/cents)
+   - currency: RON
+   - customer: stripeCustomerId
+   - payment_method_types: ['card']
+   - metadata: subscriptionId, clientId, courseId, dates
+   - transfer_group: subscription.id
+3. Apelează stripe.paymentIntents.create() cu stripeAccount
+4. Returnează PaymentIntent cu client_secret pentru frontend
+
+Cod sursă:
+- Service: src/v1/Stripe/Services/stripe.service.ts:105-125
+
+Method Signature:
+async createPaymentIntent(subscription, amount, stripeCustomerId: string)
+
+Stripe API Call:
+stripe.paymentIntents.create({
+  amount: Math.floor(amount * 100),
+  currency: 'RON',
+  customer: stripeCustomerId,
+  payment_method_types: ['card'],
+  metadata: {
+    subscriptionId: subscription.id,
+    clientId: subscription.clientId,
+    courseId: subscription.courseId,
+    startDate: subscription.startDate.toString(),
+    endDate: subscription.endDate.toString(),
+    createdAt: subscription.createdAt.toString()
+  },
+  transfer_group: subscription.id
+}, {
+  stripeAccount: this.stripeAccountId
+})
+
+Response:
+{
+  "id": "pi_xxxxx",
+  "client_secret": "pi_xxxxx_secret_xxxxx",
+  "amount": 9900,
+  "currency": "ron",
+  "status": "requires_payment_method",
+  "metadata": { ... },
+  ...
+}
+
+Dependencies:
+- Stripe SDK
+- Internal subscription entity
+
+Notes:
+- amount converted to bani (multiply by 100)
+- metadata links Stripe entity to internal database
+- transfer_group for Stripe Connect (if needed)
+- client_secret returned to frontend for Stripe.js
+
+Recommendations for .NET:
+- Use Stripe.NET SDK
+- Create typed PaymentIntentRequest DTO
+- Validate amount > 0 before creation
+- Log PaymentIntent ID for audit trail
+- Store client_secret securely (don't log)
+
+--------------------------------------------------------------------------------
+TASK 5: createStripeSubscription() - Create Recurring Subscription (COMPLEX)
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Creează un recurring subscription în Stripe cu logică complexă de scheduling.
+Gestionează scenarii multiple:
+- Niciun abonament activ → creează subscription normal
+- Abonament intern activ, dar nu în Stripe → creează scheduled subscription
+- Abonament activ în Stripe → creează phased subscription cu charge imediat
+
+Flow:
+1. Primește parametri:
+   - stripeCustomerId: customer ID
+   - currentInternalSub: subscription being purchased (PENDING status)
+   - newStripePriceId: Stripe price ID (e.g., price_xxxxx for 3-month plan)
+   - activeInternalSub: optional, active internal subscription to extend
+2. Verifică dacă există abonamente active în Stripe (status: active)
+3. Verifică dacă există subscription schedules
+
+SCENARIO AA: NO ACTIVE STRIPE SUBSCRIPTION
+  AA1: No internal sub, no Stripe sub
+    - Create normal Stripe subscription
+    - payment_behavior: default_incomplete (requires payment)
+    - expand latest_invoice.payment_intent for client_secret
+
+  AA2: Active internal sub, no Stripe sub
+    - Generate PayNow invoice (charge immediately)
+    - Create subscription schedule starting at activeInternalSub.endDate
+    - Return PaymentIntent from PayNow invoice
+
+SCENARIO BB: ACTIVE STRIPE SUBSCRIPTION EXISTS
+  - Get active price ID from current subscription or schedule
+  - Validate not purchasing same price (block duplicate)
+  - Create or find existing subscription schedule
+  - Add new phase to schedule:
+    - Phase 1: current subscription until end of period
+    - Phase 2: new price starting at end of Phase 1 (1 iteration)
+    - end_behavior: release (continue as normal subscription after Phase 2)
+  - Generate PayNow invoice for new price
+  - Add negative customer balance to avoid double billing on phase transition
+
+4. Return resultedStripeSubscription with invoicePaymentIntent
+
+Cod sursă:
+- Service: src/v1/Stripe/Services/stripe.service.ts:128-382
+
+Method Signature:
+async createStripeSubscription(
+  stripeCustomerId: string,
+  currentInternalSub: SubscriptionEntity,
+  newStripePriceId: string,
+  activeInternalSub?: SubscriptionEntity
+)
+
+Key Logic Points:
+- lines 147-150: List active subscriptions
+- lines 167-170: List subscription schedules
+- lines 172-242: SCENARIO AA (no active Stripe sub)
+  - lines 188-206: AA1 (create normal subscription)
+  - lines 207-242: AA2 (create scheduled subscription)
+- lines 243-379: SCENARIO BB (active Stripe sub exists)
+  - lines 274-283: Block duplicate price purchase
+  - lines 297-329: Create/find subscription schedule
+  - lines 331-347: Build current phase
+  - lines 349-354: Generate PayNow invoice
+  - lines 357-372: Update schedule with new phase
+
+Dependencies:
+- Stripe SDK (subscriptions, subscriptionSchedules, invoices)
+- generatePayNowInvoiceAndAddCreditForNextInvoice()
+
+Notes:
+- MOST COMPLEX METHOD in entire codebase
+- Handles 3 distinct scenarios with different Stripe API flows
+- Subscription schedules used for phased pricing
+- Metadata includes internalSubscriptionId for linking
+- Pay-now + future credit mechanism to avoid double billing
+- Error handling with user-friendly Romanian messages
+
+Recommendations for .NET:
+- Break into separate methods per scenario (AA1, AA2, BB)
+- Create comprehensive unit tests for each scenario
+- Use strategy pattern for scenario selection
+- Add extensive logging for debugging
+- Create typed DTOs for all responses
+- Add circuit breaker for Stripe API calls (Polly)
+- Consider state machine for subscription lifecycle
+- Document all edge cases and business rules
+
+--------------------------------------------------------------------------------
+TASK 6: generatePayNowInvoiceAndAddCreditForNextInvoice() - Pay Now Mechanism
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Generează o factură Stripe care se plătește imediat pentru un abonament viitor,
+și adaugă un credit negativ în customer balance pentru a evita double billing
+când abonamentul viitor devine activ.
+
+Stripe limitation: Subscriptions charge at start of billing cycle. Workaround:
+1. Charge immediately via invoice
+2. Add negative balance to customer
+3. When scheduled subscription starts, next invoice is offset by negative balance
+
+Flow:
+1. Primește parametri:
+   - stripeCustomerId: customer ID
+   - newStripePriceId: price for future subscription
+   - resultedStripeSubscription: scheduled subscription (or null)
+2. Retrieve price object pentru amount
+3. Create invoice item cu amount din new price
+4. Create invoice (auto_advance: false)
+5. Finalize invoice (expand payment_intent)
+6. Update customer balance cu -amount (negative balance = credit)
+7. Return finalized invoice's payment_intent
+
+Cod sursă:
+- Service: src/v1/Stripe/Services/stripe.service.ts:384-462
+
+Method Signature:
+async generatePayNowInvoiceAndAddCreditForNextInvoice(
+  stripeCustomerId,
+  newStripePriceId,
+  resultedStripeSubscription
+)
+
+Stripe API Calls:
+1. stripe.prices.retrieve(newStripePriceId)
+2. stripe.invoiceItems.create({ customer, amount, currency, description })
+3. stripe.invoices.create({ customer, auto_advance: false, ... })
+4. stripe.invoices.finalizeInvoice(invoiceId, { expand: ['payment_intent'] })
+5. stripe.customers.update(customerId, { balance: -amount })
+
+Return Value:
+PaymentIntent object from finalized invoice
+
+Dependencies:
+- Stripe SDK
+
+Notes:
+- Workaround for Stripe billing cycle limitation
+- Negative customer balance = credit for future invoice
+- Prevents double billing when scheduled subscription activates
+- TODO in code: check new invoice amount is newPriceObject.unit_amount (not 0)
+
+Recommendations for .NET:
+- Add validation that payment_intent.amount > 0
+- Log all steps for debugging (invoice creation, finalization, balance update)
+- Add error handling for each Stripe API call
+- Consider alternative: Stripe billing anchors (if applicable)
+- Add unit tests with mocked Stripe SDK
+
+--------------------------------------------------------------------------------
+TASK 7: cancelPaymentSubscription() - Cancel Subscription at Period End
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Anulează un recurring subscription în Stripe. Abonamentul rămâne activ până la
+sfârșitul perioadei curente de facturare (cancel_at_period_end = true), apoi
+nu va mai fi reînnoit.
+
+Flow:
+1. Primește subscriptionId și stripeCustomer ID
+2. Retrieve subscription from Stripe
+3. Verifică ownership: subscription.customer === stripeCustomer
+4. Update subscription: cancel_at_period_end = true
+5. Return updated subscription object
+
+Cod sursă:
+- Service: src/v1/Stripe/Services/stripe.service.ts:464-495
+
+Method Signature:
+async cancelPaymentSubscription(subscriptionId: string, stripeCustomer: string)
+
+Stripe API Calls:
+1. stripe.subscriptions.retrieve(subscriptionId)
+2. stripe.subscriptions.update(subscriptionId, { cancel_at_period_end: true })
+
+Response:
+{
+  "id": "sub_xxxxx",
+  "status": "active",
+  "cancel_at_period_end": true,
+  "cancel_at": 1735689600,
+  "current_period_end": 1735689600,
+  ...
+}
+
+Dependencies:
+- Stripe SDK
+
+Notes:
+- Ownership validation prevents unauthorized cancellation
+- cancel_at_period_end = true (NOT immediate cancellation)
+- Commented code: stripe.subscriptions.del() for immediate cancel
+- Error logged if ownership check fails
+
+Recommendations for .NET:
+- Add internal subscription status update (mark as CANCELLING)
+- Send cancellation confirmation email
+- Log cancellation event for audit trail
+- Add cancellation reason capture (optional)
+- Consider offering retention incentives before cancellation
+
+--------------------------------------------------------------------------------
+TASK 8: retrieveActivePaymentSubscriptions() - List Active Subscriptions
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Returnează toate abonamentele active Stripe pentru un customer. Folosit pentru
+afișare în UI (management subscriptions page).
+
+Flow:
+1. Primește stripeCustomer ID
+2. List subscriptions cu status: active
+3. Verifică ownership: first subscription's customer === stripeCustomer
+4. Return array de subscriptions
+
+Cod sursă:
+- Service: src/v1/Stripe/Services/stripe.service.ts:497-522
+
+Method Signature:
+async retrieveActivePaymentSubscriptions(stripeCustomer: string): Promise<any[]>
+
+Stripe API Call:
+stripe.subscriptions.list({
+  customer: stripeCustomer,
+  status: 'active'
+})
+
+Response:
+[
+  {
+    "id": "sub_xxxxx",
+    "status": "active",
+    "current_period_end": 1735689600,
+    "items": {
+      "data": [{
+        "price": {
+          "id": "price_xxxxx",
+          "nickname": "Abonament Standard",
+          "unit_amount": 9900
+        }
+      }]
+    },
+    "metadata": {
+      "internalSubscriptionId": "123"
+    },
+    ...
+  }
+]
+
+Dependencies:
+- Stripe SDK
+
+Notes:
+- Returns array of Stripe subscription objects
+- Ownership check on first subscription (⚠️ should check all)
+- Error logged but NOT thrown (returns undefined on error)
+
+Recommendations for .NET:
+- Check ownership for ALL subscriptions, not just first
+- Return typed DTO: List<StripeSubscriptionResponse>
+- Add pagination support for customers with many subscriptions
+- Cache result (Redis, 1min TTL)
+- Throw exception instead of silent failure
+
+--------------------------------------------------------------------------------
+TASK 9: getSubscriptionById() - Retrieve Subscription Details
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Obține detalii despre un subscription Stripe specific. Folosit pentru verificare
+status abonament și actualizare endDate în webhook handler.
+
+Flow:
+1. Primește subscriptionId
+2. Retrieve subscription from Stripe
+3. Return subscription object
+
+Cod sursă:
+- Service: src/v1/Stripe/Services/stripe.service.ts:524-526
+
+Method Signature:
+async getSubscriptionById(subscriptionId: string): Promise<any>
+
+Stripe API Call:
+stripe.subscriptions.retrieve(subscriptionId)
+
+Response:
+{
+  "id": "sub_xxxxx",
+  "status": "active",
+  "current_period_start": 1730567890,
+  "current_period_end": 1738343890,
+  ...
+}
+
+Dependencies:
+- Stripe SDK
+
+Notes:
+- No ownership check (⚠️ security issue)
+- Used in webhook handler for recurring payments
+
+Recommendations for .NET:
+- Add ownership validation
+- Return typed DTO: StripeSubscriptionDetails
+- Add caching layer
+
+--------------------------------------------------------------------------------
+TASK 10: retrievePaymentIntent() - Retrieve PaymentIntent Details
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Obține detalii despre un PaymentIntent Stripe. Folosit pentru verificare status
+plată în procesarea webhook-urilor.
+
+Flow:
+1. Primește stripePaymentId (pi_xxxxx)
+2. Retrieve PaymentIntent from Stripe
+3. Return PaymentIntent object
+
+Cod sursă:
+- Service: src/v1/Stripe/Services/stripe.service.ts:529-531
+
+Method Signature:
+async retrievePaymentIntent(stripePaymentId)
+
+Stripe API Call:
+stripe.paymentIntents.retrieve(stripePaymentId)
+
+Response:
+{
+  "id": "pi_xxxxx",
+  "status": "succeeded",
+  "amount": 9900,
+  "currency": "ron",
+  "metadata": { ... },
+  ...
+}
+
+Dependencies:
+- Stripe SDK
+
+Notes:
+- Comment in code: "TypeError: this.stripe.retrievePaymentIntent is not a function"
+- Correct method: paymentIntents.retrieve (not retrievePaymentIntent)
+
+Recommendations for .NET:
+- Return typed DTO: StripePaymentIntentDetails
+- Add error handling for not found
+- Add caching layer
+
+--------------------------------------------------------------------------------
+TASK 11: constructEvent() - Verify Stripe Webhook Signature
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Verifică semnătura unui webhook event de la Stripe pentru a preveni spoofing.
+Stripe trimite header 'stripe-signature' care trebuie validat cu webhook secret.
+
+Flow:
+1. Primește requestBody (raw body) și signature (header value)
+2. Apelează stripe.webhooks.constructEvent() cu webhook secret
+3. Return event object dacă semnătura este validă
+4. Throw error dacă semnătura este invalidă
+
+Cod sursă:
+- Service: src/v1/Stripe/Services/stripe.service.ts:533-539
+
+Method Signature:
+constructEvent(requestBody: any, signature: any)
+
+Stripe SDK Call:
+stripe.webhooks.constructEvent(
+  requestBody,
+  signature,
+  this.webhookSecret
+)
+
+Return Value:
+{
+  "id": "evt_xxxxx",
+  "type": "payment_intent.succeeded",
+  "data": {
+    "object": { ... }
+  },
+  "created": 1730567890,
+  ...
+}
+
+Dependencies:
+- Stripe SDK
+- webhookSecret from environment variable
+
+Notes:
+- CRITICAL for webhook security
+- Webhook secret from environment: STRIPE_WEBHOOK_SECRET
+- Raw body required (NOT parsed JSON)
+- Throws error if signature invalid
+
+Recommendations for .NET:
+- Use Stripe.NET SDK EventUtility.ConstructEvent()
+- Store webhook secret in secure vault
+- Log all webhook events (type, id, timestamp)
+- Add retry logic for transient failures
+- Add dead letter queue for failed webhook processing
+
+================================================================================
+SUBSCRIPTION LIFECYCLE
+================================================================================
+
+Complete Subscription Flow:
+
+1. User browses subscription types
+   - GET /v1/subscription/types (public)
+
+2. User selects subscription type
+   - POST /v1/subscription/create-subscription
+   - Creates internal subscription (status: PENDING)
+   - If FREE: auto-activate + MailerLite sync
+   - If PAID: continue to step 3
+
+3. User provides billing address
+   - POST /v1/subscription/accept/:selectedType
+   - Saves billing address
+   - Validates no duplicate active subscriptions
+   - Calls StripeService.createStripeSubscription()
+   - Returns { paymentIntent } with client_secret
+
+4. Frontend Stripe checkout
+   - Use Stripe.js with client_secret
+   - Collect card details
+   - Confirm PaymentIntent
+
+5. Stripe sends webhook: payment_intent.succeeded
+   - POST /v1/payments/stripe/webhook
+   - Verify signature via StripeService.constructEvent()
+   - PaymentsService.handlePaymentIntentSucceeded():
+     - Update payment status
+     - Activate subscription (status: PAYMENT_ACCEPTED)
+     - Complete order
+     - Generate SmartBill invoice
+     - Send confirmation email
+     - Sync to MailerLite
+
+6. User accesses content
+   - Subscription is active
+   - Can view courses until endDate
+
+7. Recurring billing (for recurring subscriptions)
+   - Stripe sends webhook: invoice.payment_succeeded
+   - POST /v1/payments/stripe/webhook
+   - PaymentsService.handleInvoicePaymentSucceeded():
+     - Create new Order/Payment entities
+     - Generate SmartBill invoice
+     - Extend subscription endDate by 1 period
+
+8. User cancels subscription (optional)
+   - DELETE /v1/payments/cancel-subscription/:subscriptionId
+   - StripeService.cancelPaymentSubscription()
+   - Subscription remains active until current_period_end
+   - No renewal after period ends
+
+================================================================================
+END OF STRIPE SERVICE DOCUMENTATION
+================================================================================
+
+Summary:
+- Service Type: External API Integration (Stripe Payment Processing)
+- Core Methods: 11 (customer, account, payment intent, subscription, webhook)
+- SDK: 'stripe' npm package
+- Currency: RON (Romanian Leu)
+- Account: acct_1L14ojLeqDzV4xgN
+- Subscription Strategy: Dual system (Stripe for payment, Internal for access)
+
+Critical Business Logic:
+1. Complex subscription scheduling (AA1, AA2, BB scenarios)
+2. Pay-now + future credit mechanism
+3. Subscription schedules with phased pricing
+4. Negative customer balance to avoid double billing
+5. Webhook signature verification for security
+
+Integration Points:
+1. SubscriptionService → createStripeSubscription()
+2. PaymentsService → webhook handlers (constructEvent, handlePaymentIntentSucceeded)
+3. PaymentsController → cancelPaymentSubscription, retrieveActivePaymentSubscriptions
+
+Entity Flow:
+Internal Subscription (PENDING) → Stripe Subscription → PaymentIntent → Webhook → Internal Subscription (PAYMENT_ACCEPTED)
+
+Issues Found:
+- ⚠️ getSubscriptionById() has no ownership check
+- ⚠️ createAccount() has hardcoded test data
+- ⚠️ retrieveActivePaymentSubscriptions() only checks first subscription ownership
+- ⚠️ Error handling inconsistent (some throw, some return undefined)
+
+Recommendations for .NET:
+1. Use Stripe.NET SDK with strongly-typed models
+2. Break createStripeSubscription() into scenario-specific methods
+3. Add comprehensive unit tests for all scenarios
+4. Add circuit breaker pattern (Polly) for Stripe API calls
+5. Store all Stripe IDs in database (customer, subscription, paymentIntent)
+6. Add extensive logging for debugging complex flows
+7. Use state machine for subscription lifecycle management
+8. Add retry logic for webhook processing
+9. Add idempotency keys for Stripe API calls
+10. Remove test methods (createAccount with hardcoded data)
+
+Ready for JIRA import! 🎯

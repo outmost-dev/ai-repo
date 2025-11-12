@@ -1,0 +1,563 @@
+================================================================================
+STORY: Category Module
+================================================================================
+
+Modulul Category gestionează categoriile de cursuri cu suport pentru structuri ierarhice (parent-child relationships). Include funcționalități pentru CRUD, filtrare, și identificarea automată a categoriilor trending bazată pe activitatea recentă a lecțiilor.
+
+Locație cod sursă: src/v1/Category/
+
+Endpoints implementate: 7
+
+Services utilizate:
+- LessonService (pentru trending categories)
+- CourseService (pentru trending categories)
+- CategoriesRepository
+
+Dependencies:
+- AuthGuard('jwt') pe anumite endpoint-uri
+- @Roles(UserRoles.ADMIN) pentru operațiuni de management
+
+Notes:
+- Categoriile pot avea structură ierarhică prin parentCategoryId
+- Flag isOnFilter controlează afișarea în filtre
+- Trending categories calculat dinamic pe baza ultimelor lecții create
+- ATENȚIE: Routing order issue - endpoint-urile /main și /trending-categories ar trebui să fie înaintea /:categoryId
+- getChildCategories există în service dar NU e expusă în controller
+- Query type comentat ca 'any' în getCategoriesList
+
+
+================================================================================
+TASK 1: GET /v1/category/all - Listă categorii
+================================================================================
+
+Business Logic:
+1. Primește parametri de paginare și filtrare prin query (tip: GetCategoriesDTO)
+2. Interogează repository pentru listă paginată de categorii
+3. Returnează lista de categorii cu total count
+
+Cod sursă:
+- Controller: src/v1/Category/Controller/category.controller.ts:31-38
+- Service: src/v1/Category/Service/category.service.ts:26-29
+
+Request:
+GET /v1/category/all?page=1&limit=10
+
+Query Parameters:
+- page (optional): Număr pagină
+- limit (optional): Număr elemente per pagină
+- Alte filtre posibile conform GetCategoriesDTO
+
+Response Success (200):
+{
+  "categories": [
+    {
+      "id": 1,
+      "title": "Programare",
+      "description": "Cursuri de programare",
+      "isOnFilter": true,
+      "parentCategoryId": null,
+      "type": 1,
+      "ancestors": [],
+      "createdAt": "2023-01-01T00:00:00.000Z",
+      "updatedAt": "2023-01-01T00:00:00.000Z"
+    }
+  ],
+  "count": 50
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- CategoriesRepository.getCategoriesList()
+
+
+================================================================================
+TASK 2: GET /v1/category/:categoryId - Detaliu categorie
+================================================================================
+
+Business Logic:
+1. Primește categoryId din URL params
+2. Caută categoria în baza de date după ID
+3. Returnează detaliile complete ale categoriei
+4. ⚠️ ATENȚIE: Endpoint PUBLIC (fără guard) - orice utilizator poate accesa
+
+Cod sursă:
+- Controller: src/v1/Category/Controller/category.controller.ts:40-43
+- Service: src/v1/Category/Service/category.service.ts:31-36
+
+Request:
+GET /v1/category/123
+
+Path Parameters:
+- categoryId (required): ID-ul categoriei
+
+Response Success (200):
+{
+  "id": 123,
+  "title": "Backend Development",
+  "description": "Cursuri backend",
+  "isOnFilter": true,
+  "parentCategoryId": 1,
+  "type": 2,
+  "ancestors": [1],
+  "createdAt": "2023-01-01T00:00:00.000Z",
+  "updatedAt": "2023-01-01T00:00:00.000Z"
+}
+
+Response Error (404):
+{
+  "statusCode": 404,
+  "message": "Category not found"
+}
+
+Authorization:
+- ⚠️ PUBLIC - fără guard de autentificare
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- CategoriesRepository.getCategory()
+
+Security Issues:
+- Endpoint PUBLIC - ar trebui protejat cu AuthGuard('jwt') sau 'subscription-validation'?
+
+
+================================================================================
+TASK 3: GET /v1/category/main - Categorii principale
+================================================================================
+
+Business Logic:
+1. Primește parametri de paginare prin query (GetCategoriesDTO)
+2. Interogează doar categoriile principale (fără parentCategoryId, sau parentCategoryId = null)
+3. Returnează lista de categorii de nivel superior
+
+Cod sursă:
+- Controller: src/v1/Category/Controller/category.controller.ts:45-49
+- Service: src/v1/Category/Service/category.service.ts:38-41
+
+Request:
+GET /v1/category/main?page=1&limit=20
+
+Query Parameters:
+- page (optional): Număr pagină
+- limit (optional): Număr elemente per pagină
+
+Response Success (200):
+{
+  "categories": [
+    {
+      "id": 1,
+      "title": "Programare",
+      "description": "Toate cursurile de programare",
+      "isOnFilter": true,
+      "parentCategoryId": null,
+      "type": 1,
+      "ancestors": [],
+      "createdAt": "2023-01-01T00:00:00.000Z"
+    }
+  ],
+  "count": 10
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: Orice rol autentificat
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- CategoriesRepository.getMainCategories()
+
+Notes:
+- ⚠️ ROUTING ISSUE: Endpoint-ul /main ar trebui declarat ÎNAINTE de /:categoryId în controller pentru a evita conflictele de routing
+
+
+================================================================================
+TASK 4: GET /v1/category/trending-categories - Categorii trending
+================================================================================
+
+Business Logic:
+1. Obține lista ultimelor lecții create (folosind LessonService.getLatestLessons())
+2. Analizează frecvența cursurilor în lecțiile recente - grupează lecțiile după courseId și numără câte lecții aparțin fiecărui curs
+3. Sortează cursurile descrescător după numărul de lecții recente și extrage TOP 5
+4. Obține detaliile complete ale celor 5 cursuri (folosind CourseService.getCourseListByIds())
+5. Extrage categoryId-urile din cele 5 cursuri
+6. Interogează categoriile după lista de ID-uri
+7. Returnează categoriile trending (maxim 5)
+
+Cod sursă:
+- Controller: src/v1/Category/Controller/category.controller.ts:51-54
+- Service: src/v1/Category/Service/category.service.ts:49-83
+
+Request:
+GET /v1/category/trending-categories
+
+Response Success (200):
+{
+  "categories": [
+    {
+      "id": 3,
+      "title": "JavaScript Frameworks",
+      "description": "React, Vue, Angular",
+      "isOnFilter": true,
+      "parentCategoryId": 1,
+      "type": 2,
+      "ancestors": [1],
+      "createdAt": "2023-01-01T00:00:00.000Z"
+    }
+  ],
+  "count": 5
+}
+
+Response Error:
+- Nu are error handling specific (ar putea returna 500 dacă LessonService sau CourseService eșuează)
+
+Authorization:
+- ⚠️ PUBLIC - fără guard de autentificare
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- LessonService.getLatestLessons() - obține ultimele lecții
+- CourseService.getCourseListByIds() - obține detalii cursuri
+- CategoriesRepository.getCategoryListByIds() - obține categorii după ID-uri
+
+Notes:
+- ⚠️ ROUTING ISSUE: Endpoint-ul /trending-categories ar trebui declarat ÎNAINTE de /:categoryId
+- Algoritmul trending: bazat pe frecvența lecțiilor recente, nu pe vizualizări sau popularitate directă
+- Rezultat maxim 5 categorii (hardcodat în slice(0, 5))
+- ⚠️ Performanță: face 3 query-uri database cascade (lessons → courses → categories)
+
+
+================================================================================
+TASK 5: POST /v1/category - Creare categorie
+================================================================================
+
+Business Logic:
+1. Primește datele categoriei noi în body (CreateCategoryDto)
+2. Validează datele:
+   - title (obligatoriu, max 50 caractere)
+   - description (opțional, max 50 caractere)
+   - isOnFilter (opțional, boolean) - afișare în filtre
+   - parentCategoryId (opțional, number) - pentru categorii copil
+   - type (obligatoriu, number) - tipul categoriei
+3. Creează înregistrarea în baza de date
+4. Returnează categoria nou creată cu ID-ul generat
+
+Cod sursă:
+- Controller: src/v1/Category/Controller/category.controller.ts:56-62
+- Service: src/v1/Category/Service/category.service.ts:85-89
+- DTO: src/v1/Category/Dto/create-category.dto.ts:1-45
+
+Request:
+POST /v1/category
+Authorization: Bearer {jwt_token}
+
+Body:
+{
+  "title": "Machine Learning",
+  "description": "Cursuri de AI și ML",
+  "isOnFilter": true,
+  "parentCategoryId": 1,
+  "type": 2
+}
+
+Response Success (201):
+{
+  "id": 456,
+  "title": "Machine Learning",
+  "description": "Cursuri de AI și ML",
+  "isOnFilter": true,
+  "parentCategoryId": 1,
+  "type": 2,
+  "ancestors": [1],
+  "createdAt": "2024-11-02T10:30:00.000Z",
+  "updatedAt": "2024-11-02T10:30:00.000Z"
+}
+
+Response Error (400):
+{
+  "statusCode": 400,
+  "message": ["title should not be empty", "title must be shorter than or equal to 50 characters"],
+  "error": "Bad Request"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.ADMIN) - Doar administratori
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- CategoriesRepository.createCategory()
+
+Validation:
+- title: NotEmpty, MaxLength(50)
+- description: MaxLength(50), optional
+- isOnFilter: IsBoolean, optional
+- parentCategoryId: number, optional
+- type: required, number
+
+Notes:
+- ancestors[] se calculează automat în baza de date (probabil prin trigger sau în repository)
+
+
+================================================================================
+TASK 6: PATCH /v1/category/:categoryId - Actualizare categorie
+================================================================================
+
+Business Logic:
+1. Primește categoryId din URL params și datele de actualizat în body (UpdateCategoryDto)
+2. Validează datele:
+   - title (opțional, max 40 caractere) ⚠️ INCONSISTENȚĂ: în CreateDto e max 50!
+   - description (opțional)
+   - isOnFilter (opțional, boolean)
+   - parentCategoryId (opțional, number) - poate schimba ierarhia
+   - type (opțional, number)
+3. Actualizează înregistrarea în baza de date
+4. Returnează categoria actualizată
+
+Cod sursă:
+- Controller: src/v1/Category/Controller/category.controller.ts:64-73
+- Service: src/v1/Category/Service/category.service.ts:91-98
+- DTO: src/v1/Category/Dto/update-category.dto.ts:1-45
+
+Request:
+PATCH /v1/category/123
+Authorization: Bearer {jwt_token}
+
+Body:
+{
+  "title": "AI și Machine Learning",
+  "isOnFilter": false
+}
+
+Path Parameters:
+- categoryId (required): ID-ul categoriei
+
+Response Success (200):
+{
+  "id": 123,
+  "title": "AI și Machine Learning",
+  "description": "Cursuri de AI și ML",
+  "isOnFilter": false,
+  "parentCategoryId": 1,
+  "type": 2,
+  "ancestors": [1],
+  "createdAt": "2024-11-01T10:30:00.000Z",
+  "updatedAt": "2024-11-02T14:25:00.000Z"
+}
+
+Response Error (400):
+{
+  "statusCode": 400,
+  "message": ["title must be shorter than or equal to 40 characters"],
+  "error": "Bad Request"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Response Error (404):
+{
+  "statusCode": 404,
+  "message": "Category not found"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.ADMIN) - Doar administratori
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- CategoriesRepository.updateCategory()
+
+Validation:
+- title: MaxLength(40), optional - ⚠️ INCONSISTENȚĂ cu CreateDto (50 chars)
+- description: optional, no length limit
+- isOnFilter: IsBoolean, optional
+- parentCategoryId: number, optional
+- type: number, optional
+
+Notes:
+- ⚠️ BUG: title MaxLength diferit între Create (50) și Update (40)
+- Schimbarea parentCategoryId poate cauza reciclare ierarhică - ar trebui verificat în repository
+- ancestors[] se recalculează automat după update
+
+
+================================================================================
+TASK 7: DELETE /v1/category/:categoryId - Ștergere categorie
+================================================================================
+
+Business Logic:
+1. Primește categoryId din URL params
+2. Verifică dacă categoria există
+3. ⚠️ NECLAR: Nu verifică dacă categoria are cursuri asociate sau categorii copil
+4. Șterge categoria din baza de date (probabil HARD DELETE)
+5. Returnează status ok
+
+Cod sursă:
+- Controller: src/v1/Category/Controller/category.controller.ts:75-81
+- Service: src/v1/Category/Service/category.service.ts:100-103
+
+Request:
+DELETE /v1/category/123
+Authorization: Bearer {jwt_token}
+
+Path Parameters:
+- categoryId (required): ID-ul categoriei
+
+Response Success (200):
+{
+  "status": "ok",
+  "message": "Category has been deleted"
+}
+
+Response Error (401):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Response Error (403):
+{
+  "statusCode": 403,
+  "message": "Forbidden resource",
+  "error": "Forbidden"
+}
+
+Response Error (404):
+{
+  "statusCode": 404,
+  "message": "Category not found"
+}
+
+Authorization:
+- Guard: AuthGuard('jwt') - Token JWT obligatoriu
+- Roles: @Roles(UserRoles.ADMIN) - Doar administratori
+
+Rate Limiting:
+- Nu există rate limiting specific
+
+Dependencies:
+- CategoriesRepository.deleteCategory()
+
+Notes:
+- ⚠️ RISK: Nu se verifică relațiile (cursuri, categorii copil) înainte de ștergere
+- ⚠️ RISK: Probabil HARD DELETE (no soft delete)
+- Ar trebui:
+  1. Verificat dacă există cursuri în categoria respectivă
+  2. Verificat dacă există categorii copil
+  3. Decis cascade delete sau prevent delete
+  4. Implementat soft delete pentru istoric
+
+
+================================================================================
+ADDITIONAL NOTES - SERVICE METHODS NOT EXPOSED
+================================================================================
+
+Metodă: getChildCategories(categoryId: number)
+Locație: src/v1/Category/Service/category.service.ts:43-47
+
+Business Logic:
+- Returnează toate categoriile copil ale unei categorii specifice (parentCategoryId == categoryId)
+- NU este expusă în controller ca endpoint
+- Poate fi folosită intern de alte service-uri
+
+Recomandare pentru .NET:
+- Evaluează dacă această funcționalitate ar trebui expusă ca endpoint
+- Ar putea fi utilă pentru afișarea ierarhiei de categorii în UI
+
+
+================================================================================
+SUMMARY - Category Module
+================================================================================
+
+Total Endpoints: 7 (nu 5 cum era în inventar inițial!)
+
+Public Endpoints (fără autentificare):
+- GET /v1/category/:categoryId ⚠️
+- GET /v1/category/trending-categories ⚠️
+
+Authenticated Endpoints (JWT required):
+- GET /v1/category/all
+- GET /v1/category/main
+
+Admin Only Endpoints:
+- POST /v1/category
+- PATCH /v1/category/:categoryId
+- DELETE /v1/category/:categoryId
+
+Security Issues:
+1. Endpoint /:categoryId PUBLIC - ar trebui protejat?
+2. Endpoint /trending-categories PUBLIC - probabil OK
+3. Routing order: /main și /trending-categories ar trebui înainte de /:categoryId
+
+Bugs:
+1. title MaxLength diferit între Create (50) și Update (40)
+2. Query type comentat ca 'any' în getCategoriesList
+3. Delete nu verifică relațiile (cursuri, categorii copil)
+
+Missing Features:
+1. getChildCategories nu e expusă în controller
+2. Soft delete pentru categorii
+3. Verificare cascade pentru delete
+
+Performanță:
+1. Trending categories face 3 query-uri cascade (lessons → courses → categories)
+2. Consideră caching pentru trending categories (TTL: 1h?)
+
+Recomandări pentru .NET:
+1. Adaugă validare consistentă pentru title length
+2. Implementează soft delete cu IsDeleted flag
+3. Adaugă verificare relații pentru delete (prevent delete if in use)
+4. Expune getChildCategories ca endpoint pentru ierarhie
+5. Fixează routing order pentru a evita conflictele
+6. Implementează caching pentru trending categories
+7. Consideră validare parentCategoryId pentru a preveni recursive loops

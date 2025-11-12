@@ -1,0 +1,1680 @@
+================================================================================
+JIRA STORY: SHARED COMPONENTS - ADMIN DASHBOARD MIGRATION
+================================================================================
+Project: ADMIN (Somaway Admin Dashboard Migration to Vue.js 3)
+Story Type: Module Migration
+Priority: High
+Story Points: 10
+
+================================================================================
+STORY DESCRIPTION
+================================================================================
+
+Modulul Shared Components cuprinde toate componentele refolosibile și
+layout-urile folosite în întreg Admin Dashboard: AppLayout, PageHeader,
+Card, UserAvatar, Logo, BackBtn, RefreshBtn, Loader, StatsCard, și alte
+componente utilitare.
+
+**Locație cod sursă:**
+- Components: admin/src/components/
+- Layouts: admin/src/layouts/
+- Index: admin/src/components/index.ts (14 exported components)
+
+**Componente documentate:** 10 (core components only)
+- AppLayout (main layout: SideNav + HeaderNav + FooterNav + Content)
+- PageHeader (breadcrumbs + title + divider)
+- Card (styled wrapper around Ant Design Card)
+- UserAvatar (avatar cu initials + fullName + verified badge)
+- Logo (branding component cu text + image)
+- BackBtn (navigate back button)
+- RefreshBtn (page refresh button)
+- Loader (full-screen loading spinner)
+- StatsCard (dashboard stats: icon + value + progress)
+- SideNav (collapsible sidebar navigation)
+
+**Dependencies:**
+- Ant Design components (Layout, Menu, Avatar, Card, Breadcrumb, etc.)
+- React Router pentru navigation
+- react-countup pentru animated numbers
+- react-transition-group pentru page transitions
+- Redux pentru theme management
+- Auth Context pentru user data
+
+**Notes:**
+- Toate componentele sunt TypeScript cu prop types
+- Folosesc Ant Design theme tokens pentru consistency
+- Suport pentru responsive design (mobile + desktop)
+- Many components have Storybook stories (.stories.tsx)
+- Export centralizat prin admin/src/components/index.ts
+
+**Shared Components Strategy:**
+1. Core layout components (AppLayout, SideNav, HeaderNav, FooterNav)
+2. Utility components (Card, PageHeader, BackBtn, RefreshBtn, Loader)
+3. Display components (UserAvatar, Logo, StatsCard)
+4. Dashboard-specific components (documented separately în module pages)
+
+================================================================================
+TASK 1: AppLayout - Main Application Layout
+================================================================================
+**Title:** AppLayout with SideNav, HeaderNav, and Content Area
+
+**Description:**
+Layout principal pentru Admin Dashboard cu sidebar colapsabil, header sticky
+cu search, user avatar dropdown, theme toggle, și content area cu page
+transitions.
+
+**Business Logic:**
+1. App render wrapper pentru toate dashboard pages
+2. SideNav collapsible (200px expanded, 0px collapsed)
+3. HeaderNav sticky cu:
+   - Collapse/Expand button pentru sidebar
+   - Global search bar (debounce 1000ms, redirect la /users?searchValue=...)
+   - Apps button (non-functional)
+   - Messages button (non-functional)
+   - Theme toggle (light/dark mode via Redux)
+   - User avatar dropdown (profile, settings, help, logout)
+4. Content area cu page transitions (CSSTransition bottom-to-top)
+5. FloatButton BackTop pentru scroll to top
+6. FooterNav la bottom
+7. Responsive: sidebar auto-collapse pe mobile (<769px)
+8. NProgress loader pentru route changes
+
+**Current Implementation (React):**
+
+Location: admin/src/layouts/app/App.tsx (312 lines)
+
+Key Features:
+- Collapsible sidebar (controlled by collapsed state)
+- Sticky header with backdrop blur effect (navFill state)
+- Global search with debounce and navigation
+- User dropdown menu cu logout functionality
+- Theme toggle via Redux
+- Page transitions cu react-transition-group
+- FloatButton BackTop
+- Responsive breakpoint 769px
+
+Component Structure:
+```tsx
+<Layout> <!-- Main layout container -->
+  <NProgress isAnimating={isLoading} />
+
+  <SideNav
+    collapsed={collapsed}
+    onCollapse={setCollapsed}
+    // Fixed position, 200px width when expanded
+  />
+
+  <Layout>
+    <HeaderNav>
+      <!-- Collapse button -->
+      <Button onClick={() => setCollapsed(!collapsed)} />
+
+      <!-- Global search -->
+      <Input.Search onChange={onTypeSearch} />
+
+      <!-- Right side buttons -->
+      <Button icon={<AppstoreOutlined />} /> <!-- Apps -->
+      <Button icon={<MessageOutlined />} /> <!-- Messages -->
+      <Switch /> <!-- Theme toggle -->
+      <Dropdown> <!-- User menu -->
+        <UserAvatar fullName={authUser.fullName} />
+      </Dropdown>
+    </HeaderNav>
+
+    <Content>
+      <TransitionGroup>
+        <CSSTransition> <!-- Page transitions -->
+          {children}
+        </CSSTransition>
+      </TransitionGroup>
+      <FloatButton.BackTop />
+    </Content>
+
+    <FooterNav />
+  </Layout>
+</Layout>
+```
+
+State Management:
+```typescript
+const [collapsed, setCollapsed] = useState(true);
+const [navFill, setNavFill] = useState(false); // Header blur on scroll
+const [isLoading, setIsLoading] = useState(false); // Page transition
+const [searchValue, setSearchingVal] = useState<string>('');
+```
+
+Global Search Flow:
+```typescript
+const handleSearchNavigate = (searchValue: string) => {
+  navigate(`/dashboards/users?searchValue=${searchValue}`);
+};
+
+const debouncedFetchResults = useCallback(
+  debounce<(searchValue: string) => void>(handleSearchNavigate, 1000),
+  []
+);
+
+const onTypeSearch = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const value = event.target.value;
+  setSearchingVal(value);
+  if (value.length > 2) {
+    debouncedFetchResults(value);
+  }
+};
+```
+
+User Dropdown Menu:
+```typescript
+const items: MenuProps['items'] = [
+  { key: 'user-profile-link', label: 'profile', icon: <UserOutlined /> },
+  { key: 'user-settings-link', label: 'settings', icon: <SettingOutlined /> },
+  { key: 'user-help-link', label: 'help center', icon: <QuestionOutlined /> },
+  { type: 'divider' },
+  {
+    key: 'user-logout-link',
+    label: 'logout',
+    icon: <LogoutOutlined />,
+    danger: true,
+    onClick: () => {
+      message.loading('signing you out');
+      logout(); // Clear auth context + localStorage
+      setTimeout(() => navigate('/auth/signin'), 1000);
+    },
+  },
+];
+```
+
+Responsive Behavior:
+```typescript
+useEffect(() => {
+  setCollapsed(isMobile); // Auto-collapse on mobile
+}, [isMobile]);
+```
+
+**Target Implementation (Vue.js 3):**
+
+Framework: Vue 3 Composition API cu TypeScript
+Layout: Ant Design Vue Layout components
+
+Recommended Structure:
+```vue
+<script setup lang="ts">
+import { ref, onMounted, computed, watch } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
+import { useThemeStore } from '@/stores/theme';
+import { message } from 'ant-design-vue';
+import { useBreakpoints } from '@vueuse/core';
+import SideNav from './SideNav.vue';
+import HeaderNav from './HeaderNav.vue';
+import FooterNav from './FooterNav.vue';
+import UserAvatar from '@/components/UserAvatar.vue';
+import NProgress from '@/components/Nprogress/Progress.vue';
+
+const router = useRouter();
+const route = useRoute();
+const authStore = useAuthStore();
+const themeStore = useThemeStore();
+
+const collapsed = ref(true);
+const navFill = ref(false);
+const isLoading = ref(false);
+const searchValue = ref('');
+
+const breakpoints = useBreakpoints({
+  mobile: 769,
+});
+const isMobile = breakpoints.smaller('mobile');
+
+// User dropdown menu items
+const menuItems = computed(() => [
+  { key: 'profile', label: 'Profile', icon: 'UserOutlined' },
+  { key: 'settings', label: 'Settings', icon: 'SettingOutlined' },
+  { key: 'help', label: 'Help Center', icon: 'QuestionOutlined' },
+  { type: 'divider' },
+  {
+    key: 'logout',
+    label: 'Logout',
+    icon: 'LogoutOutlined',
+    danger: true,
+  },
+]);
+
+// Global search with debounce
+const debounce = (fn: Function, delay: number) => {
+  let timeoutId: NodeJS.Timeout;
+  return (...args: any[]) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delay);
+  };
+};
+
+const handleSearchNavigate = (value: string) => {
+  router.push(`/dashboards/users?searchValue=${value}`);
+};
+
+const debouncedSearch = debounce(handleSearchNavigate, 1000);
+
+const onSearchChange = (e: Event) => {
+  const value = (e.target as HTMLInputElement).value;
+  searchValue.value = value;
+  if (value.length > 2) {
+    debouncedSearch(value);
+  }
+};
+
+// Dropdown menu click handler
+const onMenuClick = ({ key }: { key: string }) => {
+  if (key === 'logout') {
+    message.loading('Signing you out');
+    authStore.logout();
+    setTimeout(() => router.push('/auth/signin'), 1000);
+  } else if (key === 'profile') {
+    router.push('/user-account/profile');
+  } else if (key === 'settings') {
+    router.push('/user-account/settings');
+  }
+};
+
+// Scroll handler for header backdrop
+const handleScroll = () => {
+  navFill.value = window.scrollY > 5;
+};
+
+// Auto-collapse sidebar on mobile
+watch(isMobile, (newVal) => {
+  collapsed.value = newVal;
+});
+
+// Route change loading
+watch(() => route.path, () => {
+  isLoading.value = true;
+  setTimeout(() => {
+    isLoading.value = false;
+  }, 300);
+});
+
+onMounted(() => {
+  window.addEventListener('scroll', handleScroll);
+  collapsed.value = isMobile.value;
+});
+</script>
+
+<template>
+  <a-layout :style="{ minHeight: '100vh' }">
+    <NProgress :isAnimating="isLoading" :key="route.path" />
+
+    <!-- Sidebar Navigation -->
+    <SideNav
+      v-model:collapsed="collapsed"
+      :style="{
+        overflow: 'auto',
+        position: 'fixed',
+        left: 0,
+        top: 0,
+        bottom: 0,
+        background: 'none',
+        border: 'none',
+        transition: 'all .2s',
+      }"
+    />
+
+    <a-layout>
+      <!-- Header Navigation -->
+      <HeaderNav
+        :style="{
+          marginLeft: collapsed ? 0 : '200px',
+          padding: '0 2rem 0 0',
+          background: navFill ? 'rgba(255, 255, 255, .5)' : 'none',
+          backdropFilter: navFill ? 'blur(8px)' : 'none',
+          boxShadow: navFill ? '0 0 8px 2px rgba(0, 0, 0, 0.05)' : 'none',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          position: 'sticky',
+          top: 0,
+          zIndex: 1,
+          gap: '8px',
+          transition: 'all .25s',
+        }"
+      >
+        <a-flex align="center">
+          <!-- Collapse/Expand Button -->
+          <a-tooltip :title="collapsed ? 'Expand Sidebar' : 'Collapse Sidebar'">
+            <a-button
+              type="text"
+              :style="{ fontSize: '16px', width: '64px', height: '64px' }"
+              @click="collapsed = !collapsed"
+            >
+              <MenuUnfoldOutlined v-if="collapsed" />
+              <MenuFoldOutlined v-else />
+            </a-button>
+          </a-tooltip>
+
+          <!-- Global Search -->
+          <a-input-search
+            v-model:value="searchValue"
+            placeholder="Search"
+            :style="{ width: isMobile ? '100%' : '400px', marginLeft: isMobile ? 0 : '.5rem' }"
+            size="middle"
+            @change="onSearchChange"
+          />
+        </a-flex>
+
+        <a-flex align="center" gap="small">
+          <!-- Apps Button -->
+          <a-tooltip title="Apps">
+            <a-button type="text" size="large">
+              <AppstoreOutlined />
+            </a-button>
+          </a-tooltip>
+
+          <!-- Messages Button -->
+          <a-tooltip title="Messages">
+            <a-button type="text" size="large">
+              <MessageOutlined />
+            </a-button>
+          </a-tooltip>
+
+          <!-- Theme Toggle -->
+          <a-tooltip title="Theme">
+            <a-switch
+              :checked="themeStore.theme === 'light'"
+              @change="themeStore.toggleTheme"
+            >
+              <template #checkedChildren>
+                <MoonOutlined />
+              </template>
+              <template #unCheckedChildren>
+                <SunOutlined />
+              </template>
+            </a-switch>
+          </a-tooltip>
+
+          <!-- User Dropdown -->
+          <a-dropdown :menu="{ items: menuItems, onClick: onMenuClick }" trigger="click">
+            <a-flex>
+              <UserAvatar
+                v-if="authStore.authUser?.fullName"
+                :fullName="authStore.authUser.fullName"
+                color="green"
+                size="middle"
+                :textWidth="100"
+              />
+            </a-flex>
+          </a-dropdown>
+        </a-flex>
+      </HeaderNav>
+
+      <!-- Content Area -->
+      <a-layout-content
+        :style="{
+          margin: `0 0 0 ${collapsed ? 0 : '200px'}`,
+          borderRadius: collapsed ? 0 : borderRadius,
+          transition: 'all .25s',
+          padding: '24px 32px',
+          minHeight: '360px',
+        }"
+      >
+        <!-- Page Transition Wrapper -->
+        <Transition name="bottom-to-top" mode="out-in">
+          <div :key="route.path">
+            <slot></slot>
+          </div>
+        </Transition>
+
+        <!-- Back to Top Button -->
+        <a-float-button-back-top />
+      </a-layout-content>
+
+      <!-- Footer Navigation -->
+      <FooterNav
+        :style="{
+          textAlign: 'center',
+          marginLeft: collapsed ? 0 : '200px',
+          background: 'none',
+        }"
+      />
+    </a-layout>
+  </a-layout>
+</template>
+
+<style scoped>
+.bottom-to-top-enter-active,
+.bottom-to-top-leave-active {
+  transition: all 0.3s ease;
+}
+
+.bottom-to-top-enter-from {
+  transform: translateY(20px);
+  opacity: 0;
+}
+
+.bottom-to-top-leave-to {
+  transform: translateY(-20px);
+  opacity: 0;
+}
+</style>
+```
+
+Pinia Store (stores/theme.ts):
+```typescript
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
+
+export const useThemeStore = defineStore('theme', () => {
+  const theme = ref<'light' | 'dark'>('light');
+
+  const toggleTheme = () => {
+    theme.value = theme.value === 'light' ? 'dark' : 'light';
+  };
+
+  return {
+    theme,
+    toggleTheme,
+  };
+});
+```
+
+**Migration Notes:**
+- React transitions → Vue Transition component
+- Redux theme → Pinia theme store
+- useMediaQuery → @vueuse/core useBreakpoints
+- React Router → Vue Router
+- Ant Design → Ant Design Vue (same structure, different syntax)
+- State management similar cu ref() instead of useState()
+
+**Acceptance Criteria:**
+- [ ] Collapsible sidebar (200px/0px)
+- [ ] Sticky header with blur effect on scroll
+- [ ] Global search cu debounce 1000ms
+- [ ] User dropdown menu (profile, settings, help, logout)
+- [ ] Theme toggle (light/dark)
+- [ ] Page transitions (bottom-to-top)
+- [ ] FloatButton BackTop
+- [ ] Responsive (auto-collapse la <769px)
+- [ ] NProgress loader pe route change
+- [ ] Logout flow: message → clear store → redirect /auth/signin
+
+**Estimation:** 2 days (complex layout with multiple features)
+
+================================================================================
+TASK 2: SideNav - Collapsible Sidebar Navigation
+================================================================================
+**Title:** SideNav with Menu Items and Active State
+
+**Description:**
+Sidebar navigation colapsabil cu logo, menu items pentru toate dashboard
+pages, și active state tracking based on current route.
+
+**Business Logic:**
+1. Fixed sidebar (left: 0, top: 0, bottom: 0)
+2. Collapsible (200px expanded, 0px collapsed)
+3. Logo la top cu link la root
+4. Menu items cu icons:
+   - Comenzi (Orders) → ShoppingCartOutlined
+   - Abonamente (Subscriptions) → ScheduleOutlined
+   - Campanii (Campaigns) → AlertOutlined
+   - Categorii (Categories) → GroupOutlined
+   - Cursuri (Courses) → BookOutlined
+   - Utilizatori (Users) → UserOutlined
+5. Active item tracking based on current pathname
+6. Responsive: breakpoint "lg", collapsedWidth 0
+
+**Current Implementation (React):**
+
+Location: admin/src/layouts/app/SideNav.tsx (137 lines)
+
+Key Features:
+- Menu items cu react-router Links
+- Active state din pathname
+- Logo component la top
+- ConfigProvider pentru custom menu colors
+- Collapsible width animation
+
+Menu Structure:
+```typescript
+const items: MenuProps['items'] = [
+  getItem('Dashboards', 'dashboards', null, [], 'group'),
+  getItem(<Link to="/orders">Comenzi</Link>, 'orders', <ShoppingCartOutlined />),
+  getItem(<Link to="/subscriptions">Abonamente</Link>, 'subscriptions', <ScheduleOutlined />),
+  getItem(<Link to="/campaigns">Campanii</Link>, 'campaigns', <AlertOutlined />),
+  getItem(<Link to="/categories">Categorii</Link>, 'categories', <GroupOutlined />),
+  getItem(<Link to="/courses">Cursuri</Link>, 'cursuri', <BookOutlined />),
+  getItem(<Link to="/users">Utilizatori</Link>, 'users', <UserOutlined />),
+];
+```
+
+Active State Tracking:
+```typescript
+const { pathname } = useLocation();
+const [current, setCurrent] = useState('');
+
+useEffect(() => {
+  const paths = pathname.split('/');
+  setCurrent(paths[paths.length - 1]); // Last segment
+}, [pathname]);
+```
+
+Custom Menu Colors:
+```typescript
+<ConfigProvider
+  theme={{
+    components: {
+      Menu: {
+        itemBg: 'none',
+        itemSelectedBg: COLOR['100'],
+        itemHoverBg: COLOR['50'],
+        itemSelectedColor: COLOR['600'],
+      },
+    },
+  }}
+>
+  <Menu
+    mode="inline"
+    items={items}
+    selectedKeys={[current]}
+  />
+</ConfigProvider>
+```
+
+**Target Implementation (Vue.js 3):**
+
+Recommended Structure:
+```vue
+<script setup lang="ts">
+import { ref, watch, computed } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import Logo from '@/components/Logo.vue';
+import {
+  ShoppingCartOutlined,
+  ScheduleOutlined,
+  AlertOutlined,
+  GroupOutlined,
+  BookOutlined,
+  UserOutlined,
+} from '@ant-design/icons-vue';
+
+const route = useRoute();
+const router = useRouter();
+
+const current = ref('');
+const openKeys = ref<string[]>([]);
+
+const menuItems = computed(() => [
+  { type: 'group', label: 'Dashboards', key: 'dashboards' },
+  { key: 'orders', label: 'Comenzi', icon: ShoppingCartOutlined, path: '/orders' },
+  { key: 'subscriptions', label: 'Abonamente', icon: ScheduleOutlined, path: '/subscriptions' },
+  { key: 'campaigns', label: 'Campanii', icon: AlertOutlined, path: '/campaigns' },
+  { key: 'categories', label: 'Categorii', icon: GroupOutlined, path: '/categories' },
+  { key: 'cursuri', label: 'Cursuri', icon: BookOutlined, path: '/courses' },
+  { key: 'users', label: 'Utilizatori', icon: UserOutlined, path: '/users' },
+]);
+
+const onClick = ({ key }: { key: string }) => {
+  const item = menuItems.value.find(m => m.key === key);
+  if (item?.path) {
+    router.push(item.path);
+  }
+};
+
+watch(() => route.path, (newPath) => {
+  const paths = newPath.split('/');
+  current.value = paths[paths.length - 1];
+  openKeys.value = paths;
+}, { immediate: true });
+</script>
+
+<template>
+  <a-layout-sider
+    v-bind="$attrs"
+    breakpoint="lg"
+    :collapsedWidth="0"
+  >
+    <Logo
+      color="blue"
+      asLink
+      href="/"
+      justify="center"
+      gap="small"
+      :imgSize="{ h: 28, w: 28 }"
+      :style="{ padding: '1rem 0' }"
+    />
+
+    <a-config-provider
+      :theme="{
+        components: {
+          Menu: {
+            itemBg: 'none',
+            itemSelectedBg: '#e6f7ff',
+            itemHoverBg: '#f0f5ff',
+            itemSelectedColor: '#1890ff',
+          },
+        },
+      }"
+    >
+      <a-menu
+        mode="inline"
+        v-model:selectedKeys="current"
+        v-model:openKeys="openKeys"
+        :style="{ border: 'none' }"
+        @click="onClick"
+      >
+        <template v-for="item in menuItems" :key="item.key">
+          <a-menu-item-group v-if="item.type === 'group'" :title="item.label" />
+          <a-menu-item v-else :key="item.key">
+            <template #icon>
+              <component :is="item.icon" />
+            </template>
+            {{ item.label }}
+          </a-menu-item>
+        </template>
+      </a-menu>
+    </a-config-provider>
+  </a-layout-sider>
+</template>
+```
+
+**Migration Notes:**
+- React Link → Vue Router programmatic navigation
+- Menu items cu @click handler pentru routing
+- Active state tracking cu watch pe route.path
+- ConfigProvider similar syntax în Vue
+- Dynamic icon rendering cu <component :is="...">
+
+**Acceptance Criteria:**
+- [ ] Logo la top cu link
+- [ ] 6 menu items cu icons
+- [ ] Active state tracking din route
+- [ ] Click navigation cu Vue Router
+- [ ] Custom menu colors (selected, hover)
+- [ ] Responsive breakpoint lg
+- [ ] Collapsed width 0
+
+**Estimation:** 1 day (straightforward navigation menu)
+
+================================================================================
+TASK 3: PageHeader - Breadcrumbs and Title Component
+================================================================================
+**Title:** PageHeader with Breadcrumbs, Title, and Divider
+
+**Description:**
+Component pentru header-ul fiecărei pagini cu breadcrumbs navigation, title,
+și divider decorativ.
+
+**Business Logic:**
+1. Display page title (capitalized)
+2. Display breadcrumbs navigation
+3. Horizontal divider cu title text aligned right
+
+**Current Implementation (React):**
+
+Location: admin/src/components/PageHeader/PageHeader.tsx (29 lines)
+
+Props:
+```typescript
+type Props = {
+  title: string;
+  breadcrumbs: BreadcrumbProps['items'];
+} & React.HTMLAttributes<HTMLDivElement>;
+```
+
+Usage Example:
+```tsx
+<PageHeader
+  title="Users Management"
+  breadcrumbs={[
+    { title: 'Dashboard' },
+    { title: 'Learning' },
+    { title: 'Users' },
+  ]}
+/>
+```
+
+Component Structure:
+```tsx
+<div {...others}>
+  <Space direction="vertical" size="small">
+    <Typography.Title level={4} style={{ textTransform: 'capitalize' }}>
+      {title}
+    </Typography.Title>
+    <Breadcrumb items={breadcrumbs} className="page-header-breadcrumbs" />
+  </Space>
+  <Divider orientation="right" plain>
+    <span style={{ textTransform: 'capitalize' }}>{title}</span>
+  </Divider>
+</div>
+```
+
+**Target Implementation (Vue.js 3):**
+
+Recommended Structure:
+```vue
+<script setup lang="ts">
+import { BreadcrumbItemType } from 'ant-design-vue/es/breadcrumb/Breadcrumb';
+
+interface PageHeaderProps {
+  title: string;
+  breadcrumbs: BreadcrumbItemType[];
+}
+
+defineProps<PageHeaderProps>();
+</script>
+
+<template>
+  <div v-bind="$attrs">
+    <a-space direction="vertical" size="small">
+      <a-typography-title
+        :level="4"
+        :style="{ padding: 0, margin: 0, textTransform: 'capitalize' }"
+      >
+        {{ title }}
+      </a-typography-title>
+
+      <a-breadcrumb :items="breadcrumbs" class="page-header-breadcrumbs" />
+    </a-space>
+
+    <a-divider orientation="right" plain>
+      <span :style="{ textTransform: 'capitalize' }">{{ title }}</span>
+    </a-divider>
+  </div>
+</template>
+
+<style scoped>
+.page-header-breadcrumbs {
+  /* Custom breadcrumb styles */
+}
+</style>
+```
+
+Usage Example (Vue):
+```vue
+<PageHeader
+  title="Users Management"
+  :breadcrumbs="[
+    { title: 'Dashboard' },
+    { title: 'Learning' },
+    { title: 'Users' },
+  ]"
+/>
+```
+
+**Migration Notes:**
+- Simple presentational component
+- Props structure identică
+- Ant Design Breadcrumb similar în Vue
+- textTransform via CSS sau inline style
+
+**Acceptance Criteria:**
+- [ ] Title prop (capitalized)
+- [ ] Breadcrumbs prop (array of items)
+- [ ] Vertical space layout
+- [ ] Horizontal divider cu title text right
+- [ ] Support pentru HTML attributes via $attrs
+
+**Estimation:** 0.25 days (simple component)
+
+================================================================================
+TASK 4: Card - Styled Wrapper Component
+================================================================================
+**Title:** Card Wrapper around Ant Design Card
+
+**Description:**
+Wrapper simplu peste Ant Design Card cu custom CSS class pentru styling
+consistent în tot dashboard-ul.
+
+**Current Implementation (React):**
+
+Location: admin/src/components/Card/Card.tsx (15 lines)
+
+Props:
+```typescript
+type Props = { children: ReactNode } & CardProps;
+```
+
+Component:
+```tsx
+export const Card = ({ children, ...others }: Props) => {
+  return (
+    <AntdCard className="card" {...others}>
+      {children}
+    </AntdCard>
+  );
+};
+```
+
+**Target Implementation (Vue.js 3):**
+
+Recommended Structure:
+```vue
+<script setup lang="ts">
+import { CardProps } from 'ant-design-vue/es/card';
+
+interface CustomCardProps extends /* @vue-ignore */ CardProps {}
+
+defineProps<CustomCardProps>();
+</script>
+
+<template>
+  <a-card class="card" v-bind="$attrs">
+    <slot></slot>
+  </a-card>
+</template>
+
+<style scoped>
+.card {
+  /* Custom card styles */
+}
+</style>
+```
+
+Usage Example:
+```vue
+<Card title="User Statistics" :bordered="false">
+  <p>Content here...</p>
+</Card>
+```
+
+**Migration Notes:**
+- Trivial wrapper component
+- children → <slot> în Vue
+- Props passthrough via v-bind="$attrs"
+
+**Acceptance Criteria:**
+- [ ] Wrapper around a-card
+- [ ] Custom "card" CSS class
+- [ ] Props passthrough
+- [ ] Slot pentru children
+
+**Estimation:** 0.1 days (trivial wrapper)
+
+================================================================================
+TASK 5: UserAvatar - Avatar with Name and Verified Badge
+================================================================================
+**Title:** UserAvatar Component with Initials and Full Name
+
+**Description:**
+Component pentru afișare avatar cu initials, full name text, și verified
+badge (optional). Suport pentru custom color și size.
+
+**Business Logic:**
+1. Extract initials din fullName (e.g., "John Doe" → "JD")
+2. Generate background color (default sau custom)
+3. Determine text color based on background lightness
+4. Display full name next to avatar
+5. Optional verified badge (CheckCircleFilled icon)
+6. Size variants: small (18px), middle (24px), large (36px)
+
+**Current Implementation (React):**
+
+Location: admin/src/components/UserAvatar/UserAvatar.tsx (76 lines)
+
+Props:
+```typescript
+type Props = {
+  fullName: string;
+  mark?: boolean; // If true, show UserOutlined icon instead of initials
+  size?: 'small' | 'middle' | 'large';
+  verified?: boolean;
+  color?: CSSProperties['color'];
+  textWidth?: CSSProperties['width'];
+} & Omit<FlexProps, 'children'>;
+```
+
+Key Features:
+- getNameInitials() util function pentru extract initials
+- isColorLight() util function pentru determine text color
+- colourNameToHex() util pentru convert color names
+- Verified badge (blue CheckCircleFilled)
+
+Component Structure:
+```tsx
+<Flex gap="small" align="center">
+  {mark ? (
+    <Avatar icon={<UserOutlined />} style={{ backgroundColor: color }} />
+  ) : (
+    <Avatar style={{ backgroundColor: color }}>
+      {getNameInitials(fullName)}
+    </Avatar>
+  )}
+  <Typography.Text style={{ fontSize: ..., width: textWidth }}>
+    {fullName}
+  </Typography.Text>
+  {verified && <CheckCircleFilled style={{ color: blue[6] }} />}
+</Flex>
+```
+
+Utility Functions:
+```typescript
+// utils/index.ts
+export const getNameInitials = (name: string): string => {
+  const names = name.split(' ');
+  if (names.length === 1) return names[0].charAt(0).toUpperCase();
+  return (names[0].charAt(0) + names[names.length - 1].charAt(0)).toUpperCase();
+};
+
+export const isColorLight = (hexColor: string): boolean => {
+  const r = parseInt(hexColor.slice(1, 3), 16);
+  const g = parseInt(hexColor.slice(3, 5), 16);
+  const b = parseInt(hexColor.slice(5, 7), 16);
+  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+  return brightness > 155;
+};
+```
+
+**Target Implementation (Vue.js 3):**
+
+Recommended Structure:
+```vue
+<script setup lang="ts">
+import { computed } from 'vue';
+import { CheckCircleFilled, UserOutlined } from '@ant-design/icons-vue';
+import { blue } from '@ant-design/colors';
+import { getNameInitials, isColorLight, colourNameToHex } from '@/utils';
+
+interface UserAvatarProps {
+  fullName: string;
+  mark?: boolean;
+  size?: 'small' | 'middle' | 'large';
+  verified?: boolean;
+  color?: string;
+  textWidth?: number;
+}
+
+const props = withDefaults(defineProps<UserAvatarProps>(), {
+  mark: false,
+  size: 'middle',
+  verified: false,
+  textWidth: 160,
+});
+
+const avatarSize = computed(() => {
+  return props.size === 'large' ? 36 : props.size === 'small' ? 18 : 24;
+});
+
+const fontSize = computed(() => {
+  return props.size === 'large' ? 18 : props.size === 'small' ? 14 : 16;
+});
+
+const backgroundColor = computed(() => {
+  return props.color || '#1890ff';
+});
+
+const textColor = computed(() => {
+  const hex = colourNameToHex(backgroundColor.value);
+  return isColorLight(hex) ? 'black' : 'white';
+});
+</script>
+
+<template>
+  <a-flex gap="small" align="center" v-bind="$attrs">
+    <!-- Avatar with icon (mark mode) -->
+    <a-avatar
+      v-if="mark"
+      :size="avatarSize"
+      :style="{ backgroundColor, color: textColor }"
+    >
+      <template #icon>
+        <UserOutlined />
+      </template>
+    </a-avatar>
+
+    <!-- Avatar with initials -->
+    <a-avatar
+      v-else
+      :size="avatarSize"
+      :style="{ backgroundColor, color: textColor }"
+    >
+      {{ getNameInitials(fullName) }}
+    </a-avatar>
+
+    <!-- Full name text -->
+    <a-typography-text :style="{ fontSize: `${fontSize}px`, width: `${textWidth}px` }">
+      {{ fullName }}
+    </a-typography-text>
+
+    <!-- Verified badge -->
+    <CheckCircleFilled
+      v-if="verified"
+      :style="{ fontSize: '14px', color: blue[6] }"
+    />
+  </a-flex>
+</template>
+```
+
+Utils (utils/index.ts):
+```typescript
+export const getNameInitials = (name: string): string => {
+  const names = name.split(' ');
+  if (names.length === 1) return names[0].charAt(0).toUpperCase();
+  return (names[0].charAt(0) + names[names.length - 1].charAt(0)).toUpperCase();
+};
+
+export const isColorLight = (hexColor: string): boolean => {
+  const r = parseInt(hexColor.slice(1, 3), 16);
+  const g = parseInt(hexColor.slice(3, 5), 16);
+  const b = parseInt(hexColor.slice(5, 7), 16);
+  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+  return brightness > 155;
+};
+
+export const colourNameToHex = (color: string): string => {
+  // Map color names to hex codes or return as-is if already hex
+  const colorMap: Record<string, string> = {
+    red: '#ff0000',
+    green: '#00ff00',
+    blue: '#0000ff',
+    // Add more color mappings as needed
+  };
+
+  if (color.startsWith('#')) return color;
+  return colorMap[color.toLowerCase()] || '#000000';
+};
+```
+
+**Migration Notes:**
+- Utility functions identical între React și Vue
+- Avatar component similar în Ant Design Vue
+- Computed properties pentru reactive sizing/colors
+- Verified badge cu v-if conditional rendering
+
+**Acceptance Criteria:**
+- [ ] Extract initials din fullName
+- [ ] Background color cu auto text color (light/dark)
+- [ ] Size variants (small, middle, large)
+- [ ] Mark mode cu UserOutlined icon
+- [ ] Verified badge (CheckCircleFilled blue)
+- [ ] Custom textWidth prop
+- [ ] Utility functions: getNameInitials, isColorLight, colourNameToHex
+
+**Estimation:** 0.5 days (includes utility functions)
+
+================================================================================
+TASK 6: Logo - Branding Component
+================================================================================
+**Title:** Logo Component with Image and Text
+
+**Description:**
+Component pentru logo-ul aplicației cu image + text "Somaway • Admin",
+suport pentru link și custom colors.
+
+**Current Implementation (React):**
+
+Location: admin/src/components/Logo/Logo.tsx (76 lines)
+
+Props:
+```typescript
+type LogoProps = {
+  color: CSSProperties['color'];
+  imgSize?: { h?: number | string; w?: number | string };
+  asLink?: boolean;
+  href?: string;
+  bgColor?: CSSProperties['backgroundColor'];
+} & Partial<FlexProps>;
+```
+
+Features:
+- Image: /logo-no-background.png (48px height default)
+- Text: "Somaway • Admin" or "Antd Admin" (inconsistent)
+- Optional Link wrapper
+- Custom color, bgColor, imgSize
+
+**Target Implementation (Vue.js 3):**
+
+Recommended Structure:
+```vue
+<script setup lang="ts">
+interface LogoProps {
+  color: string;
+  imgSize?: { h?: number | string; w?: number | string };
+  asLink?: boolean;
+  href?: string;
+  bgColor?: string;
+}
+
+const props = withDefaults(defineProps<LogoProps>(), {
+  asLink: false,
+  href: '#',
+});
+</script>
+
+<template>
+  <!-- Logo as Link -->
+  <router-link v-if="asLink" :to="href" class="logo-link">
+    <a-flex gap="small" align="center" v-bind="$attrs">
+      <img
+        src="/logo-no-background.png"
+        alt="Somaway Admin Logo"
+        :height="imgSize?.h || 48"
+      />
+      <a-typography-title
+        :level="5"
+        type="secondary"
+        :style="{
+          color,
+          margin: 0,
+          padding: '4px 8px',
+          backgroundColor: bgColor,
+          borderRadius: '4px',
+        }"
+      >
+        Somaway • Admin
+      </a-typography-title>
+    </a-flex>
+  </router-link>
+
+  <!-- Logo without Link -->
+  <a-flex v-else gap="small" align="center" v-bind="$attrs">
+    <img
+      src="/logo-no-background.png"
+      alt="Somaway Admin Logo"
+      :height="imgSize?.h || 48"
+    />
+    <a-typography-title
+      :level="4"
+      type="secondary"
+      :style="{
+        color,
+        margin: 0,
+        padding: '4px 8px',
+        backgroundColor: bgColor,
+        borderRadius: '4px',
+      }"
+    >
+      Somaway • Admin
+    </a-typography-title>
+  </a-flex>
+</template>
+
+<style scoped>
+.logo-link {
+  text-decoration: none;
+}
+</style>
+```
+
+**Migration Notes:**
+- Simple presentational component
+- Fix text inconsistency: use "Somaway • Admin" consistent
+- React Link → router-link în Vue
+- Props similar structure
+
+**Acceptance Criteria:**
+- [ ] Image src="/logo-no-background.png"
+- [ ] Text "Somaway • Admin" (consistent)
+- [ ] asLink mode cu router-link
+- [ ] Custom color, bgColor, imgSize props
+- [ ] Default imgSize 48px height
+
+**Estimation:** 0.25 days (simple branding component)
+
+================================================================================
+TASK 7: BackBtn - Navigate Back Button
+================================================================================
+**Title:** BackBtn Component for Navigation
+
+**Description:**
+Button pentru navigate înapoi la pagina anterioară din browser history.
+
+**Current Implementation (React):**
+
+Location: admin/src/components/BackBtn/BackBtn.tsx (25 lines)
+
+Props:
+```typescript
+type Props = {
+  wIcon?: boolean;    // Show icon with text
+  iconOnly?: boolean; // Show only icon
+} & ButtonProps;
+```
+
+Component:
+```tsx
+<Tooltip title="Navigate to previous page">
+  <Button
+    icon={wIcon || iconOnly ? <LeftOutlined /> : null}
+    onClick={() => navigate(-1)}
+    {...others}
+  >
+    {!iconOnly && 'Go back'}
+  </Button>
+</Tooltip>
+```
+
+**Target Implementation (Vue.js 3):**
+
+Recommended Structure:
+```vue
+<script setup lang="ts">
+import { useRouter } from 'vue-router';
+import { LeftOutlined } from '@ant-design/icons-vue';
+import type { ButtonProps } from 'ant-design-vue/es/button';
+
+interface BackBtnProps extends /* @vue-ignore */ ButtonProps {
+  wIcon?: boolean;
+  iconOnly?: boolean;
+}
+
+const props = withDefaults(defineProps<BackBtnProps>(), {
+  wIcon: false,
+  iconOnly: false,
+});
+
+const router = useRouter();
+
+const goBack = () => {
+  router.go(-1);
+};
+</script>
+
+<template>
+  <a-tooltip title="Navigate to previous page">
+    <a-button @click="goBack" v-bind="$attrs">
+      <template v-if="wIcon || iconOnly" #icon>
+        <LeftOutlined />
+      </template>
+      <template v-if="!iconOnly">Go back</template>
+    </a-button>
+  </a-tooltip>
+</template>
+```
+
+Usage Examples:
+```vue
+<BackBtn /> <!-- Text only -->
+<BackBtn wIcon /> <!-- Icon + text -->
+<BackBtn iconOnly /> <!-- Icon only -->
+```
+
+**Migration Notes:**
+- navigate(-1) → router.go(-1)
+- Button icon slot în Vue
+- Conditional rendering cu v-if
+
+**Acceptance Criteria:**
+- [ ] Navigate back functionality (router.go(-1))
+- [ ] wIcon prop (show icon with text)
+- [ ] iconOnly prop (show only icon)
+- [ ] Tooltip "Navigate to previous page"
+- [ ] Props passthrough via $attrs
+
+**Estimation:** 0.25 days (simple navigation button)
+
+================================================================================
+TASK 8: RefreshBtn - Page Refresh Button
+================================================================================
+**Title:** RefreshBtn Component for Page Reload
+
+**Description:**
+Button pentru refresh full page (window.location.reload).
+
+**Current Implementation (React):**
+
+Location: admin/src/components/RefreshBtn/RefreshBtn.tsx (19 lines)
+
+Props:
+```typescript
+type Props = {
+  icon?: boolean;
+} & ButtonProps;
+```
+
+Component:
+```tsx
+<Button
+  icon={icon ? <SyncOutlined /> : null}
+  onClick={() => window.location.reload()}
+  {...others}
+>
+  Refresh page
+</Button>
+```
+
+**Target Implementation (Vue.js 3):**
+
+Recommended Structure:
+```vue
+<script setup lang="ts">
+import { SyncOutlined } from '@ant-design/icons-vue';
+import type { ButtonProps } from 'ant-design-vue/es/button';
+
+interface RefreshBtnProps extends /* @vue-ignore */ ButtonProps {
+  icon?: boolean;
+}
+
+defineProps<RefreshBtnProps>();
+
+const refreshPage = () => {
+  window.location.reload();
+};
+</script>
+
+<template>
+  <a-button @click="refreshPage" v-bind="$attrs">
+    <template v-if="icon" #icon>
+      <SyncOutlined />
+    </template>
+    Refresh page
+  </a-button>
+</template>
+```
+
+**Migration Notes:**
+- Trivial component
+- window.location.reload() works în Vue
+
+**Acceptance Criteria:**
+- [ ] Refresh button cu window.location.reload()
+- [ ] icon prop (show SyncOutlined)
+- [ ] Text "Refresh page"
+- [ ] Props passthrough
+
+**Estimation:** 0.1 days (trivial button)
+
+================================================================================
+TASK 9: Loader - Full-Screen Loading Spinner
+================================================================================
+**Title:** Loader Component with Spin
+
+**Description:**
+Full-screen loading spinner cu backdrop, folosit pentru page loading states.
+
+**Current Implementation (React):**
+
+Location: admin/src/components/Loader/Loader.tsx (18 lines)
+
+Component:
+```tsx
+<div className="loader-container" style={{ borderRadius }}>
+  <Spin tip="Loading">
+    <div className="content" />
+  </Spin>
+</div>
+```
+
+CSS:
+```css
+.loader-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.8);
+  z-index: 9999;
+}
+```
+
+**Target Implementation (Vue.js 3):**
+
+Recommended Structure:
+```vue
+<script setup lang="ts">
+import { theme } from 'ant-design-vue';
+
+const { token } = theme.useToken();
+</script>
+
+<template>
+  <div class="loader-container" :style="{ borderRadius: token.borderRadius }">
+    <a-spin tip="Loading">
+      <div class="content" />
+    </a-spin>
+  </div>
+</template>
+
+<style scoped>
+.loader-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.8);
+  z-index: 9999;
+}
+
+.content {
+  min-height: 200px;
+  min-width: 200px;
+}
+</style>
+```
+
+**Migration Notes:**
+- Simple full-screen loader
+- useToken() theme hook available în Ant Design Vue
+
+**Acceptance Criteria:**
+- [ ] Full-screen fixed position
+- [ ] Centered spin component
+- [ ] Semi-transparent white background
+- [ ] z-index 9999
+- [ ] "Loading" tip text
+
+**Estimation:** 0.1 days (simple loader)
+
+================================================================================
+TASK 10: StatsCard - Dashboard Statistics Card
+================================================================================
+**Title:** StatsCard Component with Icon, Value, and Progress
+
+**Description:**
+Card component pentru afișare statistici dashboard: icon, title, animated
+count-up value, și progress bar.
+
+**Current Implementation (React):**
+
+Location: admin/src/components/dashboard/learning/StatsCard/StatsCard.tsx (37 lines)
+
+Props:
+```typescript
+type Props = {
+  title: string;
+  value: number;
+  icon: any; // React component
+  color: string;
+  progress: number; // 0-100
+} & CardProps;
+```
+
+Component Structure:
+```tsx
+<Card {...others}>
+  <Flex vertical gap="middle">
+    {React.createElement(icon, { style: { fontSize: 30 } })}
+    <Typography.Text className="m-0 text-capitalize">
+      {title}
+    </Typography.Text>
+    <Typography.Title level={2} className="m-0">
+      <CountUp end={value} />
+    </Typography.Title>
+    <Progress percent={progress} showInfo={false} strokeColor={color} />
+  </Flex>
+</Card>
+```
+
+Usage Example:
+```tsx
+<StatsCard
+  title="total users"
+  value={1234}
+  icon={UserOutlined}
+  color="#52c41a"
+  progress={75}
+/>
+```
+
+**Target Implementation (Vue.js 3):**
+
+Recommended Structure:
+```vue
+<script setup lang="ts">
+import { h } from 'vue';
+import { CountUp } from 'vue-countup-v3'; // Or equivalent Vue library
+import Card from '@/components/Card.vue';
+import type { CardProps } from 'ant-design-vue/es/card';
+
+interface StatsCardProps extends /* @vue-ignore */ CardProps {
+  title: string;
+  value: number;
+  icon: any; // Vue component
+  color: string;
+  progress: number;
+}
+
+defineProps<StatsCardProps>();
+</script>
+
+<template>
+  <Card v-bind="$attrs">
+    <a-flex vertical gap="middle">
+      <!-- Dynamic icon component -->
+      <component :is="icon" :style="{ fontSize: '30px' }" />
+
+      <!-- Title -->
+      <a-typography-text class="m-0 text-capitalize">
+        {{ title }}
+      </a-typography-text>
+
+      <!-- Animated count up value -->
+      <a-typography-title :level="2" class="m-0">
+        <CountUp :end-val="value" />
+      </a-typography-title>
+
+      <!-- Progress bar -->
+      <a-progress
+        :percent="progress"
+        :showInfo="false"
+        :strokeColor="color"
+      />
+    </a-flex>
+  </Card>
+</template>
+
+<style scoped>
+.m-0 {
+  margin: 0;
+}
+
+.text-capitalize {
+  text-transform: capitalize;
+}
+</style>
+```
+
+Count Up Library:
+```bash
+npm install vue-countup-v3
+```
+
+Usage Example (Vue):
+```vue
+<StatsCard
+  title="total users"
+  :value="1234"
+  :icon="UserOutlined"
+  color="#52c41a"
+  :progress="75"
+/>
+```
+
+**Migration Notes:**
+- react-countup → vue-countup-v3 (or similar)
+- React.createElement → <component :is="...">
+- Card wrapper custom component
+- Props similar structure
+
+**Acceptance Criteria:**
+- [ ] Icon prop (dynamic component)
+- [ ] Title prop (capitalized)
+- [ ] Value prop cu animated count up
+- [ ] Progress bar cu custom color
+- [ ] Vertical flex layout cu gap
+- [ ] Wrapped în Card component
+
+**Estimation:** 0.5 days (includes count-up library integration)
+
+================================================================================
+SUMMARY - SHARED COMPONENTS MODULE
+================================================================================
+
+**Total Tasks:** 10
+
+**Task Breakdown:**
+1. AppLayout - Main Application Layout (2 days)
+2. SideNav - Collapsible Sidebar Navigation (1 day)
+3. PageHeader - Breadcrumbs and Title (0.25 days)
+4. Card - Styled Wrapper (0.1 days)
+5. UserAvatar - Avatar with Name and Badge (0.5 days)
+6. Logo - Branding Component (0.25 days)
+7. BackBtn - Navigate Back Button (0.25 days)
+8. RefreshBtn - Page Refresh Button (0.1 days)
+9. Loader - Full-Screen Spinner (0.1 days)
+10. StatsCard - Dashboard Statistics Card (0.5 days)
+
+**Total Estimation:** 5 days
+
+**Component Types:**
+- ✅ LAYOUTS: AppLayout (SideNav, HeaderNav, FooterNav)
+- ✅ NAVIGATION: SideNav, BackBtn
+- ✅ PRESENTATIONAL: PageHeader, Card, Logo, Loader
+- ✅ DATA DISPLAY: UserAvatar, StatsCard
+- ✅ UTILITY: RefreshBtn
+
+**Key Dependencies:**
+- Ant Design Vue 4.x pentru UI components
+- Vue Router pentru navigation
+- Pinia pentru state management (theme, auth)
+- @vueuse/core pentru composables (breakpoints)
+- vue-countup-v3 pentru animated numbers
+- Utility functions (getNameInitials, isColorLight, colourNameToHex)
+
+**Migration Priorities:**
+1. HIGH: AppLayout, SideNav (core navigation)
+2. MEDIUM: PageHeader, Card, UserAvatar (used în multe pages)
+3. LOW: BackBtn, RefreshBtn, Loader, StatsCard (utility components)
+
+**Additional Components Not Documented** (Optional for future phases):
+- Flex component (simple wrapper)
+- Container component
+- MoreMenu component
+- NotificationsCard / NotificationsItem
+- EmployeeCard
+- SocialMediaCard
+- FaqCollapse
+- NProgress components (Bar, Spinner, Container, Progress)
+- Dashboard-specific cards (already documented în module pages)
+
+**Recommendations:**
+1. Implementează AppLayout + SideNav împreună (tightly coupled)
+2. Create shared utils directory pentru helper functions
+3. Setup Pinia stores pentru theme și eventual UI state
+4. Consider component library structure (atomic design)
+5. Add Storybook pentru component documentation (Vue Storybook)
+6. Implement responsive breakpoints consistently cu @vueuse/core
+7. Create comprehensive TypeScript types pentru all components
+8. Setup unit tests pentru utility functions
+9. Document component props cu JSDoc comments
+10. Create component usage examples în Storybook
+
+**Best Practices:**
+- Use Composition API cu <script setup> syntax
+- TypeScript pentru type safety
+- Scoped styles pentru component isolation
+- Props validation cu TypeScript interfaces
+- Composables pentru shared logic (useBreakpoints, useTheme, etc.)
+- v-bind="$attrs" pentru props passthrough
+- <slot> pentru children rendering
+- Computed properties pentru reactive values
+- Watch pentru side effects
+
+================================================================================
+END OF SHARED COMPONENTS DOCUMENTATION
+================================================================================

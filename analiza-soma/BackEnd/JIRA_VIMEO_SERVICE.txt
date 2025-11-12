@@ -1,0 +1,470 @@
+================================================================================
+JIRA STORY: VIMEO SERVICE (INTEGRATION SERVICE)
+================================================================================
+
+Story Title: Vimeo Service Integration
+
+Story Type: Story (Service Layer - No Direct Endpoints)
+
+Epic: Somaway Backend Migration to .NET
+
+Story Description:
+------------------
+Vimeo Service integrează API-ul Vimeo pentru hosting video și streaming live.
+Serviciul gestionează upload de videoclipuri pentru cursuri, creare de evenimente
+live pentru webinar-uri, și obținere de metadata video pentru player-ul din frontend.
+
+Vimeo este platformă de hosting video profesională, folosită pentru a stoca și
+livra conținut video de înaltă calitate cu privacy controls (embed=private,
+view=unlisted pentru protecție conținut).
+
+Locație cod sursă: server/src/v1/Vimeo/Services/
+
+Metode implementate: 3 core methods
+- uploadVideo() - upload MP4 to Vimeo with privacy settings
+- startStream() - create live event for webinars
+- getVideoPlayerData() - fetch video metadata for player
+
+Used by:
+- FileUploadService (video file upload flow)
+- CourseController (POST /v1/course/upload-video, GET /v1/course/video/:videoId, POST /v1/course/start-stream)
+- LessonService (video hosting for lessons)
+
+External Dependencies:
+- Vimeo API v3.4 (https://api.vimeo.com)
+- Vimeo SDK: 'vimeo' npm package
+- OAuth 2.0 Bearer Token authentication
+
+Configuration:
+- Client ID: ae7b3ee8e38d9bb9bccdf7a9dd3d7b7829de8c13
+- Client Secret: (from config)
+- Access Token: (from config - OAuth 2.0)
+- Base URL: https://api.vimeo.com
+
+Privacy Settings (hardcoded):
+- download: false (users cannot download videos)
+- embed: 'private' (videos can only be embedded on whitelisted domains)
+- view: 'unlisted' (videos not searchable, accessible only via direct link)
+
+Upload Flow:
+1. Client uploads MP4 via POST /v1/course/upload-video
+2. File saved to local disk (/uploads folder)
+3. VimeoService.uploadVideo() uploads file to Vimeo folder
+4. Vimeo returns video URI (e.g., /videos/123456789)
+5. Video URI saved in Course/Lesson entity
+6. Local temp file deleted after successful upload
+
+Live Streaming Flow:
+1. Admin creates live event via POST /v1/course/start-stream
+2. VimeoService.startStream() creates Vimeo Live Event
+3. Vimeo returns RTMP stream URL + stream key
+4. Admin uses OBS/StreamYard to stream to RTMP URL
+5. Students watch via Vimeo embed player
+
+Notes:
+- Videos uploaded to Vimeo folders for organization
+- Temporary local storage before Vimeo upload
+- Privacy: unlisted + private embed (content protection)
+- Upload progress logged to console (% uploaded)
+- No video transcoding - Vimeo handles that
+- SDK: 'vimeo' package (official Vimeo Node.js SDK)
+
+================================================================================
+TASKS (3 SERVICE METHODS)
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 1: uploadVideo() - Upload Video File to Vimeo
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Uploadează un fișier video (MP4) către Vimeo cu setări de privacy pentru
+protecție conținut. Video-ul este salvat într-un folder specific și devine
+accesibil doar prin embed pe domenii whitelisted.
+
+Flow:
+1. Primește parametri:
+   - filePath: string (local file path, e.g., "/uploads/1730567890-123.mp4")
+   - folderUri: string (Vimeo folder URI, e.g., "Testing")
+2. Apelează vimeoClient.upload() cu opțiuni:
+   - name: "00000000000000" (hardcoded, should be course title)
+   - description: "Uploaded via somaway.ro"
+   - folder_uri: folderUri
+   - privacy settings:
+     - download: false
+     - embed: 'private'
+     - view: 'unlisted'
+3. Progress callback: logează % uploaded în console
+4. Success callback: returnează { uri } (e.g., "/videos/123456789")
+5. Error callback: reject Promise
+
+Cod sursă:
+- Service: src/v1/Vimeo/Services/vimeo.service.ts:25-51
+
+Method Signature:
+async uploadVideo(filePath: string, folderUri: string): Promise<any>
+
+Vimeo SDK Call:
+vimeoClient.upload(
+  filePath,
+  {
+    name: '00000000000000',
+    description: 'Uploaded via somaway.ro',
+    folder_uri: folderUri,
+    privacy: {
+      download: false,
+      embed: 'private',
+      view: 'unlisted'
+    }
+  },
+  (uri) => resolve({ uri }),
+  (bytesUploaded, bytesTotal) => console.log(`${percentage}% uploaded`),
+  (error) => reject(error)
+)
+
+Return Value:
+Success: { uri: "/videos/123456789" }
+Error: Promise rejection with error object
+
+Dependencies:
+- Vimeo SDK ('vimeo' package)
+- ConfigService (Vimeo credentials)
+- Local file system (temp file at filePath)
+
+Notes:
+- ⚠️ name is hardcoded to "00000000000000" (should be dynamic course title)
+- ⚠️ description is static "Uploaded via somaway.ro"
+- folder_uri is dynamic (passed as param)
+- Upload is synchronous (blocks until complete)
+- Progress logged to console (not captured for UI progress bar)
+- File must exist on local disk before upload
+- Vimeo handles video transcoding after upload
+
+Privacy Settings Explained:
+- download: false → users cannot download video file
+- embed: 'private' → video can only be embedded on whitelisted domains
+- view: 'unlisted' → video not searchable on Vimeo, accessible only via direct link
+
+Error Handling:
+- Rejects Promise on error
+- Error propagated to FileUploadService
+- Local temp file should be deleted even on error
+
+Recommendations for .NET:
+- Use Vimeo.NET SDK or HttpClient with Tus protocol (resumable uploads)
+- Make name and description dynamic parameters (not hardcoded)
+- Add upload progress reporting to SignalR hub for real-time UI updates
+- Delete local temp file after successful upload (use try-finally)
+- Add retry logic for failed uploads (Polly)
+- Consider direct-to-Vimeo upload from client (avoid server bandwidth)
+- Validate video format before upload (MP4, max size, resolution)
+- Add video thumbnail extraction for course preview
+
+--------------------------------------------------------------------------------
+TASK 2: startStream() - Create Live Event for Webinars
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Creează un eveniment live pe Vimeo pentru streaming webinar-uri și cursuri live.
+Vimeo returnează RTMP stream URL și stream key pentru OBS/StreamYard.
+
+Flow:
+1. Construiește request către Vimeo API:
+   - Method: POST
+   - Path: /me/live_events?fields=link,uri,streamable_clip,stream_privacy.view
+   - Query params:
+     - title: "My Live Event" (hardcoded, should be course title)
+     - stream_title: "Episode 5: The Majestic Purple Ponies" (hardcoded)
+     - privacy.view: 'public' (hardcoded)
+2. Apelează vimeoClient.request()
+3. Success: returnează body (live event details cu RTMP URL)
+4. Error: log error și reject Promise
+
+Cod sursă:
+- Service: src/v1/Vimeo/Services/vimeo.service.ts:53-82
+
+Method Signature:
+async startStream(): Promise<any>
+
+Vimeo API Request:
+POST https://api.vimeo.com/me/live_events?fields=link,uri,streamable_clip,stream_privacy.view
+Body:
+{
+  "title": "My Live Event",
+  "stream_title": "Episode 5: The Majestic Purple Ponies",
+  "privacy": {
+    "view": "public"
+  }
+}
+Headers:
+  Authorization: Bearer {access_token}
+
+Response from Vimeo:
+{
+  "uri": "/live_events/123456",
+  "link": "https://vimeo.com/event/xxxxx",
+  "streamable_clip": {
+    "uri": "/videos/987654321"
+  },
+  "stream_privacy": {
+    "view": "public"
+  },
+  "rtmp_link": "rtmp://rtmp.vimeo.com/live",
+  "stream_key": "xxxx-xxxx-xxxx-xxxx"
+}
+
+Return Value:
+Success: Vimeo live event object with RTMP credentials
+Error: Promise rejection with error object
+
+Dependencies:
+- Vimeo SDK ('vimeo' package)
+- ConfigService (Vimeo credentials)
+
+Notes:
+- ⚠️ title is hardcoded to "My Live Event" (should be dynamic course title)
+- ⚠️ stream_title is hardcoded to demo text
+- ⚠️ privacy.view is 'public' (inconsistent with uploadVideo's 'unlisted')
+- No parameters - method should accept title and privacy settings
+- RTMP URL and stream key returned for OBS/StreamYard setup
+- Live event can be ended via separate Vimeo API call (not implemented)
+
+Error Handling:
+- Logs error to console
+- Rejects Promise
+- No cleanup or rollback
+
+Recommendations for .NET:
+- Make title, stream_title, privacy dynamic parameters
+- Add method signature: startStream(title, description, privacyView)
+- Return typed DTO: VimeoLiveEventResponse with rtmp_link and stream_key
+- Add method to end live stream: endStream(eventUri)
+- Add webhook handler for live event status updates (started, ended, error)
+- Consider integration with Zoom API for alternative live streaming
+- Add admin UI for managing live events
+- Store live event URI in Course/Lesson entity for replay access
+
+--------------------------------------------------------------------------------
+TASK 3: getVideoPlayerData() - Fetch Video Metadata for Player
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Obține metadata unui video din Vimeo (titlu, durată, thumbnail, embed URL)
+pentru a afișa player-ul în frontend. Folosit pentru validare video exists
+și pentru extragere detalii player.
+
+Flow:
+1. Primește videoId (e.g., "123456789" extracted from URI "/videos/123456789")
+2. GET /videos/{videoId} din Vimeo API
+3. Returnează video metadata (title, duration, thumbnail, embed link, etc.)
+4. Dacă eroare: throw NotFoundException cu mesaj "Video-ul nu este disponibil."
+
+Cod sursă:
+- Service: src/v1/Vimeo/Services/vimeo.service.ts:84-99
+
+Method Signature:
+async getVideoPlayerData(videoId: string): Promise<any>
+
+Vimeo API Request:
+GET https://api.vimeo.com/videos/{videoId}
+Headers:
+  Authorization: Bearer {access_token}
+
+Response from Vimeo:
+{
+  "uri": "/videos/123456789",
+  "name": "Course Introduction Video",
+  "description": "Uploaded via somaway.ro",
+  "duration": 180,
+  "width": 1920,
+  "height": 1080,
+  "created_time": "2024-11-02T12:00:00+00:00",
+  "link": "https://vimeo.com/123456789",
+  "player_embed_url": "https://player.vimeo.com/video/123456789",
+  "pictures": {
+    "sizes": [
+      {
+        "width": 640,
+        "height": 360,
+        "link": "https://i.vimeocdn.com/video/...jpg"
+      }
+    ]
+  },
+  "privacy": {
+    "view": "unlisted",
+    "embed": "private",
+    "download": false
+  },
+  "status": "available"
+}
+
+Return Value:
+Success: Full Vimeo video object with all metadata
+Error: NotFoundException("Video-ul nu este disponibil.")
+
+Dependencies:
+- axios (HTTP client)
+- ConfigService (Vimeo access token)
+
+Notes:
+- Uses axios instead of Vimeo SDK (inconsistent)
+- Returns full Vimeo response (not filtered to needed fields)
+- Error message in Romanian: "Video-ul nu este disponibil."
+- Used by CourseController GET /v1/course/video/:videoId
+
+Error Handling:
+- Logs error.message
+- Throws NotFoundException (user-friendly message)
+- 404 from Vimeo → video not found
+- 401 from Vimeo → invalid access token
+
+Recommendations for .NET:
+- Use HttpClient with Vimeo API
+- Create typed DTO: VimeoVideoMetadata
+- Filter response to only needed fields (embed_url, duration, thumbnail)
+- Add caching layer (Redis, 5min TTL) for frequently accessed videos
+- Handle Vimeo API errors gracefully:
+  - 404 → video not found
+  - 403 → video private/deleted
+  - 429 → rate limit exceeded (retry with backoff)
+- Add video status check (available, transcoding, failed)
+- Consider storing video metadata in database after upload (reduce Vimeo API calls)
+
+================================================================================
+INTEGRATION FLOW: VIDEO UPLOAD
+================================================================================
+
+Complete Flow (FileUploadService + VimeoService):
+
+1. Client uploads video via POST /v1/course/upload-video
+   - Request: multipart/form-data with video file (MP4)
+   - Max size: 300MB (configured in file upload middleware)
+
+2. FileUploadService.handleFileUpload(fileBuffer, courseId)
+   - Generates filename: {timestamp}-{courseId}.mp4
+   - Calls saveToLocal(fileBuffer, fileName)
+
+3. FileUploadService.saveToLocal()
+   - Creates /uploads directory if not exists
+   - Writes buffer to disk as readable stream
+   - Returns filePath (e.g., "/app/uploads/1730567890-123.mp4")
+
+4. VimeoService.uploadVideo(filePath, folderCategory)
+   - Uploads file to Vimeo folder "Testing"
+   - Sets privacy: download=false, embed=private, view=unlisted
+   - Returns { uri: "/videos/123456789" }
+
+5. CourseController updates Course entity
+   - Saves Vimeo video URI in course.videoUrl field
+   - Deletes temp file from /uploads (SHOULD BE DONE but not in current code)
+
+6. Video becomes accessible via:
+   - GET /v1/course/video/:videoId → getVideoPlayerData()
+   - Frontend embeds video using player_embed_url
+
+Notes:
+- ⚠️ Temp files in /uploads are NOT deleted after upload (memory leak)
+- ⚠️ No validation of video format before upload
+- ⚠️ No error handling if Vimeo upload fails (temp file orphaned)
+- Folder "Testing" is hardcoded (should be dynamic per course/category)
+
+Recommendations for .NET:
+1. Delete temp file after successful upload (using statement / try-finally)
+2. Add video format validation before upload (MP4, max resolution, bitrate)
+3. Add upload progress reporting via SignalR
+4. Consider direct-to-Vimeo upload from client (TUS protocol)
+5. Add video thumbnail extraction and storage
+6. Add video transcoding queue for non-MP4 formats
+7. Add retry logic for failed uploads
+8. Store video metadata in database (reduce Vimeo API calls)
+
+================================================================================
+INTEGRATION FLOW: LIVE STREAMING
+================================================================================
+
+Complete Flow (VimeoService + CourseController):
+
+1. Admin creates live event via POST /v1/course/start-stream
+   - Request: { courseId: number }
+   - Optional: title, description (currently not supported)
+
+2. VimeoService.startStream()
+   - Creates Vimeo Live Event with hardcoded title
+   - Privacy: public (⚠️ different from unlisted videos)
+   - Returns RTMP credentials
+
+3. CourseController returns RTMP details to admin:
+   - rtmp_link: "rtmp://rtmp.vimeo.com/live"
+   - stream_key: "xxxx-xxxx-xxxx-xxxx"
+   - link: "https://vimeo.com/event/xxxxx"
+
+4. Admin uses OBS/StreamYard:
+   - Configures RTMP URL + stream key
+   - Starts streaming
+
+5. Students watch live stream:
+   - Embed Vimeo player with event link
+   - Real-time video + chat (if enabled)
+
+6. Admin ends stream (NOT IMPLEMENTED):
+   - Should call Vimeo API to end event
+   - Should save recording as regular video
+
+Notes:
+- ⚠️ No method to end live stream
+- ⚠️ Live event recording not automatically saved to course
+- ⚠️ Privacy is 'public' (should be configurable)
+- No chat integration (Vimeo supports live chat)
+
+Recommendations for .NET:
+1. Add endStream(eventUri) method
+2. Add webhook handler for live event lifecycle (started, ended, recorded)
+3. Save live event recording to course after stream ends
+4. Make privacy configurable (public vs unlisted)
+5. Add Vimeo live chat embed option
+6. Consider Zoom integration as alternative to Vimeo Live
+7. Add admin dashboard for managing active live streams
+8. Add notification system for students when live stream starts
+
+================================================================================
+END OF VIMEO SERVICE DOCUMENTATION
+================================================================================
+
+Summary:
+- Service Type: External API Integration (Vimeo Video Hosting)
+- Core Methods: 3 (uploadVideo, startStream, getVideoPlayerData)
+- SDK: 'vimeo' npm package + axios
+- Privacy Settings: download=false, embed=private, view=unlisted
+- Use Cases: Video hosting for courses, live streaming for webinars
+- Temp Storage: /uploads folder (should be cleaned after upload)
+
+Critical Integration Points:
+1. CourseController POST /upload-video → FileUploadService → VimeoService.uploadVideo()
+2. CourseController POST /start-stream → VimeoService.startStream()
+3. CourseController GET /video/:videoId → VimeoService.getVideoPlayerData()
+4. LessonService stores Vimeo URI in lesson.videoUrl
+
+Issues Found:
+- ⚠️ Hardcoded video titles ("00000000000000")
+- ⚠️ Temp files not deleted after upload (memory leak)
+- ⚠️ No video format validation
+- ⚠️ Inconsistent HTTP clients (vimeo SDK + axios)
+- ⚠️ No method to end live streams
+- ⚠️ Live event privacy is 'public' (inconsistent with 'unlisted' videos)
+
+Recommendations for .NET:
+1. Use Vimeo.NET SDK or HttpClient with Tus protocol
+2. Add video format validation (MP4, max size, resolution)
+3. Delete temp files after upload (using statement)
+4. Add upload progress reporting (SignalR)
+5. Consider direct-to-Vimeo upload from client
+6. Add methods to manage live streams (start, end, get status)
+7. Store video metadata in database (reduce API calls)
+8. Add caching layer for video metadata
+9. Add webhook handler for video transcoding status
+10. Integrate with Zoom API as alternative for live streaming
+
+Ready for JIRA import! 🎯

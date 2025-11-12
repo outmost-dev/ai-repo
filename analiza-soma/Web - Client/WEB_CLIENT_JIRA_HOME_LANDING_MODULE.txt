@@ -1,0 +1,2493 @@
+================================================================================
+WEB CLIENT - HOME/LANDING PAGES MODULE
+JIRA DOCUMENTATION
+================================================================================
+
+Project: Somaway Web Client Migration (Next.js → Nuxt 3)
+Module: Home/Landing Pages
+Status: Ready for JIRA Import
+Total Tasks: 12
+Complexity: Medium-High
+Estimated Duration: 5 days
+
+--------------------------------------------------------------------------------
+MODULE OVERVIEW
+--------------------------------------------------------------------------------
+
+STORY: Home/Landing Pages Module
+
+Description:
+Modulul Home/Landing gestionează pagina principală de prezentare a platformei
+Somaway, incluzând Hero section, benefits lists, testimonials, therapists
+presentation, subscription options display, și money-back guarantee. Pagina
+este optimizată pentru SEO și conversie, cu multiple CTA-uri și anchor navigation.
+
+Current Implementation: Next.js 15 + React 18
+Target Implementation: Nuxt 3 + Vue.js 3
+
+Locație cod sursă (Current):
+- Pages: web/src/pages/index.tsx, web/src/pages/home/index.tsx
+- Components: web/src/components/pages/home/*
+- Layout: web/src/layouts/AppLayout.tsx
+
+Locație cod țintă (Target):
+- Pages: web-nuxt/pages/index.vue, web-nuxt/pages/home/index.vue
+- Components: web-nuxt/components/pages/home/*
+- Layout: web-nuxt/layouts/default.vue
+
+Components implementate: 12
+- Root Index (redirect către /home)
+- Homepage Container (main landing page)
+- Hero Section (main headline cu CTA)
+- Benefits List (2 sections: problems + solutions)
+- About Me/Story (founder story)
+- Review Carousel (rotating testimonials)
+- What Is Somaway (platform description)
+- What You Find (features list)
+- HomeDescription3 (additional content)
+- Stories/Reviews Gallery (testimonials grid cu lightbox)
+- Speakers/Therapists (facilitators presentation)
+- Inscrie Summit (subscription options display)
+- Money Back Guarantee (risk reversal section)
+
+Dependencies:
+- Next.js: useRouter, useEffect, Image component
+- React: useState, useRef, ErrorBoundary
+- Ant Design: Typography, List, Row, Col, Carousel, FloatButton, Card
+- Components: PageHelmet (SEO), AppLayout (layout wrapper), SubscriptionsContainer
+- Custom: CustomButton (anchor scroll support)
+
+Target Dependencies (Nuxt 3):
+- Nuxt: navigateTo, NuxtImg, useHead
+- Vue: ref, computed, ErrorBoundary
+- Ant Design Vue: a-typography, a-list, a-row, a-col, a-carousel, a-float-button, a-card
+- Components: Same structure converted to Vue SFC
+
+SEO & Marketing:
+- Multiple CTA buttons (all link to #vreau-abonament)
+- Anchor navigation (#despre-somaway, #facilitatori, #vreau-abonament)
+- FloatButton.BackTop pentru easy scroll
+- Hash navigation cu delay pentru smooth scroll
+- Conversion-optimized copy (Romanian language)
+
+Notes:
+- Homepage is PUBLIC (authority: UserRoles.GUEST)
+- No API calls (static content, no SSR/SSG needed for now)
+- All images stored in /imgs/home/ directory
+- Multiple instances of "Vreau în Somaway!" CTA
+- dangerouslySetInnerHTML used pentru HTML in strings (needs sanitization)
+- ErrorBoundary implemented în BenefitsList component
+- Reviews gallery has lightbox functionality
+- Speakers data likely fetched from API (check SpeakersCard component)
+
+================================================================================
+TASK 1: Root Index Page (Redirect)
+================================================================================
+
+Title: Root Index Page - Auto Redirect to /home
+
+Description:
+
+Business Logic:
+Pagina root ("/") este o pagină de tranziție care redirecționează automat
+utilizatorul către "/home" (homepage). Include și export de constante pentru
+subscription IDs folosite în aplicație.
+
+Implementare curentă (Next.js + React):
+1. useEffect cu router.replace('/home') la mount
+2. Returns null (no UI rendered)
+3. Exports 2 constante: MAI_SUMMIT_SUBID = 4, MAI_SUMMIT_RECORDINGS_SUBID = 5
+4. Redirect este instant (no loading screen)
+
+Features:
+- Auto-redirect la mount
+- No loading UI (instant redirect)
+- Constante exportate pentru subscription types
+- Public page (no authentication required)
+
+Cod sursă:
+- Page: web/src/pages/index.tsx:1-16
+
+Current Implementation (React):
+```tsx
+// web/src/pages/index.tsx
+import { useEffect } from 'react';
+import { useRouter } from 'next/router';
+
+const IndexPage = () => {
+  const router = useRouter();
+
+  useEffect(() => {
+    router.replace('/home');
+  }, [router]);
+
+  return null;
+};
+
+export const MAI_SUMMIT_SUBID = 4;
+export const MAI_SUMMIT_RECORDINGS_SUBID = 5;
+export default IndexPage;
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+<!-- web-nuxt/pages/index.vue -->
+<script setup lang="ts">
+definePageMeta({
+  middleware: 'redirect-home',
+});
+
+// Export constants for use elsewhere
+export const MAI_SUMMIT_SUBID = 4;
+export const MAI_SUMMIT_RECORDINGS_SUBID = 5;
+</script>
+
+<template>
+  <div></div>
+</template>
+```
+
+```ts
+// web-nuxt/middleware/redirect-home.ts
+export default defineNuxtRouteMiddleware((to, from) => {
+  if (to.path === '/') {
+    return navigateTo('/home', { redirectCode: 301 });
+  }
+});
+```
+
+OR simpler approach with Nuxt routing:
+
+```ts
+// web-nuxt/nuxt.config.ts
+export default defineNuxtConfig({
+  routeRules: {
+    '/': { redirect: '/home' },
+  },
+});
+```
+
+Request: N/A (client-side only)
+
+Response: N/A
+
+Authorization: Public (UserRoles.GUEST)
+
+Dependencies (Current):
+- React: useEffect
+- Next.js: useRouter
+
+Dependencies (Target):
+- Nuxt: definePageMeta, navigateTo, OR routeRules config
+
+Notes:
+- Redirect is permanent (301) - good for SEO
+- No loading screen needed (instant redirect)
+- Constants used for subscription type filtering elsewhere
+- Consider using Nuxt routeRules pentru cleaner implementation
+
+Recommendations:
+1. Use Nuxt routeRules în nuxt.config.ts (cleanest approach)
+2. Add redirect reason în meta tags pentru analytics
+3. Consider creating constants file pentru shared constants
+4. Implement 301 redirect pentru SEO benefits
+
+================================================================================
+TASK 2: Homepage Container
+================================================================================
+
+Title: Homepage Container - Main Landing Page Structure
+
+Description:
+
+Business Logic:
+Pagina principală de landing care prezintă platforma Somaway, beneficiile
+practicilor somatice, testimoniale, facilitatori, și opțiuni de abonament.
+Structura include 12 secțiuni diferite cu CTA-uri multiple pentru conversie.
+
+Implementare curentă (Next.js + React):
+1. useEffect: Hash navigation support cu delay (1100ms) pentru smooth scroll
+2. AppLayout cu authority GUEST (public page)
+3. PageHelmet pentru SEO (title: "Somaway")
+4. FloatButton.BackTop pentru scroll to top
+5. 12 secțiuni rendered în ordine specifică:
+   - Hero (main headline)
+   - BenefitsList #1 (experiences/problems)
+   - AboutMe (founder story)
+   - ReviewCarousel (rotating testimonials)
+   - WhatIs (platform description)
+   - BenefitsList #2 (benefits/solutions)
+   - WhatYouFind (features list)
+   - HomeDescription3 (additional content)
+   - Stories (testimonials grid)
+   - Speakers (facilitators)
+   - InscriereSummit (subscription options)
+   - MoneyBackGuarantee (risk reversal)
+
+Features:
+- Hash navigation support (#despre-somaway, #facilitatori, #vreau-abonament)
+- Multiple CTA buttons (all anchor to #vreau-abonament)
+- Scroll to top floating button
+- Responsive layout (desktop/mobile)
+- Static content (no API calls)
+- SEO optimized (PageHelmet)
+
+Cod sursă:
+- Page: web/src/pages/home/index.tsx:1-152
+
+Current Implementation (React):
+```tsx
+// web/src/pages/home/index.tsx
+const experiencesList = [
+  "Cu gânduri care se învârt în cerc la nesfârșit",
+  "Anxietate care te îngheață",
+  "Senzația de neputință",
+  // ... 12 items total
+];
+
+const cuSomaWayPoti = [
+  "<strong>Dormi mai bine:</strong> adormi mai ușor și te trezești odihnit/ă",
+  "<strong>Găsești liniște interioară:</strong> reduci stresul și anxietatea",
+  // ... 8 items total
+];
+
+const featuresList = [
+  "Practici pentru reglarea <br /><strong>Sistemului Nervos Autonom</strong>",
+  "<strong>Practici de stimulare a nervului vag</strong> <br />pentru minte liniștită",
+  // ... 9 items total
+];
+
+const Homepage: NextPage = (): JSX.Element => {
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash) {
+      window.location.hash = "";
+      setTimeout(() => {
+        window.location.hash = hash;
+      }, 1100);
+    }
+  }, []);
+
+  return (
+    <AppLayout authority={UserRoles.GUEST} layoutClass="homepage">
+      <PageHelmet title="Somaway" />
+      <FloatButton.BackTop />
+
+      <Hero
+        title={<>Cum ar fi să îți găsești liniștea...</>}
+        subtitle={<>Descoperă puterea practicilor somatice...</>}
+        buttonText="Vreau în Somaway"
+      />
+      <BenefitsList
+        sectionName="experience"
+        title={<>Te-ai simțit vreodată ca într-un carusel scăpat de sub control?</>}
+        experiences={experiencesList}
+        description={<>Știu cum este. Am fost și eu acolo...</>}
+      />
+      <AboutMe />
+      <ReviewCarousel />
+      <WhatIs />
+      <BenefitsList
+        sectionName="What-YouCan"
+        title="Cu Somaway poți să:"
+        experiences={cuSomaWayPoti}
+        description={<>Ești gata să faci un pas înainte...</>}
+      />
+      <WhatYouFind
+        title="Ce vei găsi în SOMAWAY?"
+        featuresList={featuresList}
+        description={<>Investiția în tine este...</>}
+        buttonText="Yey, abia aștept!"
+        buttonLink="/home#vreau-abonament"
+      />
+      <HomeDescription3 />
+      <Stories />
+      <Speakers />
+      <InscriereSummit />
+      <MoneyBackGuarantee />
+    </AppLayout>
+  );
+};
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+<!-- web-nuxt/pages/home/index.vue -->
+<script setup lang="ts">
+import { onMounted } from 'vue';
+
+definePageMeta({
+  layout: 'default',
+  authority: UserRoles.GUEST,
+});
+
+useHead({
+  title: 'Somaway',
+  meta: [
+    { name: 'description', content: 'Descoperă puterea practicilor somatice cu Somaway' },
+  ],
+});
+
+const experiencesList = [
+  "Cu gânduri care se învârt în cerc la nesfârșit",
+  "Anxietate care te îngheață",
+  "Senzația de neputință",
+  "Copleșire în fața cerințelor vieții",
+  "Emoții copleșitoare și stări apăsătoare inexplicabile",
+  "Procrastinare și lipsă de motivație",
+  "Mâncat emoțional",
+  "Oboseală cronică și stres",
+  "Probleme digestive",
+  "Migrene, dureri cervicale și tensiuni musculare",
+  "Imunitate scăzută, infecții frecvente",
+  "Dureri și boli cronice",
+];
+
+const cuSomaWayPoti = [
+  "<strong>Dormi mai bine:</strong> adormi mai ușor și te trezești odihnit/ă",
+  "<strong>Găsești liniște interioară:</strong> reduci stresul și anxietatea",
+  "<strong>Te conectezi cu corpul:</strong> descoperi un nou nivel de conștientizare și încredere",
+  "Înveți <strong>instrumente practice</strong> pentru reglare emoțională",
+  "Simți că <strong>aparții unei comunități</strong> de oameni care te înțeleg",
+  "<strong>Te simți împuternicit/ă:</strong> diminuezi senzațiile de copleșire",
+  "<strong>Eliberezi tensiunile:</strong> prin practici de detensionare fascială",
+  "<strong>Ai la îndemână resursele necesare</strong> pentru a face față vieții",
+];
+
+const featuresList = [
+  "Practici pentru reglarea <br /><strong>Sistemului Nervos Autonom</strong>",
+  "<strong>Practici de stimulare a nervului vag</strong> <br />pentru minte liniștită",
+  "<strong>Practici de dans terapeutic</strong> <br />pentru a debloca bucuria",
+  "<strong>Exerciții de respirație</strong> <br />pentru a te liniști rapid",
+  "<strong>Practici blânde de yoga</strong> <br />pentru odihnă regenerativă",
+  "<strong>Tehnici de eliberare emoțională</strong> <br />pentru emoții stagnante",
+  "<strong>Exerciții de conținere și gestionare a emoțiilor</strong>",
+  "<strong>Tehnici de eliberare fascială</strong> <br />pentru corp eliberat de dureri",
+  "<strong>Tehnici de lucru cu vocea</strong> <br />pentru vindecarea interioară",
+];
+
+onMounted(() => {
+  const hash = window.location.hash;
+  if (hash) {
+    window.location.hash = "";
+    setTimeout(() => {
+      window.location.hash = hash;
+    }, 1100);
+  }
+});
+</script>
+
+<template>
+  <div class="homepage">
+    <a-float-button-back-top />
+
+    <Hero
+      :title="`Cum ar fi să îți găsești liniștea cu care să te poți bucura de viață, nu doar să supraviețuiești?`"
+      :subtitle="`Descoperă puterea practicilor somatice, cu Somaway!`"
+      button-text="Vreau în Somaway"
+    />
+
+    <BenefitsList
+      section-name="experience"
+      :title="`Te-ai simțit vreodată ca într-un carusel scăpat de sub control?`"
+      :experiences="experiencesList"
+    >
+      <template #description>
+        Știu cum este. Am fost și eu acolo. Deși făceam psihoterapie și multiple terapii
+        alternative, îmi scăpa ceva din vedere. <br />
+        Lipsea cea mai importantă resursă din peisajul de vindecare:{" "}
+        <strong>componenta de lucru cu corpul!</strong>
+      </template>
+    </BenefitsList>
+
+    <AboutMe />
+    <ReviewCarousel />
+    <WhatIs />
+
+    <BenefitsList
+      section-name="What-YouCan"
+      title="Cu Somaway poți să:"
+      :experiences="cuSomaWayPoti"
+    >
+      <template #description>
+        Ești gata să faci un pas înainte spre vindecare și înflorire?
+        <br class="desktop-only" />
+        <strong>
+          Alătură-te comunității Somaway și descoperă puterea practicilor somatice!
+        </strong>
+      </template>
+    </BenefitsList>
+
+    <WhatYouFind
+      title="Ce vei găsi în SOMAWAY?"
+      :features-list="featuresList"
+      button-text="Yey, abia aștept!"
+      button-link="/home#vreau-abonament"
+    >
+      <template #description>
+        Investiția în tine este cea mai bună investiție pe termen lung.{" "}
+        <strong>Alege să te simți bine în corpul tău.</strong> Hai alături de noi!
+      </template>
+    </WhatYouFind>
+
+    <HomeDescription3 />
+    <Stories />
+    <Speakers />
+    <InscriereSummit />
+    <MoneyBackGuarantee />
+  </div>
+</template>
+```
+
+Request: N/A (static page)
+
+Response: N/A
+
+Authorization: Public (UserRoles.GUEST)
+
+Dependencies (Current):
+- React: useEffect
+- Next.js: NextPage
+- Ant Design: FloatButton
+- Components: All 12 section components
+- Layout: AppLayout
+- SEO: PageHelmet
+
+Dependencies (Target):
+- Vue: onMounted
+- Nuxt: useHead
+- Ant Design Vue: a-float-button-back-top
+- Components: Same 12 components (Vue SFC)
+- Layout: default.vue
+
+Notes:
+- Hash navigation with 1100ms delay pentru smooth scroll după page load
+- All lists use dangerouslySetInnerHTML (need to sanitize în Vue: v-html)
+- Multiple "Vreau în Somaway!" CTAs (conversion optimization)
+- Desktop/mobile breakpoints cu .desktop-only, .mobile-only classes
+- Static content (consider CMS integration în future)
+- SEO title simple "Somaway" (could be more descriptive)
+
+Recommendations:
+1. Add comprehensive meta tags (description, og:image, twitter:card)
+2. Consider lazy loading pentru images (Next Image → NuxtImg)
+3. Implement structured data (JSON-LD) pentru SEO
+4. Add analytics tracking pentru CTA clicks
+5. Consider A/B testing pentru headlines
+6. Sanitize HTML strings (avoid v-html security issues)
+7. Add loading skeleton pentru better perceived performance
+8. Consider server-side rendering pentru SEO boost
+
+================================================================================
+TASK 3: Hero Section Component
+================================================================================
+
+Title: Hero Section - Main Headline with CTA Button
+
+Description:
+
+Business Logic:
+Secțiunea Hero afișează headline-ul principal al paginii cu subtitle și CTA button.
+Suportă optional date display și background image customization. CTA button
+folosește anchor scroll către subscription section.
+
+Implementare curentă (React):
+1. Props: date (optional), title, subtitle, buttonText, onButtonClick (optional), backgroundImage (optional)
+2. Background image set via inline style (CSS backgroundImage)
+3. CustomButton cu href="/home#vreau-abonament" și offset={-30} pentru scroll adjustment
+4. Responsive layout cu Ant Design Col (xs/sm/md/lg breakpoints)
+5. Typography: Title level={1}, Paragraph
+
+Features:
+- Optional date display (above title)
+- Optional background image
+- Anchor scroll CTA button
+- Responsive columns
+- Custom offset pentru scroll positioning
+- React.ReactNode support pentru title/subtitle (JSX flexibility)
+
+Cod sursă:
+- Component: web/src/components/pages/home/Hero/index.tsx:1-54
+
+Current Implementation (React):
+```tsx
+// web/src/components/pages/home/Hero/index.tsx
+type HeroProps = {
+  date?: string;
+  title: React.ReactNode;
+  subtitle: React.ReactNode;
+  buttonText: string;
+  onButtonClick?: () => void;
+  backgroundImage?: string;
+};
+
+export const Hero: React.FC<HeroProps> = ({
+  date,
+  title,
+  subtitle,
+  buttonText,
+  backgroundImage,
+}) => {
+  const heroStyle = backgroundImage
+    ? { backgroundImage: `url(${backgroundImage})` }
+    : {};
+
+  return (
+    <div className="hero-image" style={heroStyle}>
+      <div className="container">
+        <Flex vertical className="hero-text">
+          <Col xs={24} sm={24} md={24} lg={24}>
+            {date && <Paragraph className="hero-abovetitle">{date}</Paragraph>}
+            <Title level={1}>{title}</Title>
+          </Col>
+          <Col xs={24} sm={24} md={24} lg={24}>
+            <Paragraph className="hero-undertitle">{subtitle}</Paragraph>
+            <CustomButton
+              size="small"
+              type="primary"
+              href="/home#vreau-abonament"
+              offset={-30}
+            >
+              {buttonText}
+            </CustomButton>
+          </Col>
+        </Flex>
+      </div>
+    </div>
+  );
+};
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+<!-- web-nuxt/components/pages/home/Hero.vue -->
+<script setup lang="ts">
+interface HeroProps {
+  date?: string;
+  title: string;
+  subtitle: string;
+  buttonText: string;
+  onButtonClick?: () => void;
+  backgroundImage?: string;
+}
+
+const props = withDefaults(defineProps<HeroProps>(), {
+  date: undefined,
+  onButtonClick: undefined,
+  backgroundImage: undefined,
+});
+
+const heroStyle = computed(() => {
+  return props.backgroundImage
+    ? { backgroundImage: `url(${props.backgroundImage})` }
+    : {};
+});
+</script>
+
+<template>
+  <div class="hero-image" :style="heroStyle">
+    <div class="container">
+      <a-flex vertical class="hero-text">
+        <a-col :xs="24" :sm="24" :md="24" :lg="24">
+          <a-typography-paragraph v-if="date" class="hero-abovetitle">
+            {{ date }}
+          </a-typography-paragraph>
+          <a-typography-title :level="1">
+            <slot name="title">{{ title }}</slot>
+          </a-typography-title>
+        </a-col>
+        <a-col :xs="24" :sm="24" :md="24" :lg="24">
+          <a-typography-paragraph class="hero-undertitle">
+            <slot name="subtitle">{{ subtitle }}</slot>
+          </a-typography-paragraph>
+          <CustomButton
+            size="small"
+            type="primary"
+            href="/home#vreau-abonament"
+            :offset="-30"
+          >
+            {{ buttonText }}
+          </CustomButton>
+        </a-col>
+      </a-flex>
+    </div>
+  </div>
+</template>
+```
+
+Usage (Current):
+```tsx
+<Hero
+  title={
+    <>
+      Cum ar fi să îți găsești liniștea <br className="desktop-only" />
+      cu care să te poți bucura de viață?
+    </>
+  }
+  subtitle={<>Descoperă puterea practicilor somatice...</>}
+  buttonText="Vreau în Somaway"
+/>
+```
+
+Usage (Target):
+```vue
+<Hero
+  button-text="Vreau în Somaway"
+>
+  <template #title>
+    Cum ar fi să îți găsești liniștea <br class="desktop-only" />
+    cu care să te poți bucura de viață?
+  </template>
+  <template #subtitle>
+    Descoperă puterea practicilor somatice, <br class="mobile-only" />
+    cu Somaway!
+  </template>
+</Hero>
+```
+
+Request: N/A
+
+Response: N/A
+
+Authorization: N/A (component)
+
+Dependencies (Current):
+- React: React.FC, React.ReactNode
+- Ant Design: Typography, Flex, Col
+- Custom: CustomButton
+
+Dependencies (Target):
+- Vue: computed, withDefaults, defineProps
+- Ant Design Vue: a-typography, a-flex, a-col
+- Custom: CustomButton.vue
+
+Notes:
+- Background image via inline style (not CSS class)
+- Offset -30 pentru compensate fixed header height
+- Title is h1 (important pentru SEO)
+- onButtonClick prop not used în current implementation
+- Slots în Vue version pentru better flexibility
+
+Recommendations:
+1. Use slots în Vue pentru title/subtitle (better than string props)
+2. Add loading state pentru background image
+3. Consider lazy loading background image
+4. Add aria-label pentru accessibility
+5. Implement schema markup pentru hero section
+6. Add animation on scroll (AOS, framer-motion equivalent)
+
+================================================================================
+TASK 4: Benefits List Component
+================================================================================
+
+Title: Benefits List - Reusable List Component with Error Boundary
+
+Description:
+
+Business Logic:
+Component reusabil pentru afișarea listelor de beneficii sau probleme. Suportă
+HTML rendering în list items (dangerouslySetInnerHTML) și include ErrorBoundary
+pentru graceful error handling. Folosit de 2 ori pe homepage: pentru probleme
+și pentru soluții/beneficii.
+
+Implementare curentă (React):
+1. Props: experiences (string[]), title (optional), description (optional), sectionName (optional)
+2. ErrorBoundary class component wrapping List
+3. Ant Design List cu renderItem
+4. dangerouslySetInnerHTML pentru HTML în list items
+5. Custom className pentru fiecare item (experience-item-${index + 1})
+
+Features:
+- ErrorBoundary pentru error handling
+- HTML support în list items
+- Optional title și description
+- Custom section name pentru CSS styling
+- Indexed className pentru specific styling
+- Reusable component (used 2x on homepage)
+
+Cod sursă:
+- Component: web/src/components/pages/home/BenefitsList/index.tsx:1-71
+
+Current Implementation (React):
+```tsx
+// web/src/components/pages/home/BenefitsList/index.tsx
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error("ErrorBoundary caught an error", error, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <h2>Something went wrong.</h2>;
+    }
+    return this.props.children;
+  }
+}
+
+type BenefitsListProps = {
+  experiences: string[];
+  title?: React.ReactNode;
+  description?: React.ReactNode;
+  sectionName?: string;
+};
+
+const BenefitsList: React.FC<BenefitsListProps> = ({
+  experiences,
+  title,
+  description,
+  sectionName,
+}) => {
+  return (
+    <section className={sectionName}>
+      <div className="container">
+        <Title level={2}>{title}</Title>
+        <ErrorBoundary>
+          <List
+            className="experience-list"
+            dataSource={experiences}
+            renderItem={(item, index) => (
+              <List.Item className={`experience-item experience-item-${index + 1}`}>
+                <div dangerouslySetInnerHTML={{ __html: item }} />
+              </List.Item>
+            )}
+          />
+        </ErrorBoundary>
+        {description && (
+          <div className="experience-description">{description}</div>
+        )}
+      </div>
+    </section>
+  );
+};
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+<!-- web-nuxt/components/pages/home/BenefitsList.vue -->
+<script setup lang="ts">
+import { ErrorBoundary } from 'vue';
+
+interface BenefitsListProps {
+  experiences: string[];
+  title?: string;
+  sectionName?: string;
+}
+
+const props = withDefaults(defineProps<BenefitsListProps>(), {
+  title: undefined,
+  sectionName: undefined,
+});
+
+// Error handler
+const handleError = (error: Error, info: any) => {
+  console.error('ErrorBoundary caught an error', error, info);
+};
+</script>
+
+<template>
+  <section :class="sectionName">
+    <div class="container">
+      <a-typography-title v-if="title" :level="2">
+        <slot name="title">{{ title }}</slot>
+      </a-typography-title>
+
+      <ErrorBoundary @error="handleError">
+        <a-list class="experience-list" :data-source="experiences">
+          <template #renderItem="{ item, index }">
+            <a-list-item :class="`experience-item experience-item-${index + 1}`">
+              <!-- WARNING: v-html is equivalent to dangerouslySetInnerHTML - sanitize data! -->
+              <div v-html="item"></div>
+            </a-list-item>
+          </template>
+        </a-list>
+      </ErrorBoundary>
+
+      <div v-if="$slots.description" class="experience-description">
+        <slot name="description"></slot>
+      </div>
+    </div>
+  </section>
+</template>
+```
+
+Usage (Current):
+```tsx
+<BenefitsList
+  sectionName="experience"
+  title={<>Te-ai simțit vreodată ca într-un carusel scăpat de sub control?</>}
+  experiences={experiencesList}
+  description={
+    <>
+      Știu cum este. Am fost și eu acolo. Deși făceam psihoterapie...
+      <strong>componenta de lucru cu corpul!</strong>
+    </>
+  }
+/>
+```
+
+Usage (Target):
+```vue
+<BenefitsList
+  section-name="experience"
+  :experiences="experiencesList"
+>
+  <template #title>
+    Te-ai simțit vreodată ca într-un carusel scăpat de sub control?
+  </template>
+  <template #description>
+    Știu cum este. Am fost și eu acolo. Deși făceam psihoterapie...
+    <strong>componenta de lucru cu corpul!</strong>
+  </template>
+</BenefitsList>
+```
+
+Request: N/A
+
+Response: N/A
+
+Authorization: N/A (component)
+
+Dependencies (Current):
+- React: React.Component, React.FC, React.ReactNode, React.ErrorInfo
+- Ant Design: List, Title
+
+Dependencies (Target):
+- Vue: ErrorBoundary (from vue), withDefaults, defineProps
+- Ant Design Vue: a-list, a-typography-title
+
+Notes:
+- dangerouslySetInnerHTML (React) → v-html (Vue): **SECURITY RISK** - must sanitize
+- ErrorBoundary class component (React) → ErrorBoundary component (Vue 3)
+- Indexed className pentru specific CSS styling (keep în Vue)
+- HTML includes <strong>, <br /> tags în strings
+- Used 2x: "experience" section (problems) + "What-YouCan" section (benefits)
+
+Recommendations:
+1. **CRITICAL**: Sanitize HTML before rendering (use DOMPurify or similar)
+2. Consider using Vue slots instead of HTML strings
+3. Add loading skeleton pentru list items
+4. Implement animation pentru list reveal (stagger effect)
+5. Add ARIA labels pentru accessibility
+6. Consider markdown rendering instead of raw HTML
+7. Implement global error handling (not just component-level)
+
+================================================================================
+TASK 5: About Me / Story Component
+================================================================================
+
+Title: About Me Component - Founder Story Section
+
+Description:
+
+Business Logic:
+Secțiunea "Despre Somaway" prezintă povestea fondatoarei Andreea și cum s-a
+născut platforma Somaway. Include imagine și text pe 2 coloane responsive,
+cu anchor navigation support (#despre-somaway).
+
+Implementare curentă (React):
+1. Anchor div cu id="despre-somaway" pentru navigation
+2. Row cu 2 coloane: text (left/right responsive) + imagine (right/left responsive)
+3. Order responsive (mobile: imagine first, desktop: text first)
+4. Next Image component pentru founder photo
+5. 5 paragraphs de text static
+6. Gutter spacing 24px între coloane
+
+Features:
+- Anchor navigation support
+- Responsive column order (mobile vs desktop)
+- Next.js Image optimization (layout="responsive")
+- Static content (no API)
+- Founder photo: /imgs/home/andreea.png
+- Desktop/mobile line breaks (.desktop-only class)
+
+Cod sursă:
+- Component: web/src/components/pages/home/AboutMe/index.tsx:1-77
+
+Current Implementation (React):
+```tsx
+// web/src/components/pages/home/AboutMe/index.tsx
+const AboutMe: React.FC = () => {
+  return (
+    <>
+      <div id="despre-somaway" className="anchor"></div>
+      <section className="aboutme">
+        <div className="container">
+          <Title level={2}>Povestea din care s-a născut Somaway</Title>
+          <Row gutter={[24, 24]} className="despre-inner">
+            <Col
+              xs={{ span: 24, order: 2 }}
+              sm={{ span: 24, order: 2 }}
+              md={{ span: 12, order: 1 }}
+              lg={{ span: 14, order: 1 }}
+            >
+              <div className="about-description">
+                <Paragraph>
+                  Povestea mea poate că e și povestea ta. Și a multor altora,
+                  poate. Eu sunt Andreea, psiholog și terapeut somatic...
+                </Paragraph>
+                <Paragraph>
+                  După ce ani de zile m-am confruntat cu anxietate generalizată...
+                </Paragraph>
+                <Paragraph>
+                  Răspunsul l-am descoperit când am început formarea...
+                </Paragraph>
+                <Paragraph>
+                  Aducând conștientizarea în corp și practici somatice...
+                </Paragraph>
+                <Paragraph>
+                  Din dorința de a aduce aceste resurse la îndemână pentru
+                  oricine, <br className="desktop-only" />
+                  s-a născut <strong>SOMAWAY!</strong>
+                </Paragraph>
+              </div>
+            </Col>
+            <Col
+              xs={{ span: 24, order: 1 }}
+              sm={{ span: 24, order: 1 }}
+              md={{ span: 12, order: 2 }}
+              lg={{ span: 10, order: 2 }}
+            >
+              <Image
+                src="/imgs/home/andreea.png"
+                width={395}
+                height={445}
+                layout="responsive"
+                alt=""
+              />
+            </Col>
+          </Row>
+        </div>
+      </section>
+    </>
+  );
+};
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+<!-- web-nuxt/components/pages/home/AboutMe.vue -->
+<script setup lang="ts">
+// No props or state needed (static component)
+</script>
+
+<template>
+  <div>
+    <div id="despre-somaway" class="anchor"></div>
+    <section class="aboutme">
+      <div class="container">
+        <a-typography-title :level="2">
+          Povestea din care s-a născut Somaway
+        </a-typography-title>
+
+        <a-row :gutter="[24, 24]" class="despre-inner">
+          <a-col
+            :xs="{ span: 24, order: 2 }"
+            :sm="{ span: 24, order: 2 }"
+            :md="{ span: 12, order: 1 }"
+            :lg="{ span: 14, order: 1 }"
+          >
+            <div class="about-description">
+              <a-typography-paragraph>
+                Povestea mea poate că e și povestea ta. Și a multor altora,
+                poate. Eu sunt Andreea, psiholog și terapeut somatic cu formări
+                în terapia traumei.
+              </a-typography-paragraph>
+              <a-typography-paragraph>
+                După ce ani de zile m-am confruntat cu anxietate generalizată,
+                stres cronic, oboseală, insomnii și un sistem imunitar slăbit
+                care ducea la îmbolnăviri frecvente, am descoperit ca nici măcar
+                psihoterapia, meditațiile și yoga nu mă ajutau pe termen lung.
+                Nu știam ce să mai fac.
+              </a-typography-paragraph>
+              <a-typography-paragraph>
+                Răspunsul l-am descoperit când am început formarea în terapie
+                somatică și am înțeles, în final, că toate aceste probleme
+                pleacă de la un Sistem Nervos Autonom supraîncărcat și
+                traumatizat, iar acest lucru se poate rezolva doar prin terapii
+                și practici care lucrează corporal.
+              </a-typography-paragraph>
+              <a-typography-paragraph>
+                Aducând conștientizarea în corp și practici somatice constante
+                în viața mea, am reușit să înțeleg cum pot păstra echilibrul
+                găsit pe termen lung și ce fel de resurse mi se potrivesc în
+                funcție de emoțiile și stările mele.
+              </a-typography-paragraph>
+              <a-typography-paragraph>
+                Din dorința de a aduce aceste resurse la îndemână pentru
+                oricine, <br class="desktop-only" />
+                s-a născut <strong>SOMAWAY!</strong>
+              </a-typography-paragraph>
+            </div>
+          </a-col>
+
+          <a-col
+            :xs="{ span: 24, order: 1 }"
+            :sm="{ span: 24, order: 1 }"
+            :md="{ span: 12, order: 2 }"
+            :lg="{ span: 10, order: 2 }"
+          >
+            <NuxtImg
+              src="/imgs/home/andreea.png"
+              :width="395"
+              :height="445"
+              loading="lazy"
+              alt="Andreea - Fondatoarea Somaway, psiholog și terapeut somatic"
+            />
+          </a-col>
+        </a-row>
+      </div>
+    </section>
+  </div>
+</template>
+```
+
+Request: N/A
+
+Response: N/A
+
+Authorization: N/A (component)
+
+Dependencies (Current):
+- React: React.FC
+- Ant Design: Typography (Title, Paragraph), Row, Col
+- Next.js: Image
+
+Dependencies (Target):
+- Ant Design Vue: a-typography-title, a-typography-paragraph, a-row, a-col
+- Nuxt: NuxtImg
+
+Notes:
+- Anchor div pentru smooth scroll navigation
+- Responsive order (image first on mobile pentru visual interest)
+- Image alt text empty (BAD for accessibility - should describe image)
+- Static content (consider CMS integration)
+- Width/height explicit pentru prevent layout shift
+- Desktop-only line break pentru typography control
+
+Recommendations:
+1. **CRITICAL**: Add descriptive alt text pentru image (accessibility + SEO)
+2. Consider lazy loading image (already în NuxtImg)
+3. Add schema markup pentru Person/AboutPage
+4. Consider making content editable via CMS
+5. Add animation pentru reveal on scroll
+6. Optimize image (WebP format, proper sizing)
+7. Add loading skeleton for image
+
+================================================================================
+TASK 6: Review Carousel Component
+================================================================================
+
+Title: Review Carousel - Auto-Rotating Testimonials
+
+Description:
+
+Business Logic:
+Carousel component cu testimoniale de la utilizatori. Afișează 3 reviews într-un
+carousel autoplay, fiecare review având quote icon, content și author name.
+Include CTA button către subscription section.
+
+Implementare curentă (React):
+1. Array de 3 reviews hardcoded (reviewContent, reviewAuthor)
+2. Ant Design Carousel cu autoplay enabled
+3. Custom dots styling
+4. Quote icon image above carousel
+5. Card variant="outlined" pentru fiecare review
+6. Space component pentru vertical spacing
+7. CTA button "Vreau în Somaway!" linking to #vreau-abonament
+
+Features:
+- Autoplay carousel (automatic rotation)
+- Custom dots styling
+- Quote icon decoration
+- Card-based review layout
+- Aria-label pentru accessibility
+- Static reviews (no API)
+- Conversion CTA button
+
+Cod sursă:
+- Component: web/src/components/pages/home/Reviews/reviewsCarousel.tsx:1-88
+
+Current Implementation (React):
+```tsx
+// web/src/components/pages/home/Reviews/reviewsCarousel.tsx
+interface Review {
+  reviewContent: string;
+  reviewAuthor: string;
+}
+
+const reviews: Review[] = [
+  {
+    reviewContent:
+      "Înainte de SomaWay, nu puteam adormi fără să mă gândesc la toate problemele. Acum, practicile de relaxare m-au ajutat să am un somn mai profund și să mă trezesc odihnită.",
+    reviewAuthor: "Maria, 32 de ani",
+  },
+  {
+    reviewContent:
+      "Am descoperit că prin dans pot elibera emoții pe care le-am reprimat ani de zile. Mă simt mai ușoară și mai liberă.",
+    reviewAuthor: "Alina, 28 de ani",
+  },
+  {
+    reviewContent:
+      "Comunitatea SomaWay m-a susținut în momentele dificile și m-a inspirat să continuu pe calea mea de dezvoltare personală.",
+    reviewAuthor: "Andrei, 35 de ani",
+  },
+];
+
+const ReviewCarousel: React.FC = () => {
+  return (
+    <section className="review-carousel">
+      <div className="container">
+        <Title level={2} className="review-carousel__title">
+          Uite cum Somaway a început deja să schimbe vieți
+        </Title>
+
+        <div className="review-carousel__image-wrapper">
+          <Image
+            src="/imgs/home/quote.png"
+            alt="Quotes"
+            width={86}
+            height={86}
+            priority
+            className="review-carousel__image"
+          />
+        </div>
+
+        <Carousel
+          autoplay
+          dots={{ className: "review-carousel__dots" }}
+          aria-label="Customer Reviews Carousel"
+        >
+          {reviews.map((review, index) => (
+            <Card key={index} variant="outlined" className="review-carousel__card">
+              <Space direction="vertical" size="small">
+                <Paragraph className="review-carousel__reviewContent">
+                  {review.reviewContent}
+                </Paragraph>
+                <Paragraph strong className="review-carousel__reviewAuthor">
+                  {review.reviewAuthor}
+                </Paragraph>
+              </Space>
+            </Card>
+          ))}
+        </Carousel>
+
+        <CustomButton
+          type="primary"
+          size="small"
+          href="/home#vreau-abonament"
+          className="review-carousel__button"
+          aria-label="Navigate to Somaway subscriptions page"
+        >
+          Vreau în Somaway!
+        </CustomButton>
+      </div>
+    </section>
+  );
+};
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+<!-- web-nuxt/components/pages/home/ReviewCarousel.vue -->
+<script setup lang="ts">
+interface Review {
+  reviewContent: string;
+  reviewAuthor: string;
+}
+
+const reviews: Review[] = [
+  {
+    reviewContent:
+      "Înainte de SomaWay, nu puteam adormi fără să mă gândesc la toate problemele. Acum, practicile de relaxare m-au ajutat să am un somn mai profund și să mă trezesc odihnită.",
+    reviewAuthor: "Maria, 32 de ani",
+  },
+  {
+    reviewContent:
+      "Am descoperit că prin dans pot elibera emoții pe care le-am reprimat ani de zile. Mă simt mai ușoară și mai liberă.",
+    reviewAuthor: "Alina, 28 de ani",
+  },
+  {
+    reviewContent:
+      "Comunitatea SomaWay m-a susținut în momentele dificile și m-a inspirat să continuu pe calea mea de dezvoltare personală.",
+    reviewAuthor: "Andrei, 35 de ani",
+  },
+];
+</script>
+
+<template>
+  <section class="review-carousel">
+    <div class="container">
+      <a-typography-title :level="2" class="review-carousel__title">
+        Uite cum Somaway a început deja să schimbe vieți
+      </a-typography-title>
+
+      <div class="review-carousel__image-wrapper">
+        <NuxtImg
+          src="/imgs/home/quote.png"
+          alt="Quotes"
+          :width="86"
+          :height="86"
+          loading="eager"
+          class="review-carousel__image"
+        />
+      </div>
+
+      <a-carousel
+        autoplay
+        :dots-class="'review-carousel__dots'"
+        aria-label="Customer Reviews Carousel"
+      >
+        <template #default>
+          <a-card
+            v-for="(review, index) in reviews"
+            :key="index"
+            variant="outlined"
+            class="review-carousel__card"
+          >
+            <a-space direction="vertical" size="small">
+              <a-typography-paragraph class="review-carousel__reviewContent">
+                {{ review.reviewContent }}
+              </a-typography-paragraph>
+              <a-typography-paragraph strong class="review-carousel__reviewAuthor">
+                {{ review.reviewAuthor }}
+              </a-typography-paragraph>
+            </a-space>
+          </a-card>
+        </template>
+      </a-carousel>
+
+      <CustomButton
+        type="primary"
+        size="small"
+        href="/home#vreau-abonament"
+        class="review-carousel__button"
+        aria-label="Navigate to Somaway subscriptions page"
+      >
+        Vreau în Somaway!
+      </CustomButton>
+    </div>
+  </section>
+</template>
+```
+
+Request: N/A
+
+Response: N/A
+
+Authorization: N/A (component)
+
+Dependencies (Current):
+- React: React.FC
+- Ant Design: Carousel, Card, Typography (Title, Paragraph), Space
+- Next.js: Image
+- Custom: CustomButton
+
+Dependencies (Target):
+- Ant Design Vue: a-carousel, a-card, a-typography, a-space
+- Nuxt: NuxtImg
+- Custom: CustomButton.vue
+
+Notes:
+- Only 3 reviews (small sample) - consider fetching from API
+- Autoplay enabled (good for engagement, may impact accessibility)
+- Quote icon loaded with priority (important for LCP)
+- Reviews are static (could be dynamic from backend)
+- Aria-label for accessibility
+- No pause on hover (consider adding)
+
+Recommendations:
+1. Add pause on hover pentru carousel (better UX)
+2. Fetch reviews from API instead of hardcoded
+3. Add more reviews (5-10 minimum) pentru credibility
+4. Implement review rating (stars) if available
+5. Add schema markup pentru Review structured data
+6. Consider A/B testing review order
+7. Add loading skeleton pentru reviews
+8. Implement swipe gestures pentru mobile
+
+================================================================================
+TASK 7: What Is Somaway Component
+================================================================================
+
+Title: What Is Component - Platform Description Section
+
+Description:
+
+Business Logic:
+Secțiunea "Ce este Somaway?" descrie platforma și serviciile oferite. Include
+descriere text și 2 feature cards cu icoane: "6 sesiuni LIVE / lună" și
+"Peste 60 de practici somatice".
+
+Implementare curentă (React):
+1. Title level={2}
+2. 2 paragraphs de descriere
+3. Row cu 2 coloane (xs/sm responsive)
+4. Fiecare Col conține icon + text
+5. Next.js Image pentru icons (SVG)
+6. Icon width/height: 60x64
+
+Features:
+- Responsive grid (1 column mobile, 2 columns desktop)
+- SVG icons (/imgs/live-streaming.svg, /imgs/practici-somatice.svg)
+- Strong tags pentru emphasized text
+- Desktop-only line breaks
+- Static content
+
+Cod sursă:
+- Component: web/src/components/pages/home/WhatIs/index.tsx:1-69
+
+Current Implementation (React):
+```tsx
+// web/src/components/pages/home/WhatIs/index.tsx
+const WhatIs: React.FC = () => {
+  return (
+    <section className="what-is">
+      <div className="container">
+        <Title level={2}>Ce este Somaway?</Title>
+        <div className="description">
+          <Paragraph>
+            Somaway este o comunitate online ghidată de terapeuți și
+            facilitatori de practici somatice care te ajută, prin practici live{" "}
+            <br className="desktop-only" />
+            sau înregistrate, să gestionezi stresul, anxietatea, să aduci
+            liniște în tine și să îți amplifici starea de bine.
+          </Paragraph>
+          <Paragraph>
+            Fie că ai nevoie să dormi mai bine, să te energizezi, să scapi de
+            tensiunile din corp sau să te relaxezi profund după o zi{" "}
+            <br className="desktop-only" />
+            lungă, Somaway îți oferă instrumentele pentru a face asta.
+          </Paragraph>
+        </div>
+
+        <Row gutter={[24, 16]} className="what-is__row">
+          <Col xs={24} sm={12} className="what-is__col">
+            <div className="inner">
+              <Image
+                src="/imgs/live-streaming.svg"
+                alt=""
+                width={60}
+                height={64}
+                className="what-is__icon"
+              />
+              <Paragraph className="what-is__text">
+                <strong>6 sesiuni LIVE / lună</strong> în care lucrăm somatic.
+                Lucrăm somatic împreună timp de o oră ca să aduci liniște la
+                interior.
+              </Paragraph>
+            </div>
+          </Col>
+          <Col xs={24} sm={12} className="what-is__col">
+            <div className="inner">
+              <div className="what-is__icon">
+                <Image
+                  src="/imgs/practici-somatice.svg"
+                  alt=""
+                  width={60}
+                  height={64}
+                  className="what-is__icon"
+                />
+              </div>
+              <Paragraph className="what-is__text">
+                <strong>Peste 60 de practici somatice în platformă</strong> care
+                te ajută să navighezi cu bine momentele dificile
+              </Paragraph>
+            </div>
+          </Col>
+        </Row>
+      </div>
+    </section>
+  );
+};
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+<!-- web-nuxt/components/pages/home/WhatIs.vue -->
+<script setup lang="ts">
+// No props or state needed (static component)
+</script>
+
+<template>
+  <section class="what-is">
+    <div class="container">
+      <a-typography-title :level="2">Ce este Somaway?</a-typography-title>
+
+      <div class="description">
+        <a-typography-paragraph>
+          Somaway este o comunitate online ghidată de terapeuți și
+          facilitatori de practici somatice care te ajută, prin practici live{" "}
+          <br class="desktop-only" />
+          sau înregistrate, să gestionezi stresul, anxietatea, să aduci
+          liniște în tine și să îți amplifici starea de bine.
+        </a-typography-paragraph>
+        <a-typography-paragraph>
+          Fie că ai nevoie să dormi mai bine, să te energizezi, să scapi de
+          tensiunile din corp sau să te relaxezi profund după o zi{" "}
+          <br class="desktop-only" />
+          lungă, Somaway îți oferă instrumentele pentru a face asta.
+        </a-typography-paragraph>
+      </div>
+
+      <a-row :gutter="[24, 16]" class="what-is__row">
+        <a-col :xs="24" :sm="12" class="what-is__col">
+          <div class="inner">
+            <NuxtImg
+              src="/imgs/live-streaming.svg"
+              alt="Live streaming icon"
+              :width="60"
+              :height="64"
+              loading="lazy"
+              class="what-is__icon"
+            />
+            <a-typography-paragraph class="what-is__text">
+              <strong>6 sesiuni LIVE / lună</strong> în care lucrăm somatic.
+              Lucrăm somatic împreună timp de o oră ca să aduci liniște la
+              interior.
+            </a-typography-paragraph>
+          </div>
+        </a-col>
+
+        <a-col :xs="24" :sm="12" class="what-is__col">
+          <div class="inner">
+            <NuxtImg
+              src="/imgs/practici-somatice.svg"
+              alt="Practici somatice icon"
+              :width="60"
+              :height="64"
+              loading="lazy"
+              class="what-is__icon"
+            />
+            <a-typography-paragraph class="what-is__text">
+              <strong>Peste 60 de practici somatice în platformă</strong> care
+              te ajută să navighezi cu bine momentele dificile
+            </a-typography-paragraph>
+          </div>
+        </a-col>
+      </a-row>
+    </div>
+  </section>
+</template>
+```
+
+Request: N/A
+
+Response: N/A
+
+Authorization: N/A (component)
+
+Dependencies (Current):
+- React: React.FC
+- Ant Design: Typography (Title, Paragraph), Row, Col
+- Next.js: Image
+
+Dependencies (Target):
+- Ant Design Vue: a-typography, a-row, a-col
+- Nuxt: NuxtImg
+
+Notes:
+- Icons have empty alt text (BAD - should describe icon)
+- Static numbers (6 sessions, 60+ practices) - consider making dynamic
+- Gutter spacing [24, 16] (horizontal, vertical)
+- SVG icons (scalable, good for performance)
+- Responsive: 1 column mobile, 2 columns tablet+
+
+Recommendations:
+1. Add descriptive alt text pentru icons
+2. Fetch session count and practices count from API
+3. Add counter animation pentru numbers (60+)
+4. Consider adding more features (3-4 cards)
+5. Add icons animation on scroll
+6. Implement A/B testing pentru copy
+
+================================================================================
+TASK 8: What You Find Component
+================================================================================
+
+Title: What You Find - Features List with CTA
+
+Description:
+
+Business Logic:
+Secțiunea "Ce vei găsi în SOMAWAY?" prezintă o listă de 9 features/practici
+disponibile în platformă. Include title, listă cu HTML rendering, descriere
+și CTA button. Component reusabil (dar folosit o singură dată pe homepage).
+
+Implementare curentă (React):
+1. Props: title, featuresList (string[]), description, buttonText, buttonLink
+2. Ant Design List cu renderItem
+3. dangerouslySetInnerHTML pentru HTML în list items (includes <br />, <strong>)
+4. Custom className pentru fiecare item (item-${index + 1})
+5. CTA button la final
+6. Paragraph pentru description
+
+Features:
+- HTML support în features (bold text, line breaks)
+- Indexed className pentru specific styling
+- Reusable component structure
+- Custom button link (anchor scroll support)
+- Description after list
+
+Cod sursă:
+- Component: web/src/components/pages/home/WhatYouFind/index.tsx:1-54
+
+Current Implementation (React):
+```tsx
+// web/src/components/pages/home/WhatYouFind/index.tsx
+type WhatYouFindProps = {
+  title: string;
+  featuresList: string[];
+  description: React.ReactNode;
+  buttonText: string;
+  buttonLink: string;
+};
+
+const WhatYouFind: React.FC<WhatYouFindProps> = ({
+  title,
+  featuresList,
+  description,
+  buttonText,
+  buttonLink,
+}) => {
+  return (
+    <section className="what-you-find">
+      <div className="container">
+        <Title level={2}>{title}</Title>
+        <List
+          dataSource={featuresList}
+          renderItem={(feature, index) => (
+            <List.Item className={`what-you-find__item item-${index + 1}`}>
+              <span
+                dangerouslySetInnerHTML={{ __html: feature }}
+                className="what-you-find__text"
+              />
+            </List.Item>
+          )}
+        />
+        <Paragraph className="what-you-find__description">
+          {description}
+        </Paragraph>
+        <CustomButton
+          type="primary"
+          size="small"
+          href={buttonLink}
+          className="what-you-find__button"
+        >
+          {buttonText}
+        </CustomButton>
+      </div>
+    </section>
+  );
+};
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+<!-- web-nuxt/components/pages/home/WhatYouFind.vue -->
+<script setup lang="ts">
+interface WhatYouFindProps {
+  title: string;
+  featuresList: string[];
+  buttonText: string;
+  buttonLink: string;
+}
+
+const props = defineProps<WhatYouFindProps>();
+</script>
+
+<template>
+  <section class="what-you-find">
+    <div class="container">
+      <a-typography-title :level="2">{{ title }}</a-typography-title>
+
+      <a-list :data-source="featuresList">
+        <template #renderItem="{ item, index }">
+          <a-list-item :class="`what-you-find__item item-${index + 1}`">
+            <!-- WARNING: v-html needs sanitization -->
+            <span v-html="item" class="what-you-find__text"></span>
+          </a-list-item>
+        </template>
+      </a-list>
+
+      <a-typography-paragraph class="what-you-find__description">
+        <slot name="description"></slot>
+      </a-typography-paragraph>
+
+      <CustomButton
+        type="primary"
+        size="small"
+        :href="buttonLink"
+        class="what-you-find__button"
+      >
+        {{ buttonText }}
+      </CustomButton>
+    </div>
+  </section>
+</template>
+```
+
+Usage (Current):
+```tsx
+<WhatYouFind
+  title="Ce vei găsi în SOMAWAY?"
+  featuresList={featuresList}
+  description={
+    <>
+      Investiția în tine este cea mai bună investiție pe termen lung.{" "}
+      <strong>Alege să te simți bine în corpul tău.</strong> Hai alături de noi!
+    </>
+  }
+  buttonText="Yey, abia aștept!"
+  buttonLink="/home#vreau-abonament"
+/>
+```
+
+Usage (Target):
+```vue
+<WhatYouFind
+  title="Ce vei găsi în SOMAWAY?"
+  :features-list="featuresList"
+  button-text="Yey, abia aștept!"
+  button-link="/home#vreau-abonament"
+>
+  <template #description>
+    Investiția în tine este cea mai bună investiție pe termen lung.{" "}
+    <strong>Alege să te simți bine în corpul tău.</strong> Hai alături de noi!
+  </template>
+</WhatYouFind>
+```
+
+Request: N/A
+
+Response: N/A
+
+Authorization: N/A (component)
+
+Dependencies (Current):
+- React: React.FC, React.ReactNode
+- Ant Design: Typography (Title, Paragraph), List
+- Custom: CustomButton
+
+Dependencies (Target):
+- Ant Design Vue: a-typography, a-list
+- Custom: CustomButton.vue
+
+Notes:
+- dangerouslySetInnerHTML (React) → v-html (Vue): **SECURITY RISK**
+- Features list includes HTML (<br />, <strong> tags)
+- Indexed className pentru CSS styling per item
+- Similar to BenefitsList but with button
+- Button links to anchor (#vreau-abonament)
+
+Recommendations:
+1. **CRITICAL**: Sanitize HTML before v-html rendering
+2. Consider slots pentru description (already în Vue version)
+3. Add animation pentru list items reveal
+4. Consider icons pentru each feature
+5. Add loading skeleton
+6. Implement A/B testing pentru button text
+
+================================================================================
+TASK 9: Stories/Reviews Gallery Component
+================================================================================
+
+Title: Stories Component - Testimonials Gallery with Lightbox
+
+Description:
+
+Business Logic:
+Secțiunea "Următoarea poveste poate fi a ta" afișează o galerie expandabilă
+de testimoniale sub formă de imagini. Include lightbox pentru viewing full-size,
+expand/collapse functionality, și 2 CTA buttons.
+
+Implementare curentă (React):
+1. Array de 9 review images (/imgs/reviews/1.webp - 9.webp)
+2. useState: lightboxIndex (currently viewed image), expanded (gallery state)
+3. useRef: containerRef, innerContainerRef, firstElementRef
+4. Grid layout cu max-height controlled by expanded state
+5. Lightbox modal cu navigation (Prev/Next buttons)
+6. Toggle expand button ("Vezi mai multe/putine testimoniale")
+7. Scroll to top după collapse
+8. CTA button "Vreau în Somaway!"
+
+Features:
+- Expandable gallery (show 1 row initially, expand to all)
+- Lightbox modal pentru full-size viewing
+- Keyboard navigation în lightbox (Prev/Next)
+- Smooth scroll to section top după collapse
+- Click outside to close lightbox
+- 9 testimonial images (WebP format)
+- Conversion CTA button
+
+Cod sursă:
+- Component: web/src/components/pages/home/Reviews/index.tsx:1-137
+
+Current Implementation (React):
+```tsx
+// web/src/components/pages/home/Reviews/index.tsx
+const reviews: string[] = [
+  "/imgs/reviews/1.webp",
+  "/imgs/reviews/2.webp",
+  "/imgs/reviews/3.webp",
+  "/imgs/reviews/4.webp",
+  "/imgs/reviews/5.webp",
+  "/imgs/reviews/6.webp",
+  "/imgs/reviews/7.webp",
+  "/imgs/reviews/8.webp",
+  "/imgs/reviews/9.webp",
+];
+
+const Stories: React.FC = () => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const innerContainerRef = useRef<HTMLDivElement>(null);
+  const firstElementRef = useRef<HTMLDivElement>(null);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState<boolean>(false);
+
+  const toggleExpand = () => {
+    if (containerRef.current) {
+      containerRef.current.classList.toggle("expanded");
+    }
+    if (expanded && containerRef.current) {
+      window.scroll({
+        top: containerRef.current.offsetTop - 250,
+        behavior: "smooth",
+      });
+    }
+    setExpanded(!expanded);
+  };
+
+  const openLightbox = (index: number) => {
+    setLightboxIndex(index);
+  };
+
+  const closeLightbox = () => {
+    setLightboxIndex(null);
+  };
+
+  return (
+    <section className="reviews">
+      <div className="container">
+        <Title level={2}>Următoarea poveste poate fi a ta:</Title>
+
+        <div
+          className="reviews-container"
+          ref={containerRef}
+          style={{
+            maxHeight: expanded
+              ? innerContainerRef?.current?.offsetHeight
+              : firstElementRef.current?.offsetHeight,
+          }}
+        >
+          <div className="inner-container" ref={innerContainerRef}>
+            {reviews.map((image, index) => (
+              <div
+                key={index}
+                className="review-item"
+                ref={index === 0 ? firstElementRef : null}
+              >
+                <Image
+                  src={image}
+                  alt={`Review ${index + 1}`}
+                  onClick={() => openLightbox(index)}
+                  layout="responsive"
+                  width={500}
+                  height={500}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <CustomButton type="link" size="small" onClick={toggleExpand}>
+          {!expanded ? "Vezi mai multe testimoniale" : "Vezi mai putine testimoniale"}
+        </CustomButton>
+
+        <CustomButton type="primary" size="small" href="/home#vreau-abonament">
+          Vreau în Somaway!
+        </CustomButton>
+
+        {lightboxIndex !== null && (
+          <div className="lightbox" onClick={closeLightbox}>
+            <Button className="close-button" onClick={closeLightbox}>
+              X
+            </Button>
+            <Image
+              src={reviews[lightboxIndex]}
+              alt={`Review ${lightboxIndex + 1}`}
+              layout="responsive"
+              width={500}
+            />
+            <div className="navigation">
+              <Button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setLightboxIndex((prev) =>
+                    prev !== null && prev > 0 ? prev - 1 : reviews.length - 1
+                  );
+                }}
+              >
+                Prev
+              </Button>
+              <Button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setLightboxIndex((prev) =>
+                    prev !== null && prev < reviews.length - 1 ? prev + 1 : 0
+                  );
+                }}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+};
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+<!-- web-nuxt/components/pages/home/Stories.vue -->
+<script setup lang="ts">
+import { ref, computed } from 'vue';
+
+const reviews: string[] = [
+  "/imgs/reviews/1.webp",
+  "/imgs/reviews/2.webp",
+  "/imgs/reviews/3.webp",
+  "/imgs/reviews/4.webp",
+  "/imgs/reviews/5.webp",
+  "/imgs/reviews/6.webp",
+  "/imgs/reviews/7.webp",
+  "/imgs/reviews/8.webp",
+  "/imgs/reviews/9.webp",
+];
+
+const containerRef = ref<HTMLDivElement | null>(null);
+const innerContainerRef = ref<HTMLDivElement | null>(null);
+const firstElementRef = ref<HTMLDivElement | null>(null);
+const lightboxIndex = ref<number | null>(null);
+const expanded = ref<boolean>(false);
+
+const containerStyle = computed(() => ({
+  maxHeight: expanded.value
+    ? `${innerContainerRef.value?.offsetHeight}px`
+    : `${firstElementRef.value?.offsetHeight}px`,
+}));
+
+const toggleExpand = () => {
+  if (containerRef.value) {
+    containerRef.value.classList.toggle('expanded');
+  }
+  if (expanded.value && containerRef.value) {
+    window.scroll({
+      top: containerRef.value.offsetTop - 250,
+      behavior: 'smooth',
+    });
+  }
+  expanded.value = !expanded.value;
+};
+
+const openLightbox = (index: number) => {
+  lightboxIndex.value = index;
+};
+
+const closeLightbox = () => {
+  lightboxIndex.value = null;
+};
+
+const navigatePrev = (e: Event) => {
+  e.stopPropagation();
+  if (lightboxIndex.value !== null) {
+    lightboxIndex.value = lightboxIndex.value > 0 ? lightboxIndex.value - 1 : reviews.length - 1;
+  }
+};
+
+const navigateNext = (e: Event) => {
+  e.stopPropagation();
+  if (lightboxIndex.value !== null) {
+    lightboxIndex.value = lightboxIndex.value < reviews.length - 1 ? lightboxIndex.value + 1 : 0;
+  }
+};
+</script>
+
+<template>
+  <section class="reviews">
+    <div class="container">
+      <a-typography-title :level="2">
+        Următoarea poveste poate fi a ta:
+      </a-typography-title>
+
+      <div
+        ref="containerRef"
+        class="reviews-container"
+        :style="containerStyle"
+      >
+        <div ref="innerContainerRef" class="inner-container">
+          <div
+            v-for="(image, index) in reviews"
+            :key="index"
+            :ref="index === 0 ? firstElementRef : null"
+            class="review-item"
+          >
+            <NuxtImg
+              :src="image"
+              :alt="`Review ${index + 1}`"
+              loading="lazy"
+              :width="500"
+              :height="500"
+              @click="openLightbox(index)"
+            />
+          </div>
+        </div>
+      </div>
+
+      <CustomButton type="link" size="small" @click="toggleExpand">
+        {{ !expanded ? 'Vezi mai multe testimoniale' : 'Vezi mai putine testimoniale' }}
+      </CustomButton>
+
+      <CustomButton type="primary" size="small" href="/home#vreau-abonament">
+        Vreau în Somaway!
+      </CustomButton>
+
+      <div v-if="lightboxIndex !== null" class="lightbox" @click="closeLightbox">
+        <a-button class="close-button" @click="closeLightbox">X</a-button>
+        <NuxtImg
+          :src="reviews[lightboxIndex]"
+          :alt="`Review ${lightboxIndex + 1}`"
+          :width="500"
+        />
+        <div class="navigation">
+          <a-button @click="navigatePrev">Prev</a-button>
+          <a-button @click="navigateNext">Next</a-button>
+        </div>
+      </div>
+    </div>
+  </section>
+</template>
+```
+
+Request: N/A
+
+Response: N/A
+
+Authorization: N/A (component)
+
+Dependencies (Current):
+- React: useState, useRef, React.FC
+- Ant Design: Typography (Title), Button
+- Next.js: Image
+- Custom: CustomButton
+
+Dependencies (Target):
+- Vue: ref, computed
+- Ant Design Vue: a-typography-title, a-button
+- Nuxt: NuxtImg
+- Custom: CustomButton.vue
+
+Notes:
+- WebP images (optimized format)
+- Dynamic max-height based on ref measurements
+- Lightbox modal overlays entire screen
+- Keyboard navigation would be nice (arrow keys) - not currently implemented
+- Scroll offset -250px pentru account for fixed header
+- Alt text generic (could be more descriptive)
+
+Recommendations:
+1. Add keyboard navigation (ArrowLeft, ArrowRight, Escape)
+2. Add swipe gestures pentru mobile
+3. Lazy load images not în viewport
+4. Add loading skeleton pentru images
+5. Consider pagination instead of show all (performance)
+6. Add descriptive alt text pentru each image
+7. Implement schema markup pentru Review
+8. Add close button în corner (X) cu better positioning
+9. Add transition animations pentru expand/collapse
+
+================================================================================
+TASK 10: Speakers/Therapists Component
+================================================================================
+
+Title: Speakers Component - Therapists/Facilitators Presentation
+
+Description:
+
+Business Logic:
+Secțiunea "Facilitatori" prezintă terapeuții și facilitatorii platformei
+Somaway. Include anchor pentru navigation și utilizează SpeakersCard component
+pentru afișarea datelor (likely fetched from API sau props).
+
+Implementare curentă (React):
+1. Anchor div cu id="facilitatori"
+2. Row cu justify="center"
+3. Single Col span={24}
+4. SpeakersCard component (implementation în separate file)
+
+Features:
+- Anchor navigation support (#facilitatori)
+- Centered layout
+- Full-width column
+- Delegates rendering to SpeakersCard component
+
+Cod sursă:
+- Component: web/src/components/pages/home/Terapeuti/index.tsx:1-23
+- SpeakersCard: web/src/components/pages/home/Terapeuti/speakersCard.tsx (separate file)
+
+Current Implementation (React):
+```tsx
+// web/src/components/pages/home/Terapeuti/index.tsx
+export const Speakers = () => {
+  return (
+    <>
+      <div id="facilitatori" className="anchor"></div>
+      <section className="speakers">
+        <div className="container">
+          <Row justify="center" className="cards">
+            <Col span={24}>
+              <SpeakersCard />
+            </Col>
+          </Row>
+        </div>
+      </section>
+    </>
+  );
+};
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+<!-- web-nuxt/components/pages/home/Speakers.vue -->
+<script setup lang="ts">
+// No props needed if SpeakersCard handles data fetching
+</script>
+
+<template>
+  <div>
+    <div id="facilitatori" class="anchor"></div>
+    <section class="speakers">
+      <div class="container">
+        <a-row justify="center" class="cards">
+          <a-col :span="24">
+            <SpeakersCard />
+          </a-col>
+        </a-row>
+      </div>
+    </section>
+  </div>
+</template>
+```
+
+Request: N/A (depends on SpeakersCard implementation)
+
+Response: N/A
+
+Authorization: N/A (component)
+
+Dependencies (Current):
+- React: (arrow function, no hooks)
+- Ant Design: Row, Col
+- Component: SpeakersCard
+
+Dependencies (Target):
+- Ant Design Vue: a-row, a-col
+- Component: SpeakersCard.vue
+
+Notes:
+- Wrapper component only (logic în SpeakersCard)
+- Anchor pentru navigation
+- Full-width layout
+- SpeakersCard likely fetches or receives therapist data
+- Consider reading SpeakersCard implementation pentru complete picture
+
+Recommendations:
+1. Read SpeakersCard.tsx pentru understand data flow
+2. If SpeakersCard fetches data, ensure proper loading states
+3. Consider error handling for API failures
+4. Add schema markup pentru Person/Organization
+5. Implement lazy loading pentru therapist images
+
+================================================================================
+TASK 11: Inscrie Summit / Subscription Display Component
+================================================================================
+
+Title: Inscrie Summit Component - Subscription Options Display
+
+Description:
+
+Business Logic:
+Secțiunea "Meriți liniște începând de acum!" afișează opțiunile de abonament
+disponibile folosind SubscriptionsContainer component. Include anchor pentru
+navigation (#vreau-abonament) și este punctul principal de conversie.
+
+Implementare curentă (React):
+1. Anchor div cu id="vreau-abonament" (CTA destination)
+2. Title level={2}
+3. Commented code pentru offer deadline și description
+4. SubscriptionsContainer component (renders subscription cards)
+5. Commented disclaimer text despre plată recurentă
+
+Features:
+- Anchor navigation (all CTAs point here)
+- Main conversion point
+- Subscription cards display
+- Optional offer deadline (commented out)
+- Optional disclaimer (commented out)
+
+Cod sursă:
+- Component: web/src/components/pages/home/InscriereSummit/index.tsx:1-33
+- SubscriptionsContainer: web/src/components/pages/subscriptions/SubscriptionsContainer.tsx
+
+Current Implementation (React):
+```tsx
+// web/src/components/pages/home/InscriereSummit/index.tsx
+const InscriereSummit: React.FC = () => {
+  return (
+    <>
+      <div id="vreau-abonament" className="anchor"></div>
+      <section className="AbType">
+        <div className="container">
+          <Title level={2}>Meriți liniște începând de acum!</Title>
+          {/*<div className="ab-description">*/}
+            {/*<Title level={4} style={{paddingBottom: '5px'}}><u>Ofertele sunt valabile până pe 15 august 2025</u></Title>*/}
+            {/*<Paragraph>*/}
+            {/*  Descoperă mai jos cele trei opțiuni de a intra în comunitatea*/}
+            {/*  Somaway:*/}
+            {/*</Paragraph>*/}
+          {/*</div>*/}
+          <SubscriptionsContainer />
+          {/*<Paragraph className="disclaimer">*/}
+          {/*  *Toate abonamentele Somaway sunt cu plată recurentă. Abonamentul îl*/}
+          {/*  poți opri din contul tău din platformă**/}
+          {/*</Paragraph>*/}
+        </div>
+      </section>
+    </>
+  );
+};
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+<!-- web-nuxt/components/pages/home/InscriereSummit.vue -->
+<script setup lang="ts">
+// No props if SubscriptionsContainer handles everything
+</script>
+
+<template>
+  <div>
+    <div id="vreau-abonament" class="anchor"></div>
+    <section class="AbType">
+      <div class="container">
+        <a-typography-title :level="2">
+          Meriți liniște începând de acum!
+        </a-typography-title>
+
+        <!-- Optional: Uncomment for deadline offers
+        <div class="ab-description">
+          <a-typography-title :level="4" :style="{ paddingBottom: '5px' }">
+            <u>Ofertele sunt valabile până pe 15 august 2025</u>
+          </a-typography-title>
+          <a-typography-paragraph>
+            Descoperă mai jos cele trei opțiuni de a intra în comunitatea Somaway:
+          </a-typography-paragraph>
+        </div>
+        -->
+
+        <SubscriptionsContainer />
+
+        <!-- Optional: Uncomment for disclaimer
+        <a-typography-paragraph class="disclaimer">
+          *Toate abonamentele Somaway sunt cu plată recurentă. Abonamentul îl
+          poți opri din contul tău din platformă*
+        </a-typography-paragraph>
+        -->
+      </div>
+    </section>
+  </div>
+</template>
+```
+
+Request: N/A (depends on SubscriptionsContainer)
+
+Response: N/A
+
+Authorization: N/A (component)
+
+Dependencies (Current):
+- React: React.FC
+- Ant Design: Typography (Title, commented Paragraph)
+- Component: SubscriptionsContainer
+
+Dependencies (Target):
+- Ant Design Vue: a-typography-title
+- Component: SubscriptionsContainer.vue
+
+Notes:
+- Critical conversion section (all CTAs lead here)
+- Anchor id matches all href="#vreau-abonament" links
+- Commented code suggests time-limited offers functionality exists
+- Commented disclaimer about recurring payments (important legal info)
+- SubscriptionsContainer likely fetches subscription plans from API
+
+Recommendations:
+1. Uncomment disclaimer despre recurring payments (legal requirement)
+2. Consider dynamic deadline offers (A/B test urgency)
+3. Read SubscriptionsContainer implementation pentru full picture
+4. Add tracking pentru conversion events (analytics)
+5. Consider showing testimonials near subscription cards
+6. Add FAQs near subscription options
+7. Implement schema markup pentru Offer/Product
+
+================================================================================
+TASK 12: Money Back Guarantee Component
+================================================================================
+
+Title: Money Back Guarantee - Risk Reversal Section
+
+Description:
+
+Business Logic:
+Secțiunea "Fără risc 100%" prezintă garanția de returnare a banilor (14 zile)
+și include un CTA final pentru conversie. Design cu badge icon și 2 secțiuni:
+garanție description și final call-to-action cu disclaimer despre abonament.
+
+Implementare curentă (React):
+1. Row cu 2 coloane: badge icon (left) + text (right)
+2. Badge image: /imgs/home/money-back.svg (168x168)
+3. Title "Fără risc 100%", undertitle "Garanție de returnare a banilor!"
+4. Description: 14 zile returnare policy
+5. Row #2: Final CTA section cu title, description, button
+6. Footer disclaimer despre expirare abonament
+7. Desktop-only line breaks pentru typography
+
+Features:
+- Trust-building guarantee section
+- Visual badge icon
+- 14 days money-back guarantee
+- Final conversion CTA
+- Subscription expiration disclaimer
+- Responsive layout (mobile: stacked, desktop: side-by-side)
+
+Cod sursă:
+- Component: web/src/components/pages/home/NoRisk/index.tsx:1-96
+
+Current Implementation (React):
+```tsx
+// web/src/components/pages/home/NoRisk/index.tsx
+const MoneyBackGuarantee: React.FC = () => {
+  return (
+    <section>
+      <div className="container">
+        <div className="money-back-guarantee">
+          <Row gutter={16} align="middle" justify="center" className="money-back-guarantee__container">
+            <Col xs={24} md={10} className="money-back-guarantee__badge">
+              <Image
+                src="/imgs/home/money-back.svg"
+                alt="100% Money Back Guarantee"
+                width={168}
+                height={168}
+              />
+            </Col>
+
+            <Col xs={24} md={14} className="money-back-guarantee__text-content">
+              <Title level={3} className="money-back-guarantee__title">
+                Fără risc 100%
+              </Title>
+              <Paragraph className="undertitle">
+                Garanție de returnare a banilor!
+              </Paragraph>
+              <Paragraph className="money-back-guarantee__description">
+                Simți că nu este ce așteptai tu și nu ești mulțumit? <br />
+                Este puțin probabil, dar dacă se întâmplă asta, ne scrii în{" "}
+                <br />
+                maxim 14 zile și îți returnăm banii.
+              </Paragraph>
+            </Col>
+          </Row>
+
+          <Row gutter={16} align="middle" justify="center" className="money-back-guarantee__call-to-action">
+            <Col xs={24}>
+              <Title level={3} className="money-back-guarantee__cta-title">
+                Alege să te eliberezi de stres și să îți{" "}
+                <br className="desktop-only" />
+                redescoperi liniștea interioară cu Somaway.
+              </Title>
+              <Paragraph className="money-back-guarantee__cta-description">
+                Știu că uneori poate ai impresia că vei simți liniște doar după
+                ce rezolvi anumite probleme din viața ta. Însă în realitate, e
+                fix <br className="desktop-only" />
+                invers: vei rezolva problemele cu care te confrunți abia după ce
+                vei reuși să aduci liniște în interiorul tău!
+              </Paragraph>
+            </Col>
+
+            <Col xs={24} className="money-back-guarantee__button-container">
+              <CustomButton href="/home#vreau-abonament" size="small" type="primary">
+                Azi aleg liniștea!
+              </CustomButton>
+            </Col>
+
+            <Col xs={24} className="money-back-guarantee__footer">
+              <Paragraph className="money-back-guarantee__footer-text">
+                Somaway e o platformă de conținut cu acces pe baza de abonament.
+                Abonamentele au durate diferite. Înainte de expirarea
+                abonamentului vei primi o notificare /{" "}
+                <br className="desktop-only" />
+                instiintare de la noi alaturi de o invitație de a reînnoi
+                abonamentul. Expirarea fără reînnoire întrerupe accesul la orice
+                conținut al platformei.
+              </Paragraph>
+            </Col>
+          </Row>
+        </div>
+      </div>
+    </section>
+  );
+};
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+<!-- web-nuxt/components/pages/home/MoneyBackGuarantee.vue -->
+<script setup lang="ts">
+// No props needed (static component)
+</script>
+
+<template>
+  <section>
+    <div class="container">
+      <div class="money-back-guarantee">
+        <a-row
+          :gutter="16"
+          align="middle"
+          justify="center"
+          class="money-back-guarantee__container"
+        >
+          <a-col :xs="24" :md="10" class="money-back-guarantee__badge">
+            <NuxtImg
+              src="/imgs/home/money-back.svg"
+              alt="100% Money Back Guarantee"
+              :width="168"
+              :height="168"
+              loading="lazy"
+            />
+          </a-col>
+
+          <a-col :xs="24" :md="14" class="money-back-guarantee__text-content">
+            <a-typography-title :level="3" class="money-back-guarantee__title">
+              Fără risc 100%
+            </a-typography-title>
+            <a-typography-paragraph class="undertitle">
+              Garanție de returnare a banilor!
+            </a-typography-paragraph>
+            <a-typography-paragraph class="money-back-guarantee__description">
+              Simți că nu este ce așteptai tu și nu ești mulțumit? <br />
+              Este puțin probabil, dar dacă se întâmplă asta, ne scrii în{" "}
+              <br />
+              maxim 14 zile și îți returnăm banii.
+            </a-typography-paragraph>
+          </a-col>
+        </a-row>
+
+        <a-row
+          :gutter="16"
+          align="middle"
+          justify="center"
+          class="money-back-guarantee__call-to-action"
+        >
+          <a-col :xs="24">
+            <a-typography-title :level="3" class="money-back-guarantee__cta-title">
+              Alege să te eliberezi de stres și să îți{" "}
+              <br class="desktop-only" />
+              redescoperi liniștea interioară cu Somaway.
+            </a-typography-title>
+            <a-typography-paragraph class="money-back-guarantee__cta-description">
+              Știu că uneori poate ai impresia că vei simți liniște doar după
+              ce rezolvi anumite probleme din viața ta. Însă în realitate, e
+              fix <br class="desktop-only" />
+              invers: vei rezolva problemele cu care te confrunți abia după ce
+              vei reuși să aduci liniște în interiorul tău!
+            </a-typography-paragraph>
+          </a-col>
+
+          <a-col :xs="24" class="money-back-guarantee__button-container">
+            <CustomButton href="/home#vreau-abonament" size="small" type="primary">
+              Azi aleg liniștea!
+            </CustomButton>
+          </a-col>
+
+          <a-col :xs="24" class="money-back-guarantee__footer">
+            <a-typography-paragraph class="money-back-guarantee__footer-text">
+              Somaway e o platformă de conținut cu acces pe baza de abonament.
+              Abonamentele au durate diferite. Înainte de expirarea
+              abonamentului vei primi o notificare /{" "}
+              <br class="desktop-only" />
+              instiintare de la noi alaturi de o invitație de a reînnoi
+              abonamentul. Expirarea fără reînnoire întrerupe accesul la orice
+              conținut al platformei.
+            </a-typography-paragraph>
+          </a-col>
+        </a-row>
+      </div>
+    </div>
+  </section>
+</template>
+```
+
+Request: N/A
+
+Response: N/A
+
+Authorization: N/A (component)
+
+Dependencies (Current):
+- React: React.FC
+- Ant Design: Typography (Title, Paragraph), Row, Col
+- Next.js: Image
+- Custom: CustomButton
+
+Dependencies (Target):
+- Ant Design Vue: a-typography, a-row, a-col
+- Nuxt: NuxtImg
+- Custom: CustomButton.vue
+
+Notes:
+- 14 days money-back guarantee (standard e-commerce practice)
+- Trust-building element (reduces purchase anxiety)
+- Badge SVG icon (visual trust indicator)
+- Final CTA before footer
+- Important legal disclaimer despre subscription expiration
+- Desktop-only line breaks pentru better typography
+
+Recommendations:
+1. Consider making guarantee period configurable (not hardcoded 14 days)
+2. Add link to refund policy page
+3. Add customer support contact în guarantee section
+4. Implement schema markup pentru MoneyBackGuarantee
+5. A/B test guarantee copy (14 vs 30 days?)
+6. Add testimonials about refund experience (if positive)
+7. Consider making disclaimer more prominent (legal requirement)
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================
+
+Generated: 2025-11-03
+Total Tasks: 12
+Status: Ready for JIRA Import
+Migration Path: Next.js 15 + React 18 → Nuxt 3 + Vue.js 3

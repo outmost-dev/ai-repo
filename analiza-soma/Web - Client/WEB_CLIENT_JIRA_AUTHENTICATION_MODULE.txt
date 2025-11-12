@@ -1,0 +1,2890 @@
+================================================================================
+WEB CLIENT - AUTHENTICATION MODULE
+JIRA DOCUMENTATION
+================================================================================
+
+Project: Somaway Web Client Migration (Next.js → Nuxt 3)
+Module: Authentication & Session Management
+Status: Ready for JIRA Import
+Total Tasks: 9
+Complexity: High
+Estimated Duration: 4 days
+
+--------------------------------------------------------------------------------
+MODULE OVERVIEW
+--------------------------------------------------------------------------------
+
+STORY: Authentication Module
+
+Description:
+Modulul de autentificare gestionează înregistrarea, autentificarea și recuperarea
+contului pentru utilizatorii Web Client. Include management complet de sesiune
+cu Redux state, token caching, role-based access control și integrare cu
+third-party services (FirstPromoter, Facebook Pixel).
+
+Current Implementation: Next.js 15 + React 18 + Redux Toolkit
+Target Implementation: Nuxt 3 + Vue.js 3 + Pinia
+
+Locație cod sursă (Current):
+- Pages: web/src/pages/auth/
+- Redux: web/src/redux/Actions/User/, web/src/redux/Reducers/User/
+- Services: web/src/services/auth.service.ts, web/src/services/api/Auth/
+- Middleware: web/src/middleware/RouteHandler.tsx
+- Components: web/src/components/pages/sign-up/RegisterResult.tsx
+
+Locație cod țintă (Target):
+- Pages: web-nuxt/pages/auth/
+- Store: web-nuxt/stores/auth.ts
+- Composables: web-nuxt/composables/useAuth.ts
+- Middleware: web-nuxt/middleware/auth.ts
+- API: web-nuxt/composables/useAuthApi.ts
+
+Features implementate: 9
+- Sign In (autentificare cu email/telefon)
+- Sign Up (înregistrare multi-step cu validare email)
+- Forgot Password (generare recovery key prin email)
+- Account Recovery (resetare parolă cu recovery key)
+- Email Confirmation (verificare email actualizat)
+- Account Verification (activare cont nou)
+- Sign Out (logout cu cleanup complet)
+- Redux State Management (user reducer + actions)
+- Route Handler (authorization middleware cu role-based access)
+
+Dependencies:
+- Backend API: /v1/auth/* endpoints
+- Redux: redux, react-redux, redux-persist, redux-thunk
+- Ant Design: Form, Input, Button, Typography, Result components
+- Next.js: useRouter hook pentru navigation
+- Services: auth.service.ts (token caching, encryption, session management)
+- Middleware: RouteHandler (role-based access control)
+- Third-party: FirstPromoter (affiliate tracking), Facebook Pixel (lead tracking)
+- Components: PageHelmet (SEO), RegisterResult (success step)
+
+Target Dependencies (Nuxt 3):
+- Pinia: defineStore, pinia-plugin-persistedstate
+- Ant Design Vue: a-form, a-input, a-button, a-typography, a-result
+- Nuxt: useRouter, navigateTo, useCookie
+- Composables: useAuth, useAuthApi
+- Middleware: defineNuxtRouteMiddleware
+- Third-party: @nuxtjs/gtm (GTM/Facebook Pixel), same FirstPromoter SDK
+
+State Management Migration:
+Current (Redux):
+- Actions: SIGN_IN, SIGN_OUT, UPDATE_USER
+- Reducer: userReducer with state = null | UserEntity
+- Persist: redux-persist with localStorage
+- Token cache: In-memory cache + localStorage (encrypted)
+
+Target (Pinia):
+- Store: useAuthStore with ref&lt;UserEntity | null&gt;
+- Actions: login(), logout(), updateUser()
+- Persist: pinia-plugin-persistedstate
+- Token cache: Nuxt useCookie() + in-memory cache
+
+Authorization System:
+- Role-based access control (UserRoles enum)
+- Route protection middleware (RouteHandler → auth.ts middleware)
+- Token validation (access token + refresh token)
+- Session expiration handling
+- 403/404 error pages for unauthorized access
+
+Notes:
+- Password reset flow require 2-step verification (email + recovery key)
+- Sign up has 2-step UI (form submission → email verification reminder)
+- Tokens stored encrypted in localStorage (access token), cookies (refresh token)
+- Redux persist purge on email update/logout
+- FirstPromoter tracking via cookie (_fprom_tid)
+- Facebook Lead event on successful signup
+- Session timeout redirects to sign in with message
+
+================================================================================
+TASK 1: Sign In Page (Autentificare)
+================================================================================
+
+Title: Sign In Page - Email/Phone Authentication with Multi-State Initialization
+
+Description:
+
+Business Logic:
+Pagina de autentificare permite utilizatorilor să se logheze folosind email sau
+număr de telefon + parolă. După autentificare reușită, aplicația inițializează
+multiple state slices (user, subscriptions, analytics, shortlist, global) și
+redirecționează către dashboard sau pagina de subscription selectată anterior.
+
+Implementare curentă (Next.js + React):
+1. User introduce email/telefon + parolă în formular Ant Design
+2. La submit, se detectează automat dacă input este email sau telefon (regex)
+3. Se apelează API POST /v1/auth/signin cu { email/phone, password, rememberMe }
+4. Răspunsul conține: accessToken, refreshToken, user data, subscriptions, analytics, shortlist
+5. Se salvează access token în localStorage (encrypted)
+6. Se dispatchează secvențial 6 Redux actions:
+   - SET_APP_VERSION (versiune aplicație din package.json)
+   - SET_PROFILE_VERSION (versiune profil user din backend)
+   - CREATE_SUBSCRIPTION (array de subscriptions)
+   - CREATE_SHORTLIST (user's favorite courses)
+   - INIT_USER_ANALYTICS (analytics tracking data)
+   - SIGN_IN (user entity fără tokens)
+7. Se resetează session pentru OfferPopup
+8. Redirect către /dashboard sau /abonamente/{id} dacă user a selectat un plan
+
+Features:
+- Dual input (email SAU telefon) cu auto-detect
+- "Remember me" checkbox (rememberMe flag în API)
+- Loading state (isSigning) cu LoadingOutlined icon
+- Error handling cu console.log (nu message.error!)
+- Link către "Am uitat parola" (/auth/sign-in/forgot-password)
+- Link către "Înregistrează-te" (/auth/inregistrare)
+- Logo clickable către homepage
+- Auto-redirect dacă user deja logat (verificare token + router.query.logout)
+- Special logout flow via query param (?logout=true)
+
+Logout Flow (via ?logout query):
+1. Dispatch SIGN_OUT action (user = null)
+2. Dispatch SUBSCRIPTIONS_SIGN_OUT
+3. Dispatch SHORTLIST_SIGN_OUT
+4. Remove 'atx' din localStorage
+5. Remove 'rt' cookie (expires past date)
+6. Purge Redux persist store
+7. Display sign in form
+
+Cod sursă:
+- Page: web/src/pages/auth/autentificare.tsx:1-249
+- API: web/src/services/api/Auth/index.ts:5 (signIn function)
+- Redux Action: web/src/redux/Actions/User/index.ts:4 (SIGN_IN)
+- Auth Service: web/src/services/auth.service.ts:28 (setCachedToken)
+
+Current Implementation (React):
+```tsx
+// web/src/pages/auth/autentificare.tsx
+const Login: NextPage = () => {
+  const router = useRouter();
+  const authUser = useSelector((state: any) => state.user);
+  const { selectedSubscriptionTypeId } = useSelector((state: any) => state.subscriptions);
+  const [form] = Form.useForm();
+  const dispatch = useDispatch();
+  const [isSigning, setIsSigning] = useState(false);
+
+  const onSubmit = (values: FormDataType): void => {
+    const isEmail = /\S+@\S+\.\S+/.test(values.phoneOrEmail);
+    setIsSigning(true);
+
+    signIn({
+      ...(isEmail ? { email: values.phoneOrEmail.trim() } : { phone: values.phoneOrEmail.trim() }),
+      rememberMe: Boolean(values.remember),
+      password: values.password,
+    })
+      .then(async (res) => {
+        const { data } = res;
+        setCachedToken("atx", data.accessToken.toString());
+
+        await dispatch({ type: SET_APP_VERSION, appVersion: packageJson.version });
+        await dispatch({ type: SET_PROFILE_VERSION, profileVersion: data.profileVersion });
+        await dispatch({ type: CREATE_SUBSCRIPTION, items: data.subscriptions });
+        if (data?.shortlist) await dispatch({ type: CREATE_SHORTLIST, item: data.shortlist });
+        if (data.analytics?.length > 0) await dispatch({ type: INIT_USER_ANALYTICS, payload: data.analytics });
+
+        delete data.accessToken;
+        delete data.refreshToken;
+        delete data.profileVersion;
+        delete data.subscriptions;
+        await dispatch({ type: SIGN_IN, user: data });
+
+        resetOfferPopupSession();
+        router.push(selectedSubscriptionTypeId ? `${PATHS.SUBSCRIPTION}/${selectedSubscriptionTypeId}` : PATHS.DASHBOARD);
+      })
+      .catch((error) => {
+        setIsSigning(false);
+        console.log(error?.response?.data?.message, 5);
+      });
+  };
+
+  useEffect(() => {
+    if (router?.isReady) {
+      if (authUser && getCachedToken("atx") !== NOT_INITIALIZED && !router.query.logout) {
+        router.push(PATHS.DASHBOARD);
+      }
+      if (router.query.logout) {
+        dispatch({ type: "SIGN_OUT" });
+        dispatch({ type: "SUBSCRIPTIONS_SIGN_OUT" });
+        dispatch({ type: "SHORTLIST_SIGN_OUT" });
+        localStorage.removeItem("atx");
+        document.cookie = `rt=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;`;
+        persistor.purge();
+      }
+    }
+  }, [router?.isReady]);
+
+  return (
+    &lt;Form form={form} onFinish={onSubmit}&gt;
+      &lt;Form.Item name="phoneOrEmail" rules={[{ required: true }]}&gt;
+        &lt;Input prefix={&lt;UserOutlined /&gt;} placeholder="exemplu@gmail.com" /&gt;
+      &lt;/Form.Item&gt;
+      &lt;Form.Item name="password" rules={[{ required: true }]}&gt;
+        &lt;Input.Password prefix={&lt;LockOutlined /&gt;} /&gt;
+      &lt;/Form.Item&gt;
+      &lt;Form.Item name="remember" valuePropName="checked"&gt;
+        &lt;Checkbox&gt;Vreau să rămân logat&lt;/Checkbox&gt;
+      &lt;/Form.Item&gt;
+      &lt;Button type="primary" htmlType="submit"&gt;
+        {isSigning ? &lt;LoadingOutlined /&gt; : "Login"}
+      &lt;/Button&gt;
+    &lt;/Form&gt;
+  );
+};
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+&lt;!-- web-nuxt/pages/auth/autentificare.vue --&gt;
+&lt;script setup lang="ts"&gt;
+import { ref, onMounted } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
+import { useSubscriptionStore } from '@/stores/subscription';
+import { useAnalyticsStore } from '@/stores/analytics';
+import { useShortlistStore } from '@/stores/shortlist';
+import { useGlobalStore } from '@/stores/global';
+import { useAuthApi } from '@/composables/useAuthApi';
+import { UserOutlined, LockOutlined, LoadingOutlined } from '@ant-design/icons-vue';
+import packageJson from '@/../package.json';
+
+definePageMeta({
+  layout: 'auth',
+  middleware: 'guest', // Only allow guests (non-authenticated users)
+});
+
+const router = useRouter();
+const route = useRoute();
+const authStore = useAuthStore();
+const subscriptionStore = useSubscriptionStore();
+const analyticsStore = useAnalyticsStore();
+const shortlistStore = useShortlistStore();
+const globalStore = useGlobalStore();
+const { signIn: apiSignIn } = useAuthApi();
+
+const formRef = ref();
+const isSigning = ref(false);
+const formState = reactive({
+  phoneOrEmail: '',
+  password: '',
+  remember: false,
+});
+
+const onSubmit = async () => {
+  try {
+    await formRef.value.validate();
+    const isEmail = /\S+@\S+\.\S+/.test(formState.phoneOrEmail);
+    isSigning.value = true;
+
+    const { data } = await apiSignIn({
+      ...(isEmail ? { email: formState.phoneOrEmail.trim() } : { phone: formState.phoneOrEmail.trim() }),
+      rememberMe: formState.remember,
+      password: formState.password,
+    });
+
+    // Save access token to cookie (auto-encrypted by Nuxt)
+    const atxCookie = useCookie('atx', { maxAge: 60 * 60 * 8 }); // 8 hours
+    atxCookie.value = data.accessToken;
+
+    // Initialize all stores
+    globalStore.setAppVersion(packageJson.version);
+    globalStore.setProfileVersion(data.profileVersion);
+    subscriptionStore.createSubscription(data.subscriptions);
+    if (data?.shortlist) shortlistStore.createShortlist(data.shortlist);
+    if (data.analytics?.length &gt; 0) analyticsStore.initUserAnalytics(data.analytics);
+
+    // Remove sensitive data before storing user
+    delete data.accessToken;
+    delete data.refreshToken;
+    delete data.profileVersion;
+    delete data.subscriptions;
+    authStore.signIn(data);
+
+    // Reset offer popup session
+    localStorage.removeItem('offerPopupShown');
+
+    // Redirect
+    const targetPath = subscriptionStore.selectedSubscriptionTypeId
+      ? `/abonamente/${subscriptionStore.selectedSubscriptionTypeId}`
+      : '/dashboard';
+    await navigateTo(targetPath);
+  } catch (error: any) {
+    isSigning.value = false;
+    console.error(error?.response?.data?.message || error);
+  }
+};
+
+onMounted(() => {
+  // Auto-redirect if already logged in
+  if (authStore.user &amp;&amp; authStore.accessToken &amp;&amp; !route.query.logout) {
+    navigateTo('/dashboard');
+  }
+
+  // Handle logout query param
+  if (route.query.logout) {
+    authStore.signOut();
+    subscriptionStore.clearSubscriptions();
+    shortlistStore.clearShortlist();
+    analyticsStore.clearAnalytics();
+    const atxCookie = useCookie('atx');
+    const rtCookie = useCookie('rt');
+    atxCookie.value = null;
+    rtCookie.value = null;
+  }
+});
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="auth-layout"&gt;
+    &lt;div class="logo-container"&gt;
+      &lt;NuxtLink to="/"&gt;
+        &lt;img src="@/assets/logo-normal-black.svg" alt="Somaway" width="190" /&gt;
+      &lt;/NuxtLink&gt;
+    &lt;/div&gt;
+
+    &lt;a-typography-title :level="3" class="title"&gt;Bine ai venit!&lt;/a-typography-title&gt;
+    &lt;a-typography-text class="description"&gt;
+      Autentifică-te pentru a accesa resursele din contul tău.
+    &lt;/a-typography-text&gt;
+
+    &lt;a-form ref="formRef" :model="formState" @finish="onSubmit"&gt;
+      &lt;a-form-item
+        label="Telefon sau email"
+        name="phoneOrEmail"
+        :rules="[{ required: true, message: 'Vă rugăm să introduceți telefonul sau adresa de e-mail!' }]"
+      &gt;
+        &lt;a-input v-model:value="formState.phoneOrEmail" placeholder="exemplu@gmail.com"&gt;
+          &lt;template #prefix&gt;&lt;UserOutlined style="color: #717171" /&gt;&lt;/template&gt;
+        &lt;/a-input&gt;
+      &lt;/a-form-item&gt;
+
+      &lt;a-form-item
+        label="Parolă"
+        name="password"
+        :rules="[{ required: true, message: 'Vă rugăm să introduceți parola!' }]"
+      &gt;
+        &lt;a-input-password v-model:value="formState.password" placeholder="********"&gt;
+          &lt;template #prefix&gt;&lt;LockOutlined style="color: #717171" /&gt;&lt;/template&gt;
+        &lt;/a-input-password&gt;
+      &lt;/a-form-item&gt;
+
+      &lt;a-row&gt;
+        &lt;a-col :span="24"&gt;
+          &lt;a-form-item name="remember" :value-prop-name="'checked'"&gt;
+            &lt;a-checkbox v-model:checked="formState.remember"&gt;Vreau să rămân logat&lt;/a-checkbox&gt;
+          &lt;/a-form-item&gt;
+        &lt;/a-col&gt;
+      &lt;/a-row&gt;
+
+      &lt;a-form-item&gt;
+        &lt;a-button type="primary" html-type="submit" class="submit" :loading="isSigning"&gt;
+          &lt;LoadingOutlined v-if="isSigning" /&gt;
+          &lt;span v-else&gt;Login&lt;/span&gt;
+        &lt;/a-button&gt;
+        &lt;a-row style="text-align: center"&gt;
+          &lt;a-col :span="24" class="forgot-password"&gt;
+            &lt;NuxtLink to="/auth/sign-in/forgot-password"&gt;Am uitat parola&lt;/NuxtLink&gt;
+          &lt;/a-col&gt;
+        &lt;/a-row&gt;
+        &lt;a-row&gt;
+          &lt;a-col :span="24" class="create-account"&gt;
+            Nu ai cont? &lt;NuxtLink to="/auth/inregistrare" class="register"&gt;Înregistrează-te acum!&lt;/NuxtLink&gt;
+          &lt;/a-col&gt;
+        &lt;/a-row&gt;
+      &lt;/a-form-item&gt;
+    &lt;/a-form&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+```
+
+Request:
+POST /v1/auth/signin
+Body:
+```json
+{
+  "email": "user@example.com",  // OR "phone": "0712345678"
+  "password": "userPassword123",
+  "rememberMe": true
+}
+```
+
+Response (Success - 200):
+```json
+{
+  "id": "uuid",
+  "fullName": "John Doe",
+  "email": "user@example.com",
+  "phone": "0712345678",
+  "role": "CLIENT",
+  "status": "ACTIVE",
+  "hasPicture": false,
+  "picVersion": 0,
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "profileVersion": 5,
+  "subscriptions": [
+    {
+      "id": "uuid",
+      "userId": "uuid",
+      "categoryId": "uuid",
+      "status": "PAYMENT_ACCEPTED",
+      "form": "STANDARD",
+      "startDate": "2025-01-01T00:00:00.000Z",
+      "endDate": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "analytics": [
+    {
+      "id": "uuid",
+      "userId": "uuid",
+      "courseId": "uuid",
+      "lastAccessedAt": "2025-11-01T10:00:00.000Z"
+    }
+  ],
+  "shortlist": {
+    "id": "uuid",
+    "userId": "uuid",
+    "items": ["course-uuid-1", "course-uuid-2"]
+  }
+}
+```
+
+Response (Error - 401):
+```json
+{
+  "statusCode": 401,
+  "message": "Email sau parolă invalidă",
+  "error": "Unauthorized"
+}
+```
+
+Authorization: Public (UserRoles.GUEST)
+
+Dependencies (Current):
+- Redux Actions: SIGN_IN, SET_APP_VERSION, SET_PROFILE_VERSION, CREATE_SUBSCRIPTION, CREATE_SHORTLIST, INIT_USER_ANALYTICS
+- Redux: useDispatch, useSelector
+- Next.js: useRouter
+- Ant Design: Form, Input, Checkbox, Button
+- Services: signIn (API), setCachedToken, getCachedToken
+- Utils: resetOfferPopupSession
+
+Dependencies (Target):
+- Pinia Stores: useAuthStore, useSubscriptionStore, useAnalyticsStore, useShortlistStore, useGlobalStore
+- Nuxt: useRouter, navigateTo, useCookie
+- Ant Design Vue: a-form, a-input, a-checkbox, a-button
+- Composables: useAuthApi
+
+Notes:
+- CRITICAL: Access token stored in localStorage (current) → useCookie (target)
+- Multi-state initialization is sequential (6 dispatches) - maintain order
+- Error handling uses console.log NOT message.error (different from admin)
+- Logout flow via query param is unique pattern (not a separate route)
+- Remember me affects token expiration (handled by backend)
+- Auto-redirect logic prevents double-login
+
+Recommendations:
+1. Use Nuxt useCookie() pentru token storage (auto HTTP-only, secure)
+2. Create composable useMultiStateInit() pentru centralizare
+3. Add proper error messages cu message.error() în Nuxt version
+4. Consider middleware 'guest' pentru auto-redirect
+5. Encrypt access token în cookie (crypto-js sau nuxt-security)
+6. Add loading skeleton pentru better UX
+7. Implement retry logic pentru failed requests
+
+================================================================================
+TASK 2: Sign Up Page (Înregistrare)
+================================================================================
+
+Title: Sign Up Page - Multi-Step Registration with Email Verification
+
+Description:
+
+Business Logic:
+Pagina de înregistrare colectează datele utilizatorului (nume, prenume, telefon,
+email, parolă) și creează un cont nou. După înregistrare reușită, se afișează
+un mesaj de confirmare cu instrucțiuni pentru verificarea email-ului. Include
+tracking FirstPromoter (affiliate) și Facebook Pixel Lead event.
+
+Implementare curentă (Next.js + React):
+1. User completează formularul cu 2 coloane (stânga: form, dreapta: imagine)
+2. Câmpurile: firstName, lastName, phone (optional, PhoneInput), email, password, confirm password
+3. Checkboxes obligatorii: Terms & Conditions agreement, Cookie Policy (required: false dar cu validator)
+4. Marketing agreement checkbox (optional, trimis la backend)
+5. Email sanitization automat la onChange (remove script tags, XSS protection)
+6. La submit se citește cookie _fprom_tid (FirstPromoter tracking ID)
+7. API POST /v1/auth/signup cu fullName (firstName + lastName combined), phone, email (sanitized), password, marketingAgreement, firstPromoterId
+8. Success: Se afișează RegisterResult component (Step 2 message)
+9. Facebook Pixel: Se apelează lead() function pentru tracking
+10. Error: message.error cu text generic
+
+Features:
+- Two-column layout (form left, image right) responsive
+- Phone input cu react-phone-input-2 (country selector, format validation)
+- Email sanitization on change (prevent XSS)
+- Password strength validation (min 6 characters, required)
+- Password confirmation matching
+- Terms modal (Aggrements component cu cookie/terms tabs)
+- Cookie Policy modal
+- Marketing agreement opt-in
+- FirstPromoter integration (cookie _fprom_tid)
+- Facebook Pixel Lead event tracking
+- Loading state (requestOnGoing)
+- Two-step UI flow (form → success message)
+- Auto-redirect la login după success
+
+Cod sursă:
+- Page: web/src/pages/auth/inregistrare.tsx:1-355
+- API: web/src/services/api/Auth/index.ts:7 (signUp function)
+- Component: web/src/components/pages/sign-up/RegisterResult.tsx:1-37
+- Utils: web/src/lib/sanitize.ts (email sanitization)
+- Tracking: web/src/lib/fpixel.ts (Facebook Pixel lead())
+
+Current Implementation (React):
+```tsx
+// web/src/pages/auth/inregistrare.tsx
+const Register: NextPage = () => {
+  const [requestOnGoing, setRequestOnGoing] = useState(false);
+  const [signedAccount, setSignedAccount] = useState&lt;FormDataType | null&gt;(null);
+  const [aggrementModalVisibility, setAggrementModalVisibility] = useState&lt;null | "cookie" | "terms"&gt;(null);
+  const [form] = Form.useForm();
+  const [phone, setPhone] = useState("");
+
+  function getCookie(name: string): string | null {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop()?.split(";").shift() || null;
+    return null;
+  }
+
+  const onSubmit = async (values: FormDataType) => {
+    setRequestOnGoing(true);
+    const sanitizedEmail = sanitize(values.email);
+
+    try {
+      const firstPromoterId = getCookie("_fprom_tid");
+      const res = await signUp({
+        fullName: `${values.firstName} ${values.lastName}`,
+        phone,
+        email: sanitizedEmail,
+        password: values.password,
+        marketingAgreement: values.marketingAgreement ?? false,
+        firstPromoterId: firstPromoterId ?? undefined,
+      });
+
+      if ([200, 201].includes(res?.status)) {
+        setSignedAccount({ ...values, email: sanitizedEmail });
+        lead(); // Track Facebook "Lead"
+      }
+    } catch (err) {
+      message.error("Eroare la înregistrare. Te rugăm să încerci din nou.");
+      console.error("Signup error:", err);
+    } finally {
+      setRequestOnGoing(false);
+    }
+  };
+
+  return (
+    &lt;AppLayout authority={UserRoles.GUEST} layoutClass="auth-layout registration"&gt;
+      &lt;PageHelmet title="Inregistrare" /&gt;
+      &lt;Content className="main"&gt;
+        &lt;Aggrements
+          aggrementModalVisibility={aggrementModalVisibility}
+          closeAggrementWindow={() =&gt; setAggrementModalVisibility(null)}
+        /&gt;
+
+        {!signedAccount ? (
+          &lt;&gt;
+            &lt;Text className="description"&gt;Pasul 1&lt;/Text&gt;
+            &lt;Title level={3} className="title"&gt;Completează-ți datele&lt;/Title&gt;
+
+            &lt;Form form={form} onFinish={onSubmit}&gt;
+              &lt;Row&gt;
+                &lt;Col lg={12} md={24} sm={24}&gt;
+                  &lt;Row gutter={15}&gt;
+                    &lt;Col span={12}&gt;
+                      &lt;Form.Item name="firstName" rules={[{ required: true, whitespace: true }]}&gt;
+                        &lt;Input placeholder="Popescu" /&gt;
+                      &lt;/Form.Item&gt;
+                    &lt;/Col&gt;
+                    &lt;Col span={12}&gt;
+                      &lt;Form.Item name="lastName" rules={[{ required: true, whitespace: true }]}&gt;
+                        &lt;Input placeholder="Ionut" /&gt;
+                      &lt;/Form.Item&gt;
+                    &lt;/Col&gt;
+                  &lt;/Row&gt;
+
+                  &lt;Form.Item name="phone"&gt;
+                    &lt;PhoneInput country="ro" value={phone} onChange={(value) =&gt; setPhone(value)} /&gt;
+                  &lt;/Form.Item&gt;
+
+                  &lt;Form.Item
+                    name="email"
+                    rules={[{ required: true }, { pattern: EMAIL_VALIDATOR_EX }]}
+                  &gt;
+                    &lt;Input
+                      prefix={&lt;MailFilled /&gt;}
+                      onChange={(e) =&gt; form.setFieldsValue({ email: sanitize(e.target.value) })}
+                    /&gt;
+                  &lt;/Form.Item&gt;
+
+                  &lt;Form.Item name="password" rules={[{ required: true }]} hasFeedback&gt;
+                    &lt;Input.Password /&gt;
+                  &lt;/Form.Item&gt;
+
+                  &lt;Form.Item
+                    name="confirm"
+                    dependencies={["password"]}
+                    hasFeedback
+                    rules={[
+                      { required: true },
+                      ({ getFieldValue }) =&gt; ({
+                        validator(_, value) {
+                          if (!value || getFieldValue("password") === value) return Promise.resolve();
+                          return Promise.reject("Cele doua parole introduse nu corespund!");
+                        },
+                      }),
+                    ]}
+                  &gt;
+                    &lt;Input.Password /&gt;
+                  &lt;/Form.Item&gt;
+                &lt;/Col&gt;
+
+                &lt;Col lg={12} md={24} sm={24}&gt;
+                  &lt;div className="registration-image"&gt;
+                    &lt;Image src={registrationImg} alt="Register" width="430" height="502" /&gt;
+                  &lt;/div&gt;
+                &lt;/Col&gt;
+              &lt;/Row&gt;
+
+              &lt;Row&gt;
+                &lt;Col lg={12}&gt;
+                  &lt;Form.Item
+                    name="agreement"
+                    valuePropName="checked"
+                    rules={[
+                      {
+                        validator: (_, value) =&gt;
+                          value
+                            ? Promise.resolve()
+                            : Promise.reject("Trebuie sa accepti politica de confidentialitate"),
+                      },
+                    ]}
+                  &gt;
+                    &lt;Checkbox&gt;
+                      Sunt de acord cu{" "}
+                      &lt;Button onClick={() =&gt; setAggrementModalVisibility("terms")} type="link"&gt;
+                        Termenii și Condițiile
+                      &lt;/Button&gt;
+                    &lt;/Checkbox&gt;
+                  &lt;/Form.Item&gt;
+                &lt;/Col&gt;
+                &lt;Col lg={12}&gt;
+                  &lt;Form.Item name="marketingAgreement" valuePropName="checked"&gt;
+                    &lt;Checkbox&gt;
+                      Am luat la cunoștință{" "}
+                      &lt;Button onClick={() =&gt; setAggrementModalVisibility("cookie")} type="link"&gt;
+                        politica de cookies.
+                      &lt;/Button&gt;
+                    &lt;/Checkbox&gt;
+                  &lt;/Form.Item&gt;
+                &lt;/Col&gt;
+              &lt;/Row&gt;
+
+              &lt;Form.Item&gt;
+                &lt;CustomButton type="primary" htmlType="submit" loading={requestOnGoing}&gt;
+                  {requestOnGoing ? &lt;LoadingOutlined /&gt; : "Pasul următor: verifică email"}
+                &lt;/CustomButton&gt;
+              &lt;/Form.Item&gt;
+            &lt;/Form&gt;
+          &lt;/&gt;
+        ) : (
+          &lt;RegisterResult signedAccount={signedAccount} /&gt;
+        )}
+      &lt;/Content&gt;
+    &lt;/AppLayout&gt;
+  );
+};
+
+// RegisterResult component
+const RegisterResult = ({ signedAccount }) =&gt; (
+  &lt;&gt;
+    &lt;Typography.Text&gt;Pasul 2&lt;/Typography.Text&gt;
+    &lt;Typography.Title level={3}&gt;Verifică adresa de email&lt;/Typography.Title&gt;
+    &lt;Typography.Text&gt;
+      Hei, {signedAccount.firstName}. Verifică adresa de email{" "}
+      &lt;span className="highlighted"&gt;{signedAccount.email}&lt;/span&gt; (inclusiv spam) pentru
+      a-ți activa contul. Poate dura până la 1 minut ca emailul sa ajunga.
+    &lt;/Typography.Text&gt;
+    &lt;Button onClick={() =&gt; router.push(PATHS.SIGN_INL)}&gt;Spre pagina de login&lt;/Button&gt;
+  &lt;/&gt;
+);
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+&lt;!-- web-nuxt/pages/auth/inregistrare.vue --&gt;
+&lt;script setup lang="ts"&gt;
+import { ref, reactive } from 'vue';
+import { message } from 'ant-design-vue';
+import { useAuthApi } from '@/composables/useAuthApi';
+import { useFacebookPixel } from '@/composables/useFacebookPixel';
+import { sanitize } from '@/lib/sanitize';
+
+definePageMeta({
+  layout: 'auth',
+  middleware: 'guest',
+});
+
+const { signUp: apiSignUp } = useAuthApi();
+const { trackLead } = useFacebookPixel();
+const router = useRouter();
+
+const formRef = ref();
+const requestOnGoing = ref(false);
+const signedAccount = ref&lt;any | null&gt;(null);
+const aggrementModalVisibility = ref&lt;null | 'cookie' | 'terms'&gt;(null);
+const phone = ref('');
+
+const formState = reactive({
+  firstName: '',
+  lastName: '',
+  email: '',
+  password: '',
+  confirm: '',
+  agreement: false,
+  marketingAgreement: false,
+});
+
+const getCookie = (name: string): string | null =&gt; {
+  if (process.client) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop()?.split(';').shift() || null;
+  }
+  return null;
+};
+
+const onSubmit = async () =&gt; {
+  try {
+    await formRef.value.validate();
+    requestOnGoing.value = true;
+
+    const sanitizedEmail = sanitize(formState.email);
+    const firstPromoterId = getCookie('_fprom_tid');
+
+    const res = await apiSignUp({
+      fullName: `${formState.firstName} ${formState.lastName}`,
+      phone: phone.value,
+      email: sanitizedEmail,
+      password: formState.password,
+      marketingAgreement: formState.marketingAgreement ?? false,
+      firstPromoterId: firstPromoterId ?? undefined,
+    });
+
+    if ([200, 201].includes(res?.status)) {
+      signedAccount.value = { ...formState, email: sanitizedEmail };
+      trackLead(); // Track Facebook "Lead"
+    }
+  } catch (err: any) {
+    message.error('Eroare la înregistrare. Te rugăm să încerci din nou.');
+    console.error('Signup error:', err);
+  } finally {
+    requestOnGoing.value = false;
+  }
+};
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="auth-layout registration"&gt;
+    &lt;Aggrements
+      :visibility="aggrementModalVisibility"
+      @close="aggrementModalVisibility = null"
+    /&gt;
+
+    &lt;div class="logo-container"&gt;
+      &lt;NuxtLink to="/"&gt;
+        &lt;img src="@/assets/logo-normal-black.svg" alt="Somaway" width="190" /&gt;
+      &lt;/NuxtLink&gt;
+    &lt;/div&gt;
+
+    &lt;template v-if="!signedAccount"&gt;
+      &lt;a-typography-text class="description"&gt;Pasul 1&lt;/a-typography-text&gt;
+      &lt;a-typography-title :level="3" class="title"&gt;Completează-ți datele&lt;/a-typography-title&gt;
+
+      &lt;a-form ref="formRef" :model="formState" @finish="onSubmit"&gt;
+        &lt;a-row&gt;
+          &lt;a-col :lg="12" :md="24" :sm="24"&gt;
+            &lt;a-row :gutter="15"&gt;
+              &lt;a-col :span="12"&gt;
+                &lt;a-form-item
+                  label="Nume"
+                  name="firstName"
+                  :rules="[{ required: true, message: 'Camp obligatoriu.', whitespace: true }]"
+                &gt;
+                  &lt;a-input v-model:value="formState.firstName" placeholder="Popescu" /&gt;
+                &lt;/a-form-item&gt;
+              &lt;/a-col&gt;
+              &lt;a-col :span="12"&gt;
+                &lt;a-form-item
+                  label="Prenume"
+                  name="lastName"
+                  :rules="[{ required: true, message: 'Camp obligatoriu.', whitespace: true }]"
+                &gt;
+                  &lt;a-input v-model:value="formState.lastName" placeholder="Ionut" /&gt;
+                &lt;/a-form-item&gt;
+              &lt;/a-col&gt;
+            &lt;/a-row&gt;
+
+            &lt;a-form-item label="Telefon" name="phone"&gt;
+              &lt;vue-phone-input v-model="phone" default-country="RO" /&gt;
+            &lt;/a-form-item&gt;
+
+            &lt;a-form-item
+              name="email"
+              label="Email"
+              :rules="[
+                { required: true, message: 'Este necesar sa introduci adresa de email!' },
+                { pattern: EMAIL_VALIDATOR_EX, message: 'Email invalid' },
+              ]"
+            &gt;
+              &lt;a-input
+                v-model:value="formState.email"
+                placeholder="exemplu@email.com"
+                @change="formState.email = sanitize($event.target.value)"
+              &gt;
+                &lt;template #prefix&gt;&lt;MailFilled /&gt;&lt;/template&gt;
+              &lt;/a-input&gt;
+            &lt;/a-form-item&gt;
+
+            &lt;a-form-item
+              name="password"
+              label="Parolă"
+              :rules="[{ required: true, message: 'Este necesar sa introduci parola!' }]"
+              has-feedback
+            &gt;
+              &lt;a-input-password v-model:value="formState.password" placeholder="*************" /&gt;
+            &lt;/a-form-item&gt;
+
+            &lt;a-form-item
+              name="confirm"
+              label="Confirmare parolă"
+              :dependencies="['password']"
+              has-feedback
+              :rules="[
+                { required: true, message: 'Este necesar sa confirmi parola!' },
+                {
+                  validator: async (rule, value) =&gt; {
+                    if (!value || formState.password === value) return Promise.resolve();
+                    return Promise.reject('Cele doua parole introduse nu corespund!');
+                  },
+                },
+              ]"
+            &gt;
+              &lt;a-input-password v-model:value="formState.confirm" placeholder="*************" /&gt;
+            &lt;/a-form-item&gt;
+          &lt;/a-col&gt;
+
+          &lt;a-col :lg="12" :md="24" :sm="24"&gt;
+            &lt;div class="registration-image"&gt;
+              &lt;img src="@/assets/register-image.jpg" alt="Register" width="430" height="502" /&gt;
+            &lt;/div&gt;
+          &lt;/a-col&gt;
+        &lt;/a-row&gt;
+
+        &lt;a-row&gt;
+          &lt;a-col :lg="12"&gt;
+            &lt;a-form-item
+              name="agreement"
+              :value-prop-name="'checked'"
+              :rules="[
+                {
+                  validator: (rule, value) =&gt;
+                    value
+                      ? Promise.resolve()
+                      : Promise.reject('Trebuie sa accepti politica de confidentialitate'),
+                },
+              ]"
+            &gt;
+              &lt;a-checkbox v-model:checked="formState.agreement"&gt;
+                Sunt de acord cu
+                &lt;a-button @click="aggrementModalVisibility = 'terms'" type="link"&gt;
+                  Termenii și Condițiile
+                &lt;/a-button&gt;
+                site-ului.
+              &lt;/a-checkbox&gt;
+            &lt;/a-form-item&gt;
+          &lt;/a-col&gt;
+          &lt;a-col :lg="12"&gt;
+            &lt;a-form-item name="marketingAgreement" :value-prop-name="'checked'"&gt;
+              &lt;a-checkbox v-model:checked="formState.marketingAgreement"&gt;
+                Am luat la cunoștință
+                &lt;a-button @click="aggrementModalVisibility = 'cookie'" type="link"&gt;
+                  politica de cookies.
+                &lt;/a-button&gt;
+              &lt;/a-checkbox&gt;
+            &lt;/a-form-item&gt;
+          &lt;/a-col&gt;
+        &lt;/a-row&gt;
+
+        &lt;a-form-item&gt;
+          &lt;a-button type="primary" html-type="submit" :loading="requestOnGoing"&gt;
+            &lt;LoadingOutlined v-if="requestOnGoing" /&gt;
+            &lt;span v-else&gt;Pasul următor: verifică email&lt;/span&gt;
+          &lt;/a-button&gt;
+          &lt;NuxtLink to="/auth/autentificare" class="login"&gt;Ai deja un cont?&lt;/NuxtLink&gt;
+        &lt;/a-form-item&gt;
+      &lt;/a-form&gt;
+    &lt;/template&gt;
+
+    &lt;template v-else&gt;
+      &lt;RegisterResult :signed-account="signedAccount" /&gt;
+    &lt;/template&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+```
+
+Request:
+POST /v1/auth/signup
+Body:
+```json
+{
+  "fullName": "Popescu Ionut",
+  "phone": "40712345678",
+  "email": "ionut.popescu@example.com",
+  "password": "securePassword123",
+  "marketingAgreement": true,
+  "firstPromoterId": "fp_abc123xyz"  // Optional, from _fprom_tid cookie
+}
+```
+
+Response (Success - 201):
+```json
+{
+  "id": "uuid",
+  "fullName": "Popescu Ionut",
+  "email": "ionut.popescu@example.com",
+  "phone": "40712345678",
+  "status": "EMAIL_NOT_VERIFIED",
+  "role": "CLIENT",
+  "createdAt": "2025-11-03T10:00:00.000Z"
+}
+```
+
+Response (Error - 409 Conflict):
+```json
+{
+  "statusCode": 409,
+  "message": "Email already exists",
+  "error": "Conflict"
+}
+```
+
+Authorization: Public (UserRoles.GUEST)
+
+Dependencies (Current):
+- React: useState, useRouter
+- Ant Design: Form, Input, Checkbox, Button, Row, Col, Typography, message
+- react-phone-input-2: PhoneInput component
+- Services: signUp (API)
+- Utils: sanitize (XSS protection)
+- Tracking: lead() from fpixel.ts (Facebook Pixel)
+- Components: RegisterResult, Aggrements
+
+Dependencies (Target):
+- Vue: ref, reactive
+- Ant Design Vue: a-form, a-input, a-checkbox, a-button, message
+- vue-phone-input or vue3-tel-input: Phone input component
+- Composables: useAuthApi, useFacebookPixel
+- Utils: sanitize (same)
+- Components: RegisterResult.vue, Aggrements.vue
+
+Notes:
+- Two-step UI: Form submission → Success message (no navigation)
+- Full name combined from firstName + lastName (backend expects single field)
+- Phone optional but included in request
+- Email sanitized on change (XSS protection critical)
+- Password min 6 chars (backend validation)
+- FirstPromoter cookie read client-side (_fprom_tid)
+- Facebook Pixel lead() called after success
+- Marketing agreement sent to backend (MailerLite integration)
+- Terms/Cookie modals inline (not separate routes)
+- No Redux state update (user not logged in)
+
+Recommendations:
+1. Use vue-phone-input sau vue3-tel-input pentru phone field
+2. Keep sanitize utility (critical for security)
+3. Add password strength indicator (optional enhancement)
+4. Consider server-side FirstPromoter cookie read (more secure)
+5. Add Google reCAPTCHA pentru spam protection
+6. Implement email domain validation (disposable email check)
+7. Add visual feedback pentru password requirements
+
+================================================================================
+TASK 3: Forgot Password Page
+================================================================================
+
+Title: Forgot Password - Generate Recovery Key via Email
+
+Description:
+
+Business Logic:
+Pagina permite utilizatorilor să inițieze procesul de recuperare cont prin
+generarea unui recovery key trimis pe email. După trimitere reușită, se afișează
+mesaj de confirmare cu instrucțiuni. Recovery key este folosit ulterior pentru
+resetarea parolei (Task 4).
+
+Implementare curentă (Next.js + React):
+1. User introduce adresa de email în formular
+2. Email validat cu regex (EMAIL_VALIDATOR_EX)
+3. API POST /v1/auth/generate-recovery-key cu { email }
+4. Backend generează recovery key și trimite email cu link
+5. Success (201): Form se resetează, se afișează mesaj de succes
+6. Mesaj include: "Ți-am trimis pe email link-ul de resetare a parolei"
+7. Link către pagina de login (Spre pagina de login)
+8. Error: notification.error cu message din backend
+
+Features:
+- Single email input cu validare regex
+- Loading state (requestOnGoing)
+- Two-state UI (form → success message)
+- Success message cu redirect link către login
+- Error handling cu Ant Design notification
+- Logo clickable către homepage
+
+Cod sursă:
+- Page: web/src/pages/auth/sign-in/forgot-password.tsx:1-137
+- API: web/src/services/api/Auth/index.ts:16 (generateRecoveryKey function)
+
+Current Implementation (React):
+```tsx
+// web/src/pages/auth/sign-in/forgot-password.tsx
+const ForgotPassword: React.FunctionComponent = () => {
+  const [form] = Form.useForm();
+  const router = useRouter();
+  const [requestOnGoing, setRequestOnGoing] = useState(false);
+  const [resetWithSuccess, setResetWithSuccess] = useState(false);
+
+  const onSubmit = ({ email }: { email: string }) => {
+    setRequestOnGoing(true);
+    generateRecoveryKey(email)
+      .then((res) => {
+        if (res?.status === 201) {
+          form.resetFields();
+          setResetWithSuccess(true);
+        }
+        setRequestOnGoing(false);
+      })
+      .catch(({ response }) => {
+        notification.error({
+          message: "Error",
+          description: response?.data?.message || "Ceva nu a mers bine",
+          placement: "topLeft",
+        });
+        setRequestOnGoing(false);
+      });
+  };
+
+  return (
+    &lt;AppLayout authority={UserRoles.GUEST} layoutClass="auth-layout"&gt;
+      &lt;PageHelmet title="Recuperare cont" /&gt;
+      &lt;Content className="main"&gt;
+        &lt;div className="logo-container"&gt;
+          &lt;Link href={PATHS.HOME}&gt;
+            &lt;Image src={logoWideBlack} className="auth-logo" alt="Somaway" width={190} /&gt;
+          &lt;/Link&gt;
+        &lt;/div&gt;
+
+        {resetWithSuccess ? (
+          &lt;&gt;
+            &lt;Divider style={{ marginTop: "100px", borderWidth: 0 }} /&gt;
+            &lt;Title level={3} className="title"&gt;
+              Solicitare de resetare parolă trimisă cu succes!
+            &lt;/Title&gt;
+            &lt;Text className="description"&gt;
+              Ți-am trimis pe email link-ul de resetare a parolei.
+            &lt;/Text&gt;
+            &lt;Divider style={{ marginBottom: "200px", borderWidth: 0 }} /&gt;
+            &lt;Button type="link" onClick={() =&gt; router.push(PATHS.SIGN_INL)} shape="round"&gt;
+              Spre pagina de login
+              &lt;RightOutlined /&gt;
+            &lt;/Button&gt;
+          &lt;/&gt;
+        ) : (
+          &lt;&gt;
+            &lt;Title level={3} className="title"&gt;
+              Ai uitat parola?
+            &lt;/Title&gt;
+            &lt;Text className="description"&gt;
+              Introdu mai jos adresa de mail pentru a obține linkul de resetare.
+            &lt;/Text&gt;
+            &lt;Form form={form} onFinish={onSubmit}&gt;
+              &lt;Form.Item
+                name="email"
+                label="Adresa de email"
+                rules={[
+                  {
+                    validator: (_, value) =&gt;
+                      EMAIL_VALIDATOR_EX.test(value)
+                        ? Promise.resolve()
+                        : Promise.reject("Email address is not valid"),
+                  },
+                ]}
+              &gt;
+                &lt;Input placeholder="example@gmail.com" /&gt;
+              &lt;/Form.Item&gt;
+              &lt;Form.Item&gt;
+                &lt;CustomButton type="primary" size="small" htmlType="submit"&gt;
+                  {requestOnGoing ? &lt;LoadingOutlined /&gt; : "Trimite mail de recuperare"}
+                &lt;/CustomButton&gt;
+              &lt;/Form.Item&gt;
+            &lt;/Form&gt;
+          &lt;/&gt;
+        )}
+      &lt;/Content&gt;
+    &lt;/AppLayout&gt;
+  );
+};
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+&lt;!-- web-nuxt/pages/auth/sign-in/forgot-password.vue --&gt;
+&lt;script setup lang="ts"&gt;
+import { ref, reactive } from 'vue';
+import { notification } from 'ant-design-vue';
+import { useAuthApi } from '@/composables/useAuthApi';
+import { EMAIL_VALIDATOR_EX } from '@/config/constants';
+
+definePageMeta({
+  layout: 'auth',
+  middleware: 'guest',
+});
+
+const { generateRecoveryKey: apiGenerateRecoveryKey } = useAuthApi();
+const router = useRouter();
+
+const formRef = ref();
+const requestOnGoing = ref(false);
+const resetWithSuccess = ref(false);
+const formState = reactive({ email: '' });
+
+const onSubmit = async () =&gt; {
+  try {
+    await formRef.value.validate();
+    requestOnGoing.value = true;
+
+    const res = await apiGenerateRecoveryKey(formState.email);
+
+    if (res?.status === 201) {
+      formRef.value.resetFields();
+      resetWithSuccess.value = true;
+    }
+  } catch (error: any) {
+    notification.error({
+      message: 'Error',
+      description: error?.response?.data?.message || 'Ceva nu a mers bine',
+      placement: 'topLeft',
+    });
+  } finally {
+    requestOnGoing.value = false;
+  }
+};
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="auth-layout"&gt;
+    &lt;div class="logo-container"&gt;
+      &lt;NuxtLink to="/"&gt;
+        &lt;img src="@/assets/logo-normal-black.svg" alt="Somaway" width="190" /&gt;
+      &lt;/NuxtLink&gt;
+    &lt;/div&gt;
+
+    &lt;template v-if="resetWithSuccess"&gt;
+      &lt;a-divider :style="{ marginTop: '100px', borderWidth: 0 }" /&gt;
+      &lt;a-typography-title :level="3" class="title"&gt;
+        Solicitare de resetare parolă trimisă cu succes!
+      &lt;/a-typography-title&gt;
+      &lt;a-typography-text class="description"&gt;
+        Ți-am trimis pe email link-ul de resetare a parolei.
+      &lt;/a-typography-text&gt;
+      &lt;a-divider :style="{ marginBottom: '200px', borderWidth: 0 }" /&gt;
+      &lt;a-button type="link" shape="round" @click="navigateTo('/auth/autentificare')"&gt;
+        Spre pagina de login
+        &lt;RightOutlined /&gt;
+      &lt;/a-button&gt;
+    &lt;/template&gt;
+
+    &lt;template v-else&gt;
+      &lt;a-typography-title :level="3" class="title"&gt;Ai uitat parola?&lt;/a-typography-title&gt;
+      &lt;a-typography-text class="description"&gt;
+        Introdu mai jos adresa de mail pentru a obține linkul de resetare.
+      &lt;/a-typography-text&gt;
+
+      &lt;a-form ref="formRef" :model="formState" @finish="onSubmit"&gt;
+        &lt;a-form-item
+          name="email"
+          label="Adresa de email"
+          :rules="[
+            {
+              validator: async (rule, value) =&gt; {
+                if (EMAIL_VALIDATOR_EX.test(value)) return Promise.resolve();
+                return Promise.reject('Email address is not valid');
+              },
+            },
+          ]"
+        &gt;
+          &lt;a-input v-model:value="formState.email" placeholder="example@gmail.com" /&gt;
+        &lt;/a-form-item&gt;
+        &lt;a-form-item&gt;
+          &lt;a-button type="primary" size="small" html-type="submit" :loading="requestOnGoing"&gt;
+            &lt;LoadingOutlined v-if="requestOnGoing" /&gt;
+            &lt;span v-else&gt;Trimite mail de recuperare&lt;/span&gt;
+          &lt;/a-button&gt;
+        &lt;/a-form-item&gt;
+      &lt;/a-form&gt;
+    &lt;/template&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+```
+
+Request:
+POST /v1/auth/generate-recovery-key
+Body:
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+Response (Success - 201):
+```json
+{
+  "message": "Recovery key sent to email"
+}
+```
+
+Response (Error - 404):
+```json
+{
+  "statusCode": 404,
+  "message": "User not found",
+  "error": "Not Found"
+}
+```
+
+Authorization: Public (UserRoles.GUEST)
+
+Dependencies (Current):
+- React: useState, useRouter
+- Ant Design: Form, Input, Button, Typography, Divider, notification
+- Next.js: Link, Image
+- Services: generateRecoveryKey (API)
+
+Dependencies (Target):
+- Vue: ref, reactive
+- Ant Design Vue: a-form, a-input, a-button, a-typography, a-divider, notification
+- Nuxt: NuxtLink, navigateTo
+- Composables: useAuthApi
+
+Notes:
+- Recovery key sent via email (Postmark service în backend)
+- Email must exist în database (404 if not found)
+- Recovery key has expiration (handled by backend)
+- Link în email: /auth/recuperare-cont?email={email}&recoveryKey={key}
+- Success message displayed inline (no navigation until user clicks link)
+- Form reset after success pentru clean state
+
+Recommendations:
+1. Add rate limiting message (max 3 requests per hour)
+2. Display estimated email delivery time (1-2 minutes)
+3. Add "Resend email" button după success
+4. Consider adding email obfuscation în success message (u***@example.com)
+5. Add countdown timer pentru resend button (60 seconds)
+6. Implement email verification step (prevent spam)
+
+================================================================================
+TASK 4: Account Recovery Page (Resetare Parolă)
+================================================================================
+
+Title: Account Recovery - Password Reset with Recovery Key
+
+Description:
+
+Business Logic:
+Pagina permite utilizatorilor să reseteze parola folosind recovery key-ul primit
+pe email (din Task 3). User ajunge pe această pagină prin click pe link-ul din
+email care conține email și recovery key în query params. După resetare reușită,
+user este redirecționat automat către pagina de login după 3 secunde.
+
+Implementare curentă (Next.js + React):
+1. URL format: /auth/recuperare-cont?email={email}&recoveryKey={key}
+2. Query params validate: Dacă lipsesc email SAU recoveryKey → 404 page
+3. User introduce parolă nouă + confirmare parolă
+4. Parole validate: min 6 chars, must match
+5. API POST /v1/auth/recover-account cu { email, recoveryKey, password }
+6. Success (201): Afișează mesaj "Parola a fost schimbată cu succes!"
+7. Auto-redirect către login după 3000ms (setTimeout)
+8. Error: notification.error cu message din backend
+
+Features:
+- URL query params validation (email + recoveryKey obligatorii)
+- 404 redirect dacă params lipsesc
+- Two password fields (new + confirm) cu matching validation
+- Password min length 6 characters
+- Loading state (requestOnGoing)
+- Two-state UI (form → success message cu auto-redirect)
+- Success message cu manual redirect link
+- Error handling cu notification.error
+- Email recovery key replacement (space → +) pentru URL encoding
+
+Cod sursă:
+- Page: web/src/pages/auth/recuperare-cont.tsx:1-178
+- API: web/src/services/api/Auth/index.ts:18 (recoverAccountWithKey function)
+- 404: web/src/pages/404.tsx (NotFoundPage component)
+
+Current Implementation (React):
+```tsx
+// web/src/pages/auth/recuperare-cont.tsx
+const AccountRecover: React.FunctionComponent = () => {
+  const router: NextRouter & { query: { email?: string; recoveryKey?: string } } = useRouter();
+  const [requestOnGoing, setRequestOnGoing] = useState(false);
+  const [resetWithSuccess, setResetWithSuccess] = useState(false);
+  const [form] = Form.useForm();
+
+  if (!router.query.email || !router.query.recoveryKey) return &lt;NotFoundPage /&gt;;
+
+  const onSubmit = ({ password }: { password: string }) => {
+    setRequestOnGoing(true);
+    recoverAccountWithKey({
+      email: router.query.email?.replace(/\ /, "+")!,
+      recoveryKey: router.query.recoveryKey!,
+      password,
+    })
+      .then((res) => {
+        if (res?.status === 201) {
+          setResetWithSuccess(true);
+          setTimeout(() => {
+            router.push(PATHS.SIGN_INL);
+          }, 3000);
+        }
+        setRequestOnGoing(false);
+      })
+      .catch(({ response }) => {
+        notification.error({
+          message: "Error",
+          description: response?.data?.message,
+          placement: "topLeft",
+        });
+      });
+  };
+
+  return (
+    &lt;AppLayout authority={UserRoles.GUEST} layoutClass="auth-layout"&gt;
+      &lt;PageHelmet title="Resetează parola" /&gt;
+      &lt;Content className="main"&gt;
+        &lt;div className="logo-container"&gt;
+          &lt;Link href={PATHS.HOME}&gt;
+            &lt;Image src={logoWideBlack} className="auth-logo" alt="Somaway" width={190} /&gt;
+          &lt;/Link&gt;
+        &lt;/div&gt;
+
+        {resetWithSuccess ? (
+          &lt;&gt;
+            &lt;Divider style={{ marginBottom: "120px", border: "0 none" }} /&gt;
+            &lt;Title level={3} className="title"&gt;
+              Parola a fost schimbată cu succes!
+            &lt;/Title&gt;
+            &lt;Divider style={{ marginBottom: "30px", borderWidth: 0 }} /&gt;
+            &lt;Button type="link" onClick={() =&gt; router.push(PATHS.SIGN_INL)} shape="round"&gt;
+              Spre pagina de login
+              &lt;RightOutlined /&gt;
+            &lt;/Button&gt;
+          &lt;/&gt;
+        ) : (
+          &lt;&gt;
+            &lt;Title level={3} className="title"&gt;
+              Resetează parola
+            &lt;/Title&gt;
+            &lt;Text className="description"&gt;
+              Introdu mai jos noua parolă pentru a finaliza resetarea
+            &lt;/Text&gt;
+
+            &lt;Form form={form} onFinish={onSubmit}&gt;
+              &lt;Form.Item
+                label="Parolă nouă"
+                name="password"
+                rules={[
+                  {
+                    min: 6,
+                    message: "Lungimea parolei trebuie să fie egală sau mai mare de 6",
+                  },
+                ]}
+              &gt;
+                &lt;Input.Password placeholder="*****************" /&gt;
+              &lt;/Form.Item&gt;
+              &lt;Form.Item
+                name="password-confirm"
+                label="Confirmare parolă"
+                dependencies={["password"]}
+                hasFeedback
+                rules={[
+                  {
+                    min: 6,
+                    message: "Lungimea parolei trebuie să fie egală sau mai mare de 6",
+                  },
+                  ({ getFieldValue }) =&gt; ({
+                    required: getFieldValue("password"),
+                    message: "Vă rugăm să confirmați parola!",
+                  }),
+                  ({ getFieldValue }) =&gt; ({
+                    validator(_rule, value) {
+                      if (value && getFieldValue("password") !== value) {
+                        return Promise.reject("Cele două parole introduse nu se potrivesc!");
+                      }
+                      return Promise.resolve();
+                    },
+                  }),
+                ]}
+              &gt;
+                &lt;Input.Password placeholder="*****************" /&gt;
+              &lt;/Form.Item&gt;
+              &lt;Form.Item&gt;
+                &lt;CustomButton type="primary" size="small" htmlType="submit"&gt;
+                  {requestOnGoing ? &lt;LoadingOutlined /&gt; : "Resetează parola"}
+                &lt;/CustomButton&gt;
+              &lt;/Form.Item&gt;
+            &lt;/Form&gt;
+          &lt;/&gt;
+        )}
+      &lt;/Content&gt;
+    &lt;/AppLayout&gt;
+  );
+};
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+&lt;!-- web-nuxt/pages/auth/recuperare-cont.vue --&gt;
+&lt;script setup lang="ts"&gt;
+import { ref, reactive, onMounted } from 'vue';
+import { notification } from 'ant-design-vue';
+import { useAuthApi } from '@/composables/useAuthApi';
+
+definePageMeta({
+  layout: 'auth',
+  middleware: 'guest',
+});
+
+const route = useRoute();
+const router = useRouter();
+const { recoverAccountWithKey: apiRecoverAccount } = useAuthApi();
+
+const formRef = ref();
+const requestOnGoing = ref(false);
+const resetWithSuccess = ref(false);
+const formState = reactive({
+  password: '',
+  passwordConfirm: '',
+});
+
+// Validate query params
+if (!route.query.email || !route.query.recoveryKey) {
+  navigateTo('/404');
+}
+
+const onSubmit = async () =&gt; {
+  try {
+    await formRef.value.validate();
+    requestOnGoing.value = true;
+
+    const res = await apiRecoverAccount({
+      email: (route.query.email as string).replace(/\ /, '+'),
+      recoveryKey: route.query.recoveryKey as string,
+      password: formState.password,
+    });
+
+    if (res?.status === 201) {
+      resetWithSuccess.value = true;
+      setTimeout(() => {
+        navigateTo('/auth/autentificare');
+      }, 3000);
+    }
+  } catch (error: any) {
+    notification.error({
+      message: 'Error',
+      description: error?.response?.data?.message,
+      placement: 'topLeft',
+    });
+  } finally {
+    requestOnGoing.value = false;
+  }
+};
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="auth-layout"&gt;
+    &lt;div class="logo-container"&gt;
+      &lt;NuxtLink to="/"&gt;
+        &lt;img src="@/assets/logo-normal-black.svg" alt="Somaway" width="190" /&gt;
+      &lt;/NuxtLink&gt;
+    &lt;/div&gt;
+
+    &lt;template v-if="resetWithSuccess"&gt;
+      &lt;a-divider :style="{ marginBottom: '120px', border: '0 none' }" /&gt;
+      &lt;a-typography-title :level="3" class="title"&gt;
+        Parola a fost schimbată cu succes!
+      &lt;/a-typography-title&gt;
+      &lt;a-divider :style="{ marginBottom: '30px', borderWidth: 0 }" /&gt;
+      &lt;a-button type="link" shape="round" @click="navigateTo('/auth/autentificare')"&gt;
+        Spre pagina de login
+        &lt;RightOutlined /&gt;
+      &lt;/a-button&gt;
+    &lt;/template&gt;
+
+    &lt;template v-else&gt;
+      &lt;a-typography-title :level="3" class="title"&gt;Resetează parola&lt;/a-typography-title&gt;
+      &lt;a-typography-text class="description"&gt;
+        Introdu mai jos noua parolă pentru a finaliza resetarea
+      &lt;/a-typography-text&gt;
+
+      &lt;a-form ref="formRef" :model="formState" @finish="onSubmit"&gt;
+        &lt;a-form-item
+          label="Parolă nouă"
+          name="password"
+          :rules="[
+            {
+              min: 6,
+              message: 'Lungimea parolei trebuie să fie egală sau mai mare de 6',
+            },
+          ]"
+        &gt;
+          &lt;a-input-password v-model:value="formState.password" placeholder="*****************" /&gt;
+        &lt;/a-form-item&gt;
+
+        &lt;a-form-item
+          name="passwordConfirm"
+          label="Confirmare parolă"
+          :dependencies="['password']"
+          has-feedback
+          :rules="[
+            {
+              min: 6,
+              message: 'Lungimea parolei trebuie să fie egală sau mai mare de 6',
+            },
+            {
+              required: !!formState.password,
+              message: 'Vă rugăm să confirmați parola!',
+            },
+            {
+              validator: async (rule, value) =&gt; {
+                if (value && formState.password !== value) {
+                  return Promise.reject('Cele două parole introduse nu se potrivesc!');
+                }
+                return Promise.resolve();
+              },
+            },
+          ]"
+        &gt;
+          &lt;a-input-password v-model:value="formState.passwordConfirm" placeholder="*****************" /&gt;
+        &lt;/a-form-item&gt;
+
+        &lt;a-form-item&gt;
+          &lt;a-button type="primary" size="small" html-type="submit" :loading="requestOnGoing"&gt;
+            &lt;LoadingOutlined v-if="requestOnGoing" /&gt;
+            &lt;span v-else&gt;Resetează parola&lt;/span&gt;
+          &lt;/a-button&gt;
+        &lt;/a-form-item&gt;
+      &lt;/a-form&gt;
+    &lt;/template&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+```
+
+Request:
+POST /v1/auth/recover-account
+Body:
+```json
+{
+  "email": "user@example.com",
+  "recoveryKey": "abc123xyz789recoverykey",
+  "password": "newSecurePassword123"
+}
+```
+
+Response (Success - 201):
+```json
+{
+  "message": "Password updated successfully"
+}
+```
+
+Response (Error - 400):
+```json
+{
+  "statusCode": 400,
+  "message": "Invalid recovery key or expired",
+  "error": "Bad Request"
+}
+```
+
+Authorization: Public (UserRoles.GUEST)
+
+Dependencies (Current):
+- React: useState, useRouter (NextRouter cu typed query)
+- Ant Design: Form, Input, Button, Typography, Divider, notification
+- Next.js: Link, Image
+- Services: recoverAccountWithKey (API)
+- Pages: 404.tsx (NotFoundPage)
+
+Dependencies (Target):
+- Vue: ref, reactive, onMounted
+- Ant Design Vue: a-form, a-input, a-button, a-typography, a-divider, notification
+- Nuxt: useRoute, navigateTo, NuxtLink
+- Composables: useAuthApi
+
+Notes:
+- Query params MUST exist (email + recoveryKey) altfel 404
+- Email replace space cu + pentru URL decoding (email poate conține +)
+- Recovery key has expiration (backend validation)
+- Password min 6 characters (matches backend requirement)
+- Auto-redirect after 3 seconds (setTimeout)
+- Success message displayed before redirect
+- User can manual click link pentru immediate redirect
+- No state update (user not logged in yet)
+
+Recommendations:
+1. Add password strength indicator
+2. Show recovery key expiration warning (if close to expiry)
+3. Add countdown timer pentru auto-redirect (3... 2... 1...)
+4. Consider immediate redirect (remove 3s delay) for better UX
+5. Add "Resend recovery email" link în error case
+6. Implement rate limiting pentru prevent brute force
+7. Add loading spinner during redirect transition
+
+================================================================================
+TASK 5: Email Confirmation Page (Verificare Email Actualizat)
+================================================================================
+
+Title: Email Confirmation - Verify Updated Email Address
+
+Description:
+
+Business Logic:
+Pagina verifică email-ul actualizat al unui utilizator existent. User ajunge
+pe această pagină prin click pe link din email de confirmare (trimis când user
+își schimbă email-ul în profil). După verificare, Redux persist store se curăță
+(purge) și user este redirecționat către login pentru re-autentificare cu noul
+email.
+
+Implementare curentă (Next.js + React):
+1. URL format: /auth/email-confirmation?token={emailValidationToken}
+2. Query param validate: Dacă lipsește token → 404 page
+3. useEffect: La mount (router.isReady), se apelează automat API
+4. API GET /v1/user/verify-updated-email/{token}
+5. Success: setIsRequestSuccess(true), await persistor.purge(), redirect după 2s
+6. Error: setIsRequestSuccess(false), salvează errorMessage, redirect după 2s
+7. Display: Loading spinner → Success/Error Result component
+8. Auto-redirect către login (PATHS.SIGN_INL) în ambele cazuri
+
+Features:
+- URL query param validation (token obligatoriu)
+- 404 redirect dacă token lipsește
+- Auto-execute verification la mount
+- Three-state UI: Loading → Success/Error → Auto-redirect
+- Redux persist purge on success (logout user)
+- Error message display din backend
+- 2 second delay before redirect (allow user to read message)
+- Loading spinner (LoadingOutlined) centered
+
+Cod sursă:
+- Page: web/src/pages/auth/email-confirmation/index.tsx:1-69
+- API: web/src/services/api/User/index.ts:18 (verifyUpdatedEmail function)
+- Redux: web/src/redux/store.ts:4 (persistor import)
+
+Current Implementation (React):
+```tsx
+// web/src/pages/auth/email-confirmation/index.tsx
+const EmailConfirmation: React.FunctionComponent = () => {
+  const router: NextRouter & { query: { token?: string } } = useRouter();
+  const [isRequestSuccess, setIsRequestSuccess] = useState&lt;boolean | null&gt;(null);
+  const [errorMessage, setErrorMessage] = useState&lt;string | null&gt;(null);
+
+  useEffect(() => {
+    if (!router?.query.token) return;
+    verifyUpdatedEmail(router.query.token)
+      .then(async () => {
+        setIsRequestSuccess(true);
+        await persistor.purge();
+        setTimeout(() => {
+          router.push(PATHS.SIGN_INL);
+        }, 2000);
+      })
+      .catch(({ response }) => {
+        setIsRequestSuccess(false);
+        setErrorMessage(response.data.message);
+        setTimeout(() => {
+          router.push(PATHS.SIGN_INL);
+        }, 2000);
+      });
+  }, [router?.isReady]);
+
+  if (!router.query.token) return &lt;NotFoundPage /&gt;;
+
+  return (
+    &lt;AppLayout authority={UserRoles.GUEST} layoutClass="auth-layout"&gt;
+      &lt;PageHelmet title="Confirmarea adresei de email" /&gt;
+      &lt;Content className="main"&gt;
+        {isRequestSuccess === null ? (
+          &lt;div style={{ display: 'flex', height: 500, justifyContent: 'center', alignItems: 'center' }}&gt;
+            &lt;LoadingOutlined style={{ fontSize: 25 }} /&gt;
+          &lt;/div&gt;
+        ) : (
+          &lt;Result
+            status={isRequestSuccess ? 'success' : 'error'}
+            title={isRequestSuccess ? 'Email updatat cu succes' : errorMessage}
+          /&gt;
+        )}
+      &lt;/Content&gt;
+    &lt;/AppLayout&gt;
+  );
+};
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+&lt;!-- web-nuxt/pages/auth/email-confirmation/index.vue --&gt;
+&lt;script setup lang="ts"&gt;
+import { ref, onMounted } from 'vue';
+import { useAuthApi } from '@/composables/useAuthApi';
+import { useAuthStore } from '@/stores/auth';
+
+definePageMeta({
+  layout: 'auth',
+  middleware: 'guest',
+});
+
+const route = useRoute();
+const router = useRouter();
+const authStore = useAuthStore();
+const { verifyUpdatedEmail: apiVerifyUpdatedEmail } = useAuthApi();
+
+const isRequestSuccess = ref&lt;boolean | null&gt;(null);
+const errorMessage = ref&lt;string | null&gt;(null);
+
+// Validate query param
+if (!route.query.token) {
+  navigateTo('/404');
+}
+
+onMounted(async () => {
+  if (!route.query.token) return;
+
+  try {
+    await apiVerifyUpdatedEmail(route.query.token as string);
+    isRequestSuccess.value = true;
+
+    // Clear all Pinia stores (equivalent to persistor.purge)
+    authStore.$reset();
+
+    setTimeout(() => {
+      navigateTo('/auth/autentificare');
+    }, 2000);
+  } catch (error: any) {
+    isRequestSuccess.value = false;
+    errorMessage.value = error?.response?.data?.message || 'Verification failed';
+
+    setTimeout(() => {
+      navigateTo('/auth/autentificare');
+    }, 2000);
+  }
+});
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="auth-layout"&gt;
+    &lt;a-layout-content class="main"&gt;
+      &lt;div
+        v-if="isRequestSuccess === null"
+        style="display: flex; height: 500px; justify-content: center; align-items: center"
+      &gt;
+        &lt;LoadingOutlined :style="{ fontSize: '25px' }" /&gt;
+      &lt;/div&gt;
+      &lt;a-result
+        v-else
+        :status="isRequestSuccess ? 'success' : 'error'"
+        :title="isRequestSuccess ? 'Email updatat cu succes' : errorMessage"
+      /&gt;
+    &lt;/a-layout-content&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+```
+
+Request:
+GET /v1/user/verify-updated-email/{token}
+Path Params:
+- token: string (Email validation JWT token)
+
+Response (Success - 200):
+```json
+{
+  "message": "Email updated successfully"
+}
+```
+
+Response (Error - 400):
+```json
+{
+  "statusCode": 400,
+  "message": "Invalid or expired token",
+  "error": "Bad Request"
+}
+```
+
+Authorization: Public (token în URL, nu header)
+
+Dependencies (Current):
+- React: useState, useEffect, useRouter
+- Ant Design: Result, LoadingOutlined
+- Redux: persistor (from store.ts)
+- Services: verifyUpdatedEmail (API)
+- Pages: 404.tsx
+
+Dependencies (Target):
+- Vue: ref, onMounted
+- Ant Design Vue: a-result, LoadingOutlined
+- Pinia: useAuthStore (for $reset)
+- Nuxt: useRoute, navigateTo
+- Composables: useAuthApi
+
+Notes:
+- Token în URL (email validation token, diferit de access token)
+- Token has expiration (backend validation)
+- Purge Redux/Pinia store CRITICAL (force re-login cu noul email)
+- Auto-redirect în success ȘI error case (2s delay)
+- No user interaction required (fully automated)
+- Loading state displayed while API request în progress
+- Error message displayed from backend (helpful pentru debugging)
+
+Recommendations:
+1. Add countdown timer (Redirecting în 2... 1...)
+2. Consider shorter redirect delay (1s instead of 2s)
+3. Add manual "Go to Login" button (nu aștepta auto-redirect)
+4. Clear all cookies/storage on success (comprehensive cleanup)
+5. Add analytics tracking pentru email confirmation success rate
+6. Implement retry logic pentru failed verification
+7. Show email address în success message pentru confirmation
+
+================================================================================
+TASK 6: Account Verification Page (Activare Cont Nou)
+================================================================================
+
+Title: Account Verification - Activate New User Account
+
+Description:
+
+Business Logic:
+Pagina verifică și activează un cont nou creat (din Task 2 Sign Up). User ajunge
+pe această pagină prin click pe link din email de verificare trimis după
+înregistrare. După verificare reușită, user poate accesa login page pentru
+prima autentificare.
+
+Implementare curentă (Next.js + React):
+1. URL format: /auth/account-verification?token={accountVerificationToken}
+2. Query param validate: Dacă lipsește token → 404 page
+3. useEffect: La mount (router.isReady), se apelează automat API
+4. API GET /v1/auth/verify-account/{token}
+5. Success: setIsRequestSuccess(true), afișează Result success
+6. Error: setIsRequestSuccess(false), salvează errorMessage din backend
+7. Display: Loading spinner → Success/Error Result → Manual redirect button
+8. User click "Spre pagina de login" pentru a merge la login
+
+Features:
+- URL query param validation (token obligatoriu)
+- 404 redirect dacă token lipsește
+- Auto-execute verification la mount
+- Three-state UI: Loading → Success/Error Result
+- Manual redirect button (NOT auto-redirect, diferit de Task 5)
+- Success message: "Contul este verificat cu succes"
+- Error message din backend
+- Loading spinner centered (height 500px)
+- Logo clickable către homepage
+
+Cod sursă:
+- Page: web/src/pages/auth/account-verification/index.tsx:1-80
+- API: web/src/services/api/Auth/index.ts:21 (verifyAccount function)
+
+Current Implementation (React):
+```tsx
+// web/src/pages/auth/account-verification/index.tsx
+const AccountVerification: React.FunctionComponent = () => {
+  const router: NextRouter & { query: { token?: string } } = useRouter();
+  const [isRequestSuccess, setIsRequestSuccess] = useState&lt;boolean | null&gt;(null);
+  const [errorMessage, setErrorMessage] = useState&lt;string | null&gt;(null);
+
+  useEffect(() => {
+    if (router?.isReady && router?.query?.token) {
+      verifyAccount(router.query.token)
+        .then(() => {
+          setIsRequestSuccess(true);
+        })
+        .catch(({ response }) => {
+          setIsRequestSuccess(false);
+          setErrorMessage(response.data.message);
+        });
+    }
+  }, [router?.isReady]);
+
+  if (!router.query.token) return &lt;NotFoundPage /&gt;;
+
+  return (
+    &lt;AppLayout authority={UserRoles.GUEST} layoutClass="auth-layout"&gt;
+      &lt;PageHelmet title="Verificarea contului" /&gt;
+      &lt;Content className="main"&gt;
+        &lt;div className="logo-container"&gt;
+          &lt;Link href={PATHS.HOME}&gt;
+            &lt;Image src={logoWideBlack} className="auth-logo" alt="Somaway" width={190} /&gt;
+          &lt;/Link&gt;
+        &lt;/div&gt;
+        &lt;Title level={3} className="title"&gt;
+          Bine ai venit
+        &lt;/Title&gt;
+        &lt;Text className="description"&gt;
+          Se verifică adresa de email pentru activarea contului.
+        &lt;/Text&gt;
+
+        {isRequestSuccess === null ? (
+          &lt;div style={{ display: 'flex', height: 500, justifyContent: 'center', alignItems: 'center' }}&gt;
+            &lt;LoadingOutlined style={{ fontSize: 25 }} /&gt;
+          &lt;/div&gt;
+        ) : (
+          &lt;Result
+            style={{ marginTop: 30 }}
+            status={isRequestSuccess ? 'success' : 'error'}
+            title={isRequestSuccess ? 'Contul este verificat cu succes' : errorMessage}
+          /&gt;
+        )}
+        &lt;Button type="link" onClick={() =&gt; router.push(PATHS.SIGN_INL)} shape="round"&gt;
+          Spre pagina de login
+          &lt;RightOutlined /&gt;
+        &lt;/Button&gt;
+      &lt;/Content&gt;
+    &lt;/AppLayout&gt;
+  );
+};
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+&lt;!-- web-nuxt/pages/auth/account-verification/index.vue --&gt;
+&lt;script setup lang="ts"&gt;
+import { ref, onMounted } from 'vue';
+import { useAuthApi } from '@/composables/useAuthApi';
+
+definePageMeta({
+  layout: 'auth',
+  middleware: 'guest',
+});
+
+const route = useRoute();
+const { verifyAccount: apiVerifyAccount } = useAuthApi();
+
+const isRequestSuccess = ref&lt;boolean | null&gt;(null);
+const errorMessage = ref&lt;string | null&gt;(null);
+
+// Validate query param
+if (!route.query.token) {
+  navigateTo('/404');
+}
+
+onMounted(async () => {
+  if (!route.query.token) return;
+
+  try {
+    await apiVerifyAccount(route.query.token as string);
+    isRequestSuccess.value = true;
+  } catch (error: any) {
+    isRequestSuccess.value = false;
+    errorMessage.value = error?.response?.data?.message || 'Verification failed';
+  }
+});
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="auth-layout"&gt;
+    &lt;div class="logo-container"&gt;
+      &lt;NuxtLink to="/"&gt;
+        &lt;img src="@/assets/logo-normal-black.svg" alt="Somaway" width="190" /&gt;
+      &lt;/NuxtLink&gt;
+    &lt;/div&gt;
+
+    &lt;a-typography-title :level="3" class="title"&gt;Bine ai venit&lt;/a-typography-title&gt;
+    &lt;a-typography-text class="description"&gt;
+      Se verifică adresa de email pentru activarea contului.
+    &lt;/a-typography-text&gt;
+
+    &lt;div
+      v-if="isRequestSuccess === null"
+      style="display: flex; height: 500px; justify-content: center; align-items: center"
+    &gt;
+      &lt;LoadingOutlined :style="{ fontSize: '25px' }" /&gt;
+    &lt;/div&gt;
+    &lt;a-result
+      v-else
+      :style="{ marginTop: '30px' }"
+      :status="isRequestSuccess ? 'success' : 'error'"
+      :title="isRequestSuccess ? 'Contul este verificat cu succes' : errorMessage"
+    /&gt;
+
+    &lt;a-button type="link" shape="round" @click="navigateTo('/auth/autentificare')"&gt;
+      Spre pagina de login
+      &lt;RightOutlined /&gt;
+    &lt;/a-button&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+```
+
+Request:
+GET /v1/auth/verify-account/{token}
+Path Params:
+- token: string (Account verification JWT token)
+
+Response (Success - 200):
+```json
+{
+  "message": "Account verified successfully",
+  "user": {
+    "id": "uuid",
+    "email": "user@example.com",
+    "status": "ACTIVE"
+  }
+}
+```
+
+Response (Error - 400):
+```json
+{
+  "statusCode": 400,
+  "message": "Invalid or expired token",
+  "error": "Bad Request"
+}
+```
+
+Authorization: Public (token în URL)
+
+Dependencies (Current):
+- React: useState, useEffect, useRouter
+- Ant Design: Result, Button, Typography, LoadingOutlined
+- Next.js: Link, Image
+- Services: verifyAccount (API)
+- Pages: 404.tsx
+
+Dependencies (Target):
+- Vue: ref, onMounted
+- Ant Design Vue: a-result, a-button, a-typography, LoadingOutlined
+- Nuxt: useRoute, navigateTo, NuxtLink
+- Composables: useAuthApi
+
+Notes:
+- Token în URL (account verification token, trimis după sign up)
+- Token has expiration (24-48h typically)
+- User status changed from EMAIL_NOT_VERIFIED → ACTIVE
+- Manual redirect button (user control când merge la login)
+- Welcome message "Bine ai venit" displayed
+- Button always visible (success AND error case)
+- No state update (user not logged in yet)
+- Different from Task 5 (no auto-redirect, no purge)
+
+Recommendations:
+1. Add congratulations message în success case
+2. Display user's name în welcome message (if available în response)
+3. Add "What's next" section cu onboarding steps
+4. Consider auto-redirect after 5s (with countdown) în success case
+5. Add "Resend verification email" în error case
+6. Implement analytics tracking pentru verification success rate
+7. Add visual celebration (confetti) on success pentru better UX
+
+================================================================================
+TASK 7: Sign Out Page
+================================================================================
+
+Title: Sign Out - Logout with Complete State Cleanup
+
+Description:
+
+Business Logic:
+Pagina gestionează procesul de logout al utilizatorului. Se execută automat la
+mount, curăță toate state-urile (user, subscriptions, analytics, shortlist),
+remove tokens, și redirecționează către sign in page. Este o pagină intermediară
+de tranziție, user nu interacționează direct.
+
+Implementare curentă (Next.js + React):
+1. useEffect: La mount (router.isReady), se execută signOutPurge()
+2. Function handleSignOutAction() din auth.service:
+   - Get cached access token
+   - API POST /v1/auth/signout cu token în header (blacklist token)
+   - Set cached token = NOT_INITIALIZED
+3. După API success, redirect către PATHS.SIGN_INR
+4. Display: LoadingPage component (full screen spinner) în timpul procesului
+5. No user interaction, fully automated
+
+Features:
+- Auto-execute logout la mount
+- API call pentru blacklist token (Redis)
+- Token cleanup (atx set to NOT_INITIALIZED)
+- Redirect către sign in după cleanup
+- Loading screen displayed
+- Service function handleSignOutAction() reusable
+
+Cod sursă:
+- Page: web/src/pages/auth/sign-out.tsx:1-27
+- Service: web/src/services/auth.service.ts:53-63 (handleSignOutAction)
+- API: web/src/services/api/Auth/index.ts:9-14 (signOut function)
+- Component: web/src/components/global/LoadingPage/LoadingPage.tsx
+
+Current Implementation (React):
+```tsx
+// web/src/pages/auth/sign-out.tsx
+const Signout: NextPage = (): JSX.Element =&gt; {
+  const router = useRouter();
+
+  useEffect(() => {
+    if (router?.isReady) {
+      const signOutPurge = async () => {
+        await handleSignOutAction();
+        router.push(PATHS.SIGN_INR);
+      };
+      signOutPurge();
+    }
+  }, [router?.isReady]);
+
+  return &lt;LoadingPage /&gt;;
+};
+
+// web/src/services/auth.service.ts
+export const handleSignOutAction = async () =&gt; {
+  const aToken = getCachedToken("atx");
+  if (aToken && aToken !== NOT_INITIALIZED) {
+    try {
+      await signOut(aToken);
+      setCachedToken("atx", NOT_INITIALIZED);
+    } catch (error) {
+      console.error("Error while signing out", error);
+    }
+  }
+};
+
+// web/src/services/api/Auth/index.ts
+export const signOut = (atx: string): Promise&lt;AxiosResponse&gt; =&gt;
+  axios.post(
+    "/v1/auth/signout",
+    {},
+    {
+      headers: { Authorization: `Bearer ${atx}` },
+      withCredentials: true,
+    }
+  );
+```
+
+Target Implementation (Nuxt 3 + Vue):
+```vue
+&lt;!-- web-nuxt/pages/auth/sign-out.vue --&gt;
+&lt;script setup lang="ts"&gt;
+import { onMounted } from 'vue';
+import { useAuthStore } from '@/stores/auth';
+import { useAuthApi } from '@/composables/useAuthApi';
+
+definePageMeta({
+  layout: 'empty', // No header/footer
+  middleware: 'auth', // Require authentication
+});
+
+const authStore = useAuthStore();
+const { signOut: apiSignOut } = useAuthApi();
+const router = useRouter();
+
+onMounted(async () => {
+  await handleSignOut();
+  await navigateTo('/auth/autentificare');
+});
+
+const handleSignOut = async () =&gt; {
+  const accessToken = authStore.accessToken;
+
+  if (accessToken) {
+    try {
+      // Call API to blacklist token
+      await apiSignOut(accessToken);
+    } catch (error) {
+      console.error('Error while signing out', error);
+    }
+  }
+
+  // Clear Pinia store
+  authStore.$reset();
+
+  // Clear cookies
+  const atxCookie = useCookie('atx');
+  const rtCookie = useCookie('rt');
+  atxCookie.value = null;
+  rtCookie.value = null;
+};
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;LoadingPage /&gt;
+&lt;/template&gt;
+```
+
+```ts
+// web-nuxt/composables/useAuth.ts
+export const useAuth = () =&gt; {
+  const authStore = useAuthStore();
+  const { signOut: apiSignOut } = useAuthApi();
+
+  const handleSignOut = async () =&gt; {
+    const accessToken = authStore.accessToken;
+
+    if (accessToken) {
+      try {
+        await apiSignOut(accessToken);
+      } catch (error) {
+        console.error('Error while signing out', error);
+      }
+    }
+
+    // Clear Pinia store
+    authStore.$reset();
+
+    // Clear cookies
+    const atxCookie = useCookie('atx');
+    const rtCookie = useCookie('rt');
+    atxCookie.value = null;
+    rtCookie.value = null;
+  };
+
+  return {
+    handleSignOut,
+  };
+};
+```
+
+Request:
+POST /v1/auth/signout
+Headers:
+```
+Authorization: Bearer {accessToken}
+```
+Body: {} (empty)
+
+Response (Success - 200):
+```json
+{
+  "message": "Signed out successfully"
+}
+```
+
+Authorization: Requires access token în header
+
+Dependencies (Current):
+- React: useEffect, useRouter
+- Next.js: NextPage
+- Services: handleSignOutAction, getCachedToken, setCachedToken, signOut (API)
+- Constants: PATHS.SIGN_INR, NOT_INITIALIZED
+- Components: LoadingPage
+
+Dependencies (Target):
+- Vue: onMounted
+- Pinia: useAuthStore
+- Nuxt: navigateTo, useCookie
+- Composables: useAuth, useAuthApi
+- Components: LoadingPage.vue
+
+Notes:
+- Token blacklisted în Redis (backend) pentru prevent reuse
+- Access token set to NOT_INITIALIZED (not null, special constant)
+- Refresh token removed from cookie
+- No error notification to user (silent failure în catch)
+- Redirect happens regardless of API success/failure
+- LoadingPage shown during entire process
+- Different paths: SIGN_INR (sign out route) vs SIGN_INL (general sign in)
+
+Recommendations:
+1. Clear ALL stores (subscriptions, analytics, shortlist) nu doar auth
+2. Add error notification dacă API fails (user should know)
+3. Consider redirect la homepage instead of sign in
+4. Add logout reason tracking (analytics)
+5. Implement "Sign out everywhere" option (invalidate all sessions)
+6. Add confirmation dialog înainte de logout (prevent accidental)
+7. Clear localStorage/sessionStorage completely pentru security
+
+================================================================================
+TASK 8: Redux State Management (User Reducer + Actions)
+================================================================================
+
+Title: User State Management - Redux → Pinia Migration
+
+Description:
+
+Business Logic:
+Gestionează state-ul utilizatorului autentificat în aplicație folosind Redux
+(current) sau Pinia (target). Include actions pentru sign in, sign out, și
+update user profile. State persist în localStorage folosind redux-persist
+(current) sau pinia-plugin-persistedstate (target).
+
+Implementare curentă (Redux):
+1. State: UserEntity | null (null când user not logged in)
+2. Actions: SIGN_IN (set user), SIGN_OUT (clear user), UPDATE_USER (partial update)
+3. Reducer: userReducer cu switch case pentru 3 actions
+4. Persist: redux-persist cu localStorage storage
+5. UPDATE_USER: Spread operator pentru merge fields (fullName, status, phone, birthdate, gender, hasPicture, picVersion)
+
+Features (Redux):
+- Simple state structure (user entity direct, no nested)
+- Three actions: SIGN_IN, SIGN_OUT, UPDATE_USER
+- Type-safe actions (TypeScript interfaces)
+- Immutable updates (spread operator)
+- Persist cu redux-persist
+- Default state: null (not empty object)
+
+Cod sursă:
+- Actions: web/src/redux/Actions/User/index.ts:1-24
+- Reducer: web/src/redux/Reducers/User/index.ts:1-28
+- Store: web/src/redux/store.ts:1-65
+- Persist Config: web/src/redux/store.ts:23-27
+
+Current Implementation (Redux):
+```ts
+// web/src/redux/Actions/User/index.ts
+export const SIGN_IN = "SIGN_IN";
+export const UPDATE_USER = "UPDATE_USER";
+export const SIGN_OUT = "SIGN_OUT";
+
+export interface SignInAction {
+  type: typeof SIGN_IN;
+  user: UserEntity;
+}
+
+export interface SignOutAction {
+  type: typeof SIGN_OUT;
+  user: null;
+}
+
+export interface UpdateUserAction {
+  type: typeof UPDATE_USER;
+  payload: UserUpdatePayload;
+}
+
+export type UserActions = SignInAction | SignOutAction | UpdateUserAction;
+
+// web/src/redux/Reducers/User/index.ts
+const userReducerDefaultState: any = null;
+
+export const userReducer = (state = userReducerDefaultState, action: UserActions): any =&gt; {
+  switch (action.type) {
+    case SIGN_IN:
+      return (state = action.user);
+    case SIGN_OUT:
+      return (state = null);
+    case UPDATE_USER:
+      return {
+        ...state,
+        ...(action.payload?.fullName && { fullName: action.payload.fullName }),
+        ...(action.payload?.status && { status: action.payload.status }),
+        ...(action.payload?.phone && { phone: action.payload.phone }),
+        ...(action.payload?.birthdate && { birthdate: action.payload.birthdate }),
+        ...(action.payload?.gender && { gender: action.payload.gender }),
+        ...(action.payload?.hasPicture && { hasPicture: action.payload.hasPicture }),
+        ...(action.payload?.picVersion && { picVersion: action.payload.picVersion }),
+      };
+    default:
+      return state;
+  }
+};
+
+// web/src/redux/store.ts
+import { persistStore, persistReducer } from "redux-persist";
+import storage from "redux-persist/lib/storage";
+import { configureStore } from "@reduxjs/toolkit";
+
+export const persistConfig = {
+  key: "root",
+  storage,
+  enc: process.env.NEXT_PUBLIC_ENC,
+};
+
+const rootReducer = combineReducers({
+  user: userReducer,
+  subscriptions: subscriptionReducer,
+  analytics: analyticsReducer,
+  shortlist: shortlistReducer,
+  global: globalReducer,
+  zoomAccess: zoomAccessReducer,
+});
+
+const persistedReducer = persistReducer(persistConfig, rootReducer);
+
+const store = configureStore({
+  reducer: persistedReducer,
+  middleware: (getDefaultMiddleware) =&gt;
+    getDefaultMiddleware({
+      thunk: { extraArgument: thunk },
+      serializableCheck: false,
+    }),
+});
+
+const persistor = persistStore(store);
+export { store, persistor };
+```
+
+Target Implementation (Pinia):
+```ts
+// web-nuxt/stores/auth.ts
+import { defineStore } from 'pinia';
+import { ref, computed } from 'vue';
+import type { UserEntity, UserUpdatePayload } from '@/@types/api';
+
+export const useAuthStore = defineStore(
+  'auth',
+  () => {
+    // State
+    const user = ref&lt;UserEntity | null&gt;(null);
+    const accessToken = ref&lt;string | null&gt;(null);
+
+    // Getters
+    const isAuthenticated = computed(() =&gt; user.value !== null && accessToken.value !== null);
+    const userId = computed(() =&gt; user.value?.id || null);
+    const userRole = computed(() =&gt; user.value?.role || null);
+    const fullName = computed(() =&gt; user.value?.fullName || '');
+    const email = computed(() =&gt; user.value?.email || '');
+
+    // Actions
+    const signIn = (userData: UserEntity) =&gt; {
+      user.value = userData;
+    };
+
+    const signOut = () =&gt; {
+      user.value = null;
+      accessToken.value = null;
+    };
+
+    const updateUser = (payload: UserUpdatePayload) =&gt; {
+      if (!user.value) return;
+
+      user.value = {
+        ...user.value,
+        ...(payload.fullName && { fullName: payload.fullName }),
+        ...(payload.status && { status: payload.status }),
+        ...(payload.phone && { phone: payload.phone }),
+        ...(payload.birthdate && { birthdate: payload.birthdate }),
+        ...(payload.gender && { gender: payload.gender }),
+        ...(payload.hasPicture && { hasPicture: payload.hasPicture }),
+        ...(payload.picVersion && { picVersion: payload.picVersion }),
+      };
+    };
+
+    const setAccessToken = (token: string) =&gt; {
+      accessToken.value = token;
+    };
+
+    return {
+      // State
+      user,
+      accessToken,
+      // Getters
+      isAuthenticated,
+      userId,
+      userRole,
+      fullName,
+      email,
+      // Actions
+      signIn,
+      signOut,
+      updateUser,
+      setAccessToken,
+    };
+  },
+  {
+    persist: {
+      storage: persistedState.localStorage,
+      paths: ['user'], // Only persist user, NOT accessToken (security)
+    },
+  }
+);
+
+// web-nuxt/nuxt.config.ts
+export default defineNuxtConfig({
+  modules: ['@pinia/nuxt', '@pinia-plugin-persistedstate/nuxt'],
+  pinia: {
+    autoImports: ['defineStore', 'storeToRefs'],
+  },
+});
+```
+
+Usage (Current - Redux):
+```tsx
+// In component
+import { useDispatch, useSelector } from 'react-redux';
+import { SIGN_IN, SIGN_OUT, UPDATE_USER } from '@/redux/Actions/User';
+
+const MyComponent = () =&gt; {
+  const dispatch = useDispatch();
+  const authUser = useSelector((state: any) =&gt; state.user);
+
+  const login = (userData: UserEntity) =&gt; {
+    dispatch({ type: SIGN_IN, user: userData });
+  };
+
+  const logout = () =&gt; {
+    dispatch({ type: SIGN_OUT });
+  };
+
+  const updateProfile = (updates: UserUpdatePayload) =&gt; {
+    dispatch({ type: UPDATE_USER, payload: updates });
+  };
+
+  return &lt;div&gt;{authUser?.fullName}&lt;/div&gt;;
+};
+```
+
+Usage (Target - Pinia):
+```vue
+&lt;script setup lang="ts"&gt;
+import { useAuthStore } from '@/stores/auth';
+import { storeToRefs } from 'pinia';
+
+const authStore = useAuthStore();
+const { user, isAuthenticated, fullName } = storeToRefs(authStore);
+
+const login = (userData: UserEntity) =&gt; {
+  authStore.signIn(userData);
+};
+
+const logout = () =&gt; {
+  authStore.signOut();
+};
+
+const updateProfile = (updates: UserUpdatePayload) =&gt; {
+  authStore.updateUser(updates);
+};
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div&gt;{{ fullName }}&lt;/div&gt;
+&lt;/template&gt;
+```
+
+Dependencies (Current):
+- redux: createStore, combineReducers
+- react-redux: useDispatch, useSelector
+- @reduxjs/toolkit: configureStore
+- redux-persist: persistStore, persistReducer
+- redux-thunk: thunk middleware
+
+Dependencies (Target):
+- pinia: defineStore
+- @pinia/nuxt: Nuxt module
+- @pinia-plugin-persistedstate/nuxt: Persist plugin
+- vue: ref, computed
+
+Notes:
+- Redux actions are string constants (SIGN_IN) vs Pinia actions are functions (signIn())
+- Redux uses switch case reducer vs Pinia uses direct state mutation
+- Redux persist config global vs Pinia persist config per store
+- Redux requires dispatch() vs Pinia direct method call
+- Pinia has built-in TypeScript support (better DX)
+- Pinia computed (getters) more intuitive than Redux selectors
+- UPDATE_USER uses conditional spread (only update if value exists)
+
+Recommendations:
+1. Add getters în Pinia pentru frequently accessed properties
+2. Persist only user, NOT accessToken (security best practice)
+3. Add $reset() method pentru complete store cleanup
+4. Implement optimistic updates pentru better UX
+5. Add loading states în store (isLoading, isUpdating)
+6. Create composable useAuth() pentru wrap store logic
+7. Add type guards pentru user entity validation
+8. Implement error handling în actions
+
+================================================================================
+TASK 9: Route Handler Middleware (Authorization)
+================================================================================
+
+Title: Route Protection - Role-Based Access Control Middleware
+
+Description:
+
+Business Logic:
+Middleware component care protejează rutele aplicației bazat pe rol utilizator.
+Verifică dacă user este autentificat și are rolul necesar pentru a accesa pagina.
+Afișează loading screen în timpul verificării, apoi fie permite accesul, fie
+afișează 403/404 error page.
+
+Implementare curentă (React Component Wrapper):
+1. Props: authority (required role level), children (page content)
+2. useEffect la mount: Verifică dacă user logat și token valid
+3. pageAuthority &gt; UserRoles.GUEST: Require authentication
+4. Verificări:
+   - No user OR no token: handleSessionExpiration() (redirect la login cu message)
+   - User logat DAR role &lt; pageAuthority: 404 page
+   - User logat ȘI role &gt;= pageAuthority: Render children
+5. Loading state 1000ms delay (prevent flash)
+6. Three possible renders: LoadingPage, 403 Result, 404 Result, or children
+
+Features:
+- Role-based access control (UserRoles enum)
+- Token validation (getCachedToken)
+- Session expiration handling
+- Loading screen cu 1s delay
+- 403 page pentru unauthenticated users
+- 404 page pentru insufficient permissions
+- Children wrapper pattern (HOC-like)
+
+Cod sursă:
+- Component: web/src/middleware/RouteHandler.tsx:1-68
+- Service: web/src/services/auth.service.ts:65-70 (handleSessionExpiration)
+- Constants: web/src/@types/enums/user-role.enum.ts (UserRoles)
+
+Current Implementation (React):
+```tsx
+// web/src/middleware/RouteHandler.tsx
+export const RouteHandler: React.FC&lt;{ authority: number; children: any }&gt; = ({
+  authority: pageAuthority,
+  children,
+}) =&gt; {
+  const router = useRouter();
+  const [isLoading, setIsLoading] = useState(true);
+  const authUser = useSelector((state: any) =&gt; state.user);
+
+  const handleInitialProcessesOnRoute = async (): Promise&lt;void&gt; =&gt; {
+    const authToken = getCachedToken('atx');
+    if (!authUser?.id || authToken === NOT_INITIALIZED) {
+      await handleSessionExpiration();
+    }
+  };
+
+  useEffect(() =&gt; {
+    if (pageAuthority &gt; UserRoles.GUEST) {
+      handleInitialProcessesOnRoute();
+    }
+    setTimeout(() =&gt; {
+      setIsLoading(false);
+    }, 1000);
+  }, []);
+
+  if (isLoading) {
+    return &lt;LoadingPage /&gt;;
+  }
+
+  // Page authority is higher than guest and user is not logged in
+  if (pageAuthority &gt; UserRoles.GUEST && !authUser) {
+    return (
+      &lt;Result
+        status="403"
+        title="403"
+        subTitle="Probleme cu accesul la pagina"
+        extra={&lt;Button type="primary" onClick={() =&gt; router.push(PATHS.SIGN_INL)}&gt;Inapoi la login&lt;/Button&gt;}
+      /&gt;
+    );
+  }
+  // User is logged in but has lower authority than page requires
+  else if (authUser && pageAuthority &gt; Object.values(UserRoles).indexOf(authUser.role)) {
+    return (
+      &lt;Result
+        status="404"
+        title="404"
+        subTitle="Aceasta pagina nu exista"
+        extra={&lt;Button type="primary" onClick={() =&gt; router.push('/')}&gt;Back Home&lt;/Button&gt;}
+      /&gt;
+    );
+  }
+
+  return &lt;div className="page-loaded"&gt;{children}&lt;/div&gt;;
+};
+
+// web/src/services/auth.service.ts
+export const handleSessionExpiration = async (): Promise&lt;void&gt; =&gt; {
+  message.info("User session has been expired, please sign in again");
+  if (location.pathname !== PATHS.SIGN_INL) {
+    location.href = PATHS.SIGN_INR;
+  }
+};
+
+// web/src/@types/enums/user-role.enum.ts
+export enum UserRoles {
+  GUEST = 0,
+  CLIENT = 1,
+  ADMIN = 2,
+}
+```
+
+Target Implementation (Nuxt 3 Middleware):
+```ts
+// web-nuxt/middleware/auth.ts
+export default defineNuxtRouteMiddleware((to, from) =&gt; {
+  const authStore = useAuthStore();
+  const { user, accessToken } = storeToRefs(authStore);
+
+  // Get page authority from route meta
+  const pageAuthority = to.meta.authority as number || UserRoles.GUEST;
+
+  // Public pages (GUEST level) - allow access
+  if (pageAuthority === UserRoles.GUEST) {
+    return;
+  }
+
+  // Protected pages - require authentication
+  const authToken = accessToken.value || useCookie('atx').value;
+
+  if (!user.value?.id || !authToken) {
+    // User not authenticated - redirect to sign in
+    return navigateTo({
+      path: '/auth/autentificare',
+      query: { redirect: to.fullPath },
+    });
+  }
+
+  // Check role-based authorization
+  const userRoleLevel = Object.values(UserRoles).indexOf(user.value.role);
+
+  if (pageAuthority &gt; userRoleLevel) {
+    // Insufficient permissions - redirect to 404
+    return navigateTo('/404');
+  }
+
+  // User has required authority - allow access
+});
+
+// web-nuxt/middleware/guest.ts
+export default defineNuxtRouteMiddleware((to, from) =&gt; {
+  const authStore = useAuthStore();
+  const { user, accessToken } = storeToRefs(authStore);
+
+  // If user already logged in, redirect to dashboard
+  if (user.value && accessToken.value) {
+    return navigateTo('/dashboard');
+  }
+});
+
+// web-nuxt/middleware/admin.ts
+export default defineNuxtRouteMiddleware((to, from) =&gt; {
+  const authStore = useAuthStore();
+  const { user } = storeToRefs(authStore);
+
+  // Require ADMIN role
+  if (user.value?.role !== UserRoles.ADMIN) {
+    return navigateTo('/403');
+  }
+});
+```
+
+Usage (Current - Component Wrapper):
+```tsx
+// In page
+import { AppLayout } from '@/layouts/AppLayout';
+import { UserRoles } from '@/@types/enums/user-role.enum';
+
+const DashboardPage = () =&gt; {
+  return (
+    &lt;AppLayout authority={UserRoles.CLIENT}&gt;
+      &lt;div&gt;Dashboard content&lt;/div&gt;
+    &lt;/AppLayout&gt;
+  );
+};
+
+// In AppLayout
+import { RouteHandler } from '@/middleware/RouteHandler';
+
+export const AppLayout = ({ authority, children }) =&gt; {
+  return (
+    &lt;RouteHandler authority={authority}&gt;
+      &lt;Layout&gt;
+        &lt;Header /&gt;
+        &lt;Content&gt;{children}&lt;/Content&gt;
+        &lt;Footer /&gt;
+      &lt;/Layout&gt;
+    &lt;/RouteHandler&gt;
+  );
+};
+```
+
+Usage (Target - Route Meta):
+```vue
+&lt;!-- web-nuxt/pages/dashboard.vue --&gt;
+&lt;script setup lang="ts"&gt;
+definePageMeta({
+  middleware: 'auth',
+  authority: UserRoles.CLIENT,
+});
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div&gt;Dashboard content&lt;/div&gt;
+&lt;/template&gt;
+
+&lt;!-- web-nuxt/pages/auth/autentificare.vue --&gt;
+&lt;script setup lang="ts"&gt;
+definePageMeta({
+  middleware: 'guest',
+  authority: UserRoles.GUEST,
+});
+&lt;/script&gt;
+
+&lt;!-- web-nuxt/pages/admin/users.vue --&gt;
+&lt;script setup lang="ts"&gt;
+definePageMeta({
+  middleware: ['auth', 'admin'],
+  authority: UserRoles.ADMIN,
+});
+&lt;/script&gt;
+```
+
+Authorization Levels:
+```ts
+export enum UserRoles {
+  GUEST = 0,    // Public pages (no authentication)
+  CLIENT = 1,   // Authenticated users (standard)
+  ADMIN = 2,    // Admin users only
+}
+```
+
+Dependencies (Current):
+- React: useState, useEffect, FC
+- Redux: useSelector
+- Next.js: useRouter
+- Ant Design: Result, Button
+- Services: getCachedToken, handleSessionExpiration
+- Constants: NOT_INITIALIZED, PATHS, UserRoles
+
+Dependencies (Target):
+- Nuxt: defineNuxtRouteMiddleware, navigateTo, useCookie
+- Pinia: useAuthStore, storeToRefs
+- Vue: (no direct dependencies în middleware)
+- Constants: UserRoles
+
+Notes:
+- Current uses component wrapper (RouteHandler) vs Target uses Nuxt middleware
+- Loading delay 1000ms pentru prevent flash (not în middleware, handled by Nuxt)
+- 403 pentru unauthenticated, 404 pentru insufficient permissions
+- Session expiration shows message.info then redirects
+- Authority check uses indexOf() pentru role hierarchy
+- Children wrapper pattern vs route meta pattern
+- Component-level vs route-level protection
+
+Recommendations:
+1. Create separate middlewares: auth.ts, guest.ts, admin.ts
+2. Add redirect query param pentru return after login
+3. Implement token refresh logic în middleware
+4. Add loading state globally (Nuxt plugin)
+5. Create composable useAuthorization() pentru reusable logic
+6. Add role-based component visibility (v-if="hasRole(ADMIN)")
+7. Implement permission-based access (not just roles)
+8. Add audit logging pentru unauthorized access attempts
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================
+
+Generated: 2025-11-03
+Total Tasks: 9
+Status: Ready for JIRA Import
+Migration Path: Next.js 15 + React 18 + Redux → Nuxt 3 + Vue.js 3 + Pinia

@@ -1,0 +1,734 @@
+================================================================================
+JIRA STORY: AUTH MODULE
+================================================================================
+
+Title: Auth Module
+
+Description:
+Modulul Auth gestionează autentificarea și autorizarea utilizatorilor în aplicație. Include funcționalități complete de login (general și admin), signup cu verificare email, logout cu token blacklist, recuperare cont prin email, refresh token mechanism, și validare token.
+
+Locație cod sursă:
+- Controller: src/v1/Auth/Controller/auth.controller.ts
+- Service: src/v1/Auth/Service/auth.service.ts
+- Module: src/v1/Auth/auth.module.ts
+
+Endpoints implementate: 9
+
+Services utilizate:
+- AuthService (Service/auth.service.ts)
+- UserService (din User Module)
+- RedisService (shared/Services/redis.service.ts)
+- StripeService (din Stripe Module)
+- SubscriptionService (din Subscription Module)
+- MailerService (Postmark SMTP - @nestjs-modules/mailer)
+- MailerLiteService (shared/Services/mailerlite.service.ts)
+- FirstPromoterService (shared/Services/first-promoter.service.ts)
+
+Repositories:
+- UsersRepository
+- AnalyticsRepository
+- AnalyticsTimeRepository
+- ShortlistsRepository
+
+Dependencies:
+- JWT Service (@nestjs/jwt)
+- Redis (token blacklist pentru logout)
+- Stripe (customer creation la signup)
+- Postmark (transactional emails)
+- MailerLite (marketing subscriptions)
+- FirstPromoter (affiliate tracking)
+
+Guards utilizați:
+- ThrottlerGuard (rate limiting - global pe tot controller-ul)
+- AuthGuard('jwt') - pentru check-token
+- AuthGuard('email-validation') - pentru account verification
+- RolesGuard (verificare roluri utilizatori)
+
+Rate Limiting:
+- Global pe controller: Default throttler
+- signin: 200,000 req / 60 seconds
+- admin-signin: 2,000 req / 60 seconds
+
+Notes:
+- Signup creează automat Stripe Customer pentru rolul CLIENT
+- Refresh token se stochează în cookie HttpOnly (nume: 'rt', maxAge: 20 zile)
+- Access token expire în 8h, Refresh token în 30 zile
+- Email validation token expire în 90 zile
+- Recovery key e alfanumeric, 16 caractere (format: UPPERCASE + cifre)
+- La signup, user-ul e adăugat automat în Redis timp de 2 ore (7200 sec)
+- La login se aduc subscriptions active, analytics, și shortlist pentru user
+- Signout pune access token în Redis blacklist până la expirare
+
+================================================================================
+TASKS
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 1: POST /v1/auth/signin
+--------------------------------------------------------------------------------
+
+Title: POST /v1/auth/signin
+
+Description:
+
+Business Logic:
+1. Primește email și password de la utilizator
+2. Validează credentials prin AuthService.validateUser():
+   - Verifică dacă user-ul există în baza de date
+   - Compară password-ul folosind Argon2 hash
+   - Încarcă subscriptions active ale user-ului (verifică expirare în Stripe)
+   - Încarcă shortlist-ul activ al user-ului
+   - Încarcă analytics (timp + events) pentru user
+3. Validează accesul la resurse prin UserService.validateAccessToResources()
+4. Generează Access Token (JWT, expirare 8h) și Refresh Token (JWT, expirare 30 zile)
+5. Setează Refresh Token în cookie HttpOnly (nume: 'rt', maxAge: 20 zile)
+6. Returnează user object cu access token, subscriptions, analytics, shortlist
+7. Dacă user-ul nu e activ (isActive=false), aruncă eroare "Contul nu a fost activat inca"
+8. Dacă credentials sunt invalide, aruncă BadRequestException
+
+Cod sursă:
+- Controller: src/v1/Auth/Controller/auth.controller.ts:42-58
+- Service: src/v1/Auth/Service/auth.service.ts:150-174 (signIn)
+- Service: src/v1/Auth/Service/auth.service.ts:226-253 (validateUser)
+
+Request Body:
+{
+  "email": "user@example.com",
+  "password": "password123"
+}
+
+Response (Success 200):
+{
+  "id": "uuid",
+  "email": "user@example.com",
+  "fullName": "John Doe",
+  "role": "CLIENT",
+  "phone": "+40123456789",
+  "isActive": true,
+  "accessToken": "eyJhbGc...",
+  "refreshToken": "eyJhbGc..." (also set in cookie),
+  "subscriptions": [...],
+  "analytics": [...],
+  "shortlist": [...]
+}
+
+Response (Error 400 - user inactive):
+{
+  "statusCode": 400,
+  "message": "Contul nu a fost activat inca"
+}
+
+Response (Error 400 - invalid credentials):
+{
+  "statusCode": 400,
+  "message": "Invalid credentials"
+}
+
+Authorization: Public (nu necesită token)
+
+Rate Limiting: 200,000 requests / 60 seconds
+
+Dependencies:
+- AuthService.validateUser()
+- AuthService.signIn()
+- UserService.validateAccessToResources()
+- SubscriptionService.getActiveSubscriptionsByUserId()
+- SubscriptionService.checkStripeSubExpiration()
+- ShortlistsRepository.getActiveShortlist()
+- AnalyticsRepository.fetchUserAnalytics()
+- AnalyticsTimeRepository.fetchTimeAnalytics()
+- UsersRepository.validateUser()
+
+Cookie Set:
+- Name: 'rt'
+- Value: refreshToken (JWT)
+- HttpOnly: true
+- SameSite: 'lax'
+- Domain: from config
+- Expires: 20 days from now
+- Path: '/'
+
+--------------------------------------------------------------------------------
+TASK 2: POST /v1/auth/admin-signin
+--------------------------------------------------------------------------------
+
+Title: POST /v1/auth/admin-signin
+
+Description:
+
+Business Logic:
+1. Primește email și password de la utilizator
+2. Validează credentials prin AuthService.validateUser() (similar cu signin)
+3. Generează Access Token și Refresh Token
+4. Verifică dacă user.role === 'ADMIN'
+5. Dacă user-ul NU este ADMIN, aruncă BadRequestException "Require admin role to access this route"
+6. Returnează user object cu tokens (fără a seta cookie - diferă de signin normal)
+7. Acest endpoint are rate limiting mult mai strict decât signin normal
+
+Cod sursă:
+- Controller: src/v1/Auth/Controller/auth.controller.ts:60-68
+- Service: src/v1/Auth/Service/auth.service.ts:150-174 (signIn)
+- Service: src/v1/Auth/Service/auth.service.ts:226-253 (validateUser)
+
+Request Body:
+{
+  "email": "admin@example.com",
+  "password": "adminpassword"
+}
+
+Response (Success 200):
+{
+  "id": "uuid",
+  "email": "admin@example.com",
+  "fullName": "Admin User",
+  "role": "ADMIN",
+  "accessToken": "eyJhbGc...",
+  "refreshToken": "eyJhbGc..."
+}
+
+Response (Error 400 - not admin):
+{
+  "statusCode": 400,
+  "message": "Require admin role to access this route"
+}
+
+Authorization: Public (nu necesită token)
+
+Rate Limiting: 2,000 requests / 60 seconds (STRICT - protecție împotriva brute force pe admin)
+
+Dependencies:
+- AuthService.validateUser()
+- AuthService.signIn()
+- UsersRepository.validateUser()
+
+Notes:
+- NU setează refresh token în cookie (diferă de signin normal)
+- Rate limit mult mai restrictiv pentru securitate
+- Verificare strictă de rol ADMIN după autentificare
+
+--------------------------------------------------------------------------------
+TASK 3: POST /v1/auth/signup
+--------------------------------------------------------------------------------
+
+Title: POST /v1/auth/signup
+
+Description:
+
+Business Logic:
+1. Primește date utilizator nou: email, password, fullName, phone, role
+2. Verifică dacă există deja user cu același email SAU phone în baza de date
+3. Verifică dacă există deja în Redis (cont creat dar neverificat în ultimele 2h)
+4. Forțează role = CLIENT (doar rolul CLIENT e permis pentru signup public în MVP)
+5. Creează Stripe Customer pentru user (pentru procesare plăți viitoare)
+6. Creează user în baza de date cu status isActive=false
+7. Generează Email Validation Token (JWT, expirare 90 zile)
+8. Trimite email de verificare prin Postmark cu template 'user-registration-activation'
+9. Subscribe user-ul la MailerLite pentru marketing (catch error dacă failează)
+10. Salvează datele în Redis timp de 2 ore (7200 sec) pentru a preveni duplicate signups
+11. Returnează mesaj success: "Account has been created. Please verify your account to be able to sign in"
+12. Dacă user-ul există deja, aruncă "Există deja un cont cu aceste date. Te rugăm să te loghezi!"
+13. Dacă cont e în Redis (neverificat), aruncă "Account is already created but not verified"
+
+Cod sursă:
+- Controller: src/v1/Auth/Controller/auth.controller.ts:70-76
+- Service: src/v1/Auth/Service/auth.service.ts:52-148
+
+Request Body:
+{
+  "email": "newuser@example.com",
+  "password": "password123",
+  "fullName": "John Doe",
+  "phone": "+40123456789",
+  "role": "CLIENT" (ignorat - forțat la CLIENT)
+}
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Account has been created. Please verify your account to be able to sign in"
+}
+
+Response (Error 400 - user exists):
+{
+  "statusCode": 400,
+  "message": "Există deja un cont cu aceste date. Te rugăm să te loghezi!"
+}
+
+Response (Error 400 - unverified account):
+{
+  "statusCode": 400,
+  "message": "Account is already created but not verified"
+}
+
+Response (Error 400 - SMTP failed):
+{
+  "statusCode": 400,
+  "message": "[mailerLiteService signup] SMTP transport failed {error details}"
+}
+
+Authorization: Public (nu necesită token)
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UsersRepository.find() - check duplicate
+- UsersRepository.createUser()
+- RedisService.getData() - check Redis
+- RedisService.setData() - save to Redis (2h TTL)
+- StripeService.createCustomer()
+- MailerService.sendMail() (Postmark)
+- MailerLiteService.subscribeToMarketing()
+
+Email Template:
+- Template: 'user-registration-activation'
+- Subject: "Verificare cont [{fullName}]"
+- Context:
+  - firstName: extracted from fullName (second word if available)
+  - verificationUrl: {domain}/auth/account-verification?token={emailValidationToken}
+
+Notes:
+- Role e FORȚAT la CLIENT (codul comentat sugerează că CREATOR și ADMIN erau planificate)
+- Stripe Account creation e comentat (era pentru CREATOR role)
+- Email-ul e convertit la lowercase în toată aplicația
+- Redis TTL: 7200 secunde (2 ore)
+- Remote IP address e captat pentru MailerLite tracking
+
+--------------------------------------------------------------------------------
+TASK 4: POST /v1/auth/signout
+--------------------------------------------------------------------------------
+
+Title: POST /v1/auth/signout
+
+Description:
+
+Business Logic:
+1. Primește access token în body (field: atx)
+2. Verifică dacă token-ul există în request
+3. Decodează JWT token-ul pentru a extrage data de expirare
+4. Calculează timpul rămas până la expirare (în secunde)
+5. Adaugă token-ul (cu prefix "Bearer ") în Redis blacklist cu TTL = timp rămas
+6. Șterge cookie-ul 'signout' (probabil bug - ar trebui 'rt' pentru refresh token)
+7. Returnează confirmare că token-ul a fost invalidat
+8. Dacă token-ul lipsește, returnează eroare "Token is not killed"
+
+Cod sursă:
+- Controller: src/v1/Auth/Controller/auth.controller.ts:78-88
+- Service: src/v1/Auth/Service/auth.service.ts:176-186
+
+Request Body:
+{
+  "atx": "eyJhbGc..." (access token WITHOUT "Bearer " prefix)
+}
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Token is killed"
+}
+
+Response (Error - no token):
+{
+  "status": "error",
+  "message": "Token is not killed"
+}
+
+Authorization: Public (nu necesită guard, dar necesită token valid în body)
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- jwtManipulationService.decodeJwtToken() - decode token
+- RedisService.setOnlyKey() - add to blacklist
+
+Notes:
+- Comentariu în cod: "Not working...." - sugerează posibile probleme
+- Cookie cleared e 'signout' dar ar trebui să fie 'rt' (refresh token) - posibil BUG
+- Token-ul e stocat în Redis cu TTL egal cu timpul rămas până expirare
+- Middleware BlacklistMiddleware verifică Redis la fiecare request protejat
+- Access token e prefixat cu "Bearer " înainte de a fi pus în blacklist
+
+Posibile îmbunătățiri .NET:
+- Fix cookie name (clear 'rt' instead of 'signout')
+- Consider invalidating refresh token also
+- Add validation for token format
+
+--------------------------------------------------------------------------------
+TASK 5: POST /v1/auth/generate-recovery-key
+--------------------------------------------------------------------------------
+
+Title: POST /v1/auth/generate-recovery-key
+
+Description:
+
+Business Logic:
+1. Primește email-ul utilizatorului care vrea să recupereze contul
+2. Verifică dacă există user cu acest email în baza de date
+3. Generează recovery key alfanumeric: 16 caractere uppercase (A-Z, 0-9)
+4. Salvează recovery key în baza de date în câmpul 'recoveryKey' al user-ului
+5. Trimite email de recuperare prin Postmark cu template 'recovery'
+6. Email-ul conține link către frontend: {domain}/auth/recuperare-cont?email={email}&recoveryKey={key}
+7. Returnează mesaj success: "Cheia de recuperare a fost trimisă la adresa de email"
+8. Dacă user-ul nu există, aruncă BadRequestException
+
+Cod sursă:
+- Controller: src/v1/Auth/Controller/auth.controller.ts:90-93
+- Service: src/v1/Auth/Service/auth.service.ts:255-279
+- Service: src/v1/Auth/Service/auth.service.ts:359-367 (generateKey)
+- Repository: UsersRepository.generateRecoveryKey()
+
+Request Body:
+{
+  "email": "user@example.com"
+}
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Cheia de recuperare a fost trimisă la adresa de email"
+}
+
+Response (Error 400 - user not found):
+{
+  "statusCode": 400,
+  "message": "User not found"
+}
+
+Authorization: Public (nu necesită token)
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UsersRepository.generateRecoveryKey() - generate and save key
+- MailerService.sendMail() (Postmark)
+
+Email Template:
+- Template: 'recovery'
+- Subject: "Recuperare Cont [{email}]"
+- Context:
+  - accountRecoverAddress: {domain}/auth/recuperare-cont?email={email}&recoveryKey={key}
+  - fullName: user's full name
+
+Recovery Key Format:
+- Length: 16 characters
+- Characters: A-Z (uppercase) + 0-9
+- Example: "A3K9M2P7Q1R5S8T4"
+- Algorithm: Random selection from character pool
+
+Notes:
+- Recovery key e stocat în baza de date ca plain text (POSIBIL SECURITY CONCERN)
+- Nu există TTL pentru recovery key (rămâne valid forever până e folosit/șters)
+- Email-ul e trimis în query params în link (visible în browser history)
+
+Posibile îmbunătățiri .NET:
+- Hash recovery key înainte de stocare
+- Add expiration time (TTL) pentru recovery keys
+- Consider using POST request instead of GET with query params
+
+--------------------------------------------------------------------------------
+TASK 6: POST /v1/auth/recover-account
+--------------------------------------------------------------------------------
+
+Title: POST /v1/auth/recover-account
+
+Description:
+
+Business Logic:
+1. Primește email, recovery key și new password de la utilizator
+2. Verifică dacă există user cu email-ul specificat în baza de date
+3. Verifică dacă recovery key-ul din request match-uiește cu cel din baza de date
+4. Dacă match-uiește, actualizează password-ul user-ului cu cel nou (hash Argon2)
+5. Șterge recovery key din baza de date (setează la null)
+6. Returnează mesaj success: "Parola a fost actualizată cu succes"
+7. Dacă user-ul nu există sau recovery key e invalid, aruncă BadRequestException
+
+Cod sursă:
+- Controller: src/v1/Auth/Controller/auth.controller.ts:95-98
+- Service: src/v1/Auth/Service/auth.service.ts:281-288
+- Repository: UsersRepository.getUserByEmail()
+- Repository: UsersRepository.recoverAccount()
+
+Request Body:
+{
+  "email": "user@example.com",
+  "recoveryKey": "A3K9M2P7Q1R5S8T4",
+  "password": "newPassword123"
+}
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Parola a fost actualizată cu succes"
+}
+
+Response (Error 400 - user not found):
+{
+  "statusCode": 400,
+  "message": "User not found"
+}
+
+Response (Error 400 - invalid recovery key):
+{
+  "statusCode": 400,
+  "message": "Invalid recovery key"
+}
+
+Authorization: Public (nu necesită token)
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UsersRepository.getUserByEmail() - validate user exists
+- UsersRepository.recoverAccount() - update password and clear recovery key
+
+Password Processing:
+- New password e hash-uit folosind Argon2
+- Recovery key e șters după utilizare (one-time use)
+
+Notes:
+- Recovery key poate fi folosit o singură dată
+- După recover, user-ul trebuie să facă login cu noua parolă
+- Nu există validare de complexitate parolă în acest endpoint (se bazează pe DTO validation)
+
+Posibile îmbunătățiri .NET:
+- Add rate limiting specific (prevent brute force pe recovery key)
+- Send confirmation email după password reset
+- Consider invalidating all existing sessions/tokens după password change
+
+--------------------------------------------------------------------------------
+TASK 7: GET /v1/auth/account-verification
+--------------------------------------------------------------------------------
+
+Title: GET /v1/auth/account-verification
+
+Description:
+
+Business Logic:
+1. Primește email validation token ca query parameter
+2. Token-ul e validat automat prin AuthGuard('email-validation') înainte de a ajunge în controller
+3. Guard-ul decodează JWT token-ul și extrage user info (id, email, phone)
+4. Activează user-ul în baza de date (setează isActive=true)
+5. Trimite event la FirstPromoter pentru tracking signup (dacă user are firstPromoterId)
+6. Returnează mesaj success: "Contul a fost verificat"
+7. Dacă token-ul e invalid/expirat, AuthGuard aruncă Unauthorized
+
+Cod sursă:
+- Controller: src/v1/Auth/Controller/auth.controller.ts:100-107
+- Service: src/v1/Auth/Service/auth.service.ts:290-308
+- Repository: UsersRepository.activateUser()
+- Strategy: Validation Email Strategy (guard)
+
+Request Query Params:
+GET /v1/auth/account-verification?token=eyJhbGc...
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Contul a fost verificat"
+}
+
+Response (Error 401 - invalid/expired token):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Authorization: AuthGuard('email-validation') - validează JWT token special pentru email verification
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- UsersRepository.activateUser() - set isActive=true
+- FirstPromoterService.trackSignUp() - optional affiliate tracking
+- AuthGuard('email-validation') - JWT validation strategy
+
+JWT Token Payload:
+{
+  "id": "user-uuid",
+  "role": "CLIENT",
+  "email": "user@example.com",
+  "type": "VALIDATION_EMAIL",
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "exp": ... (90 days expiration)
+}
+
+Notes:
+- Token-ul e generat la signup cu expirare de 90 zile
+- După activare, user-ul poate face login
+- FirstPromoter tracking e opțional (wrapped în try-catch, ignoră errors)
+- Remote address poate fi folosit pentru tracking (dacă disponibil)
+
+Posibile îmbunătățiri .NET:
+- Send welcome email după account verification
+- Redirect user to success page instead of JSON response
+- Consider one-time use tokens (invalidate after verification)
+
+--------------------------------------------------------------------------------
+TASK 8: GET /v1/auth/check-token
+--------------------------------------------------------------------------------
+
+Title: GET /v1/auth/check-token
+
+Description:
+
+Business Logic:
+1. Primește access token în Authorization header (Bearer token)
+2. Token-ul e validat automat prin AuthGuard('jwt')
+3. Verifică în middleware BlacklistMiddleware dacă token-ul e în blacklist (Redis)
+4. Dacă token-ul e valid și NU e în blacklist, returnează success
+5. Dacă token-ul e invalid/expirat/blacklisted, aruncă Unauthorized
+6. Acest endpoint e folosit de frontend pentru a verifica dacă user-ul e încă autentificat
+
+Cod sursă:
+- Controller: src/v1/Auth/Controller/auth.controller.ts:109-114
+- Middleware: BlacklistMiddleware (shared/middleware/)
+
+Request Headers:
+Authorization: Bearer eyJhbGc...
+
+Response (Success 200):
+{
+  "status": "ok",
+  "message": "Token is valid"
+}
+
+Response (Error 401 - invalid/expired/blacklisted token):
+{
+  "statusCode": 401,
+  "message": "Unauthorized"
+}
+
+Authorization: AuthGuard('jwt') - validează JWT access token
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- AuthGuard('jwt') - JWT access token validation
+- BlacklistMiddleware - check Redis blacklist
+- RedisService - query blacklist
+
+Middleware Flow:
+1. Request arrives with Bearer token
+2. BlacklistMiddleware checks if token exists in Redis
+3. If in blacklist → throw Unauthorized
+4. If not in blacklist → pass to AuthGuard('jwt')
+5. AuthGuard validates JWT signature and expiration
+6. If valid → pass to controller → return success
+
+Notes:
+- Endpoint foarte simplu - doar validare, fără logică business
+- Folosit pentru heartbeat checks de către frontend
+- Token blacklist e populat la logout (POST /v1/auth/signout)
+
+Posibile îmbunătățiri .NET:
+- Return user info in response (not just status)
+- Add token expiration time in response
+
+--------------------------------------------------------------------------------
+TASK 9: GET /v1/auth/refresh-token
+--------------------------------------------------------------------------------
+
+Title: GET /v1/auth/refresh-token
+
+Description:
+
+Business Logic:
+1. Citește refresh token din cookie HttpOnly (nume: 'rt')
+2. Verifică dacă cookie-ul există
+3. Verifică semnătura JWT a refresh token-ului folosind secret-ul pentru refresh tokens
+4. Extrage email din decoded token payload
+5. Caută user-ul în baza de date folosind email-ul
+6. Verifică dacă user-ul e activ (isActive=true)
+7. Generează un NOU access token (JWT, expirare 8h)
+8. Returnează noul access token în response (serialized)
+9. Dacă cookie lipsește, aruncă "Server can not give access token without a refresh token"
+10. Dacă refresh token e invalid, aruncă "Token signature is not valid"
+11. Dacă user nu există, aruncă "Refresh token is not valid"
+12. Dacă user nu e activ, aruncă "Account is not active"
+
+Cod sursă:
+- Controller: src/v1/Auth/Controller/auth.controller.ts:116-123
+- Service: src/v1/Auth/Service/auth.service.ts:188-224
+
+Request:
+GET /v1/auth/refresh-token
+Cookie: rt=eyJhbGc... (HttpOnly cookie set at login)
+
+Response (Success 200):
+{
+  "refreshed_access_token": {
+    "accessToken": "eyJhbGc..."
+  }
+}
+
+Response (Error 400 - no cookie):
+{
+  "statusCode": 400,
+  "message": "Server can not give access token without a refresh token"
+}
+
+Response (Error 400 - invalid signature):
+{
+  "statusCode": 400,
+  "message": "Token signature is not valid"
+}
+
+Response (Error 400 - user not found):
+{
+  "statusCode": 400,
+  "message": "Refresh token is not valid"
+}
+
+Response (Error 400 - inactive user):
+{
+  "statusCode": 400,
+  "message": "Account is not active"
+}
+
+Authorization: Public (dar necesită refresh token valid în cookie)
+
+Rate Limiting: Default throttler
+
+Dependencies:
+- jwt.verify() - validate refresh token signature
+- UsersRepository.findOneOrFail() - find user by email
+- serializerService.serializeResponse() - format response
+
+JWT Validation:
+- Secret: app.auth.jwt.refreshToken.secret (diferit de access token secret)
+- Expiration: NOT checked here (jwt.verify throws if expired)
+
+Token Generation:
+- New Access Token payload:
+  {
+    "id": "user-uuid",
+    "role": "CLIENT",
+    "email": "user@example.com",
+    "type": "ACCESS_TOKEN",
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "exp": ... (8 hours from now)
+  }
+
+Notes:
+- Refresh token NU e regenerat - rămâne același în cookie
+- Doar access token e regenerat
+- Cookie e HttpOnly - nu poate fi accesat din JavaScript
+- Frontend trebuie să verifice dacă access token expiră în curând și să apeleze acest endpoint
+
+Posibile îmbunătățiri .NET:
+- Consider rotating refresh tokens (generate new refresh token also)
+- Add refresh token versioning/revocation
+- Track refresh token usage in database
+
+================================================================================
+END OF STORY
+================================================================================
+
+Summary:
+- Total Tasks: 9
+- Total Endpoints: 9 (all POST/GET)
+- Authentication Methods: 4 JWT strategies (Access, Refresh, EmailValidation, SubscriptionValidation)
+- External Services: Stripe, Postmark, MailerLite, FirstPromoter, Redis
+- Key Features: Login, Signup with email verification, Logout with blacklist, Account recovery, Token refresh
+
+Migration Priority: HIGHEST (fundamental pentru tot sistemul)
+Estimated Story Points: 21

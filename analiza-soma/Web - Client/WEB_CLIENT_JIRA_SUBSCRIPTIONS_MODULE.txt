@@ -1,0 +1,4102 @@
+================================================================================
+JIRA STORY: SUBSCRIPTIONS MODULE - WEB CLIENT MIGRATION
+================================================================================
+
+Project: WEB (Somaway Web Client Migration to Nuxt 3)
+Story Type: Module Migration
+Priority: High
+Module: Subscriptions Management
+
+================================================================================
+STORY DESCRIPTION
+================================================================================
+
+Modulul Subscriptions gestionează afișarea și achiziționarea abonamentelor în aplicația web client.
+
+Acest modul include funcționalități complexe pentru:
+- Afișare listă abonamente disponibile (standard + campanii)
+- Card-uri personalizate pentru planuri anuale, trimestriale și lunare
+- Integrare campanii marketing cu timer și counter
+- Selecție abonament și redirectare către checkout sau signup
+- Facebook Pixel tracking pentru addToCart events
+- Suport pentru LP (landing page) events și produse speciale
+- Filtrare după allowedIds pentru afișare selectivă
+- Mesaje de notificare pentru abonamente dezactivate
+- Pagină confirmare înscriere cu CTA către Dashboard
+
+Locație cod sursă (Next.js):
+- Pages: web/src/pages/abonamente.tsx, web/src/pages/subscription-enrollment.tsx
+- Components: web/src/components/pages/subscriptions/
+
+Tasks documentate: 9
+Componente principale: SubscriptionsContainer, SubscriptionItems, PersonalizedStandardSubItem, CampaignSubItem, PersonalizedCampaignSubItem
+
+Tech Stack Transition:
+- Next.js Pages Router → Nuxt 3 Pages Directory
+- React 18 → Vue 3 Composition API
+- Redux Toolkit → Pinia
+- React hooks → Vue Composables
+- Facebook Pixel → Nuxt plugin integration
+
+Dependencies:
+- API endpoints: GET /v1/subscription-types, GET /v1/campaigns
+- Redux stores: user, subscriptions
+- Third-party: Facebook Pixel, uuid
+- Shared components: AppLayout, PageHelmet, CustomButton
+
+Notes:
+- Hardcoded subscription IDs: 2 (1 month), 14 (annual), 15 (3 months), 16 (campaign)
+- LP enabled flag pentru conditional rendering
+- Campaign subscriptions fetch-uite doar pentru authenticated users
+- Facebook Pixel addToCart trigger on selection
+- allowedIds prop pentru white-label filtering
+- DOM manipulation: getElementById('subscriptions-title').remove()
+
+================================================================================
+TASK 1: SUBSCRIPTIONS PAGE - MAIN LANDING PAGE
+================================================================================
+
+Title: Subscriptions Page - Main Landing with Alert Handling
+
+Priority: High
+Complexity: Medium
+Estimated Time: 3h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+Pagina principală de abonamente (/abonamente) afișează toate planurile disponibile cu titlu personalizat și notificări.
+
+Funcționalități:
+1. **Title Dynamic**: Schimbă titlul dacă LP enabled
+2. **Alert Query Param**: Afișează mesaj error dacă ?alert=no_subscription
+3. **Public Access**: Accesibil pentru GUEST users (non-authenticated)
+4. **LP Mode**: Feature flag pentru disable subscriptions display
+5. **Mobile Responsive**: Layout adaptat pentru mobile
+6. **Container Wrapper**: Include SubscriptionsContainer component
+
+Flow:
+1. User accesează /abonamente sau redirectat cu ?alert=no_subscription
+2. Check router.isReady pentru query params
+3. Dacă alert=no_subscription → show error message (6 sec duration)
+4. Render title bazat pe lpEnabled flag
+5. Dacă lpEnabled=false → render SubscriptionsContainer
+6. Dacă lpEnabled=true → show Summit announcement message
+
+Business Rules:
+- lpEnabled = false (default) → show subscriptions
+- lpEnabled = true → show announcement, hide subscriptions
+- Alert message: 6 seconds duration
+- Accessible pentru GUEST role (public page)
+- ID "vreau-abonament" pentru anchor link navigation
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/pages/abonamente.tsx
+
+```typescript
+import React, { useEffect } from "react";
+import { useRouter } from "next/router";
+
+import { Row, Col, message, Typography } from "antd/lib";
+
+import { PageHelmet } from "@/components/global/PageHelmet";
+import { AppLayout } from "@/layouts/AppLayout";
+import { UserRoles } from "@/@types/enums/user-role.enum";
+
+import SubscriptionsContainer from "@/components/pages/subscriptions/SubscriptionsContainer";
+import { useMediaQuery } from "react-responsive";
+
+const { Title } = Typography;
+
+const SubscriptionFormsPage: React.FunctionComponent = () => {
+  const router = useRouter();
+  const isMobile = useMediaQuery({ maxWidth: 769 });
+  const lpEnabled = false;
+  const title = lpEnabled
+    ? "Momentan nu avem abonamente disponibile"
+    : "Avem o ofertă pentru tine";
+
+  useEffect(() => {
+    if (router.isReady && router.query.alert === "no_subscription") {
+      message.error(
+        "Nu ai un abonament activ. Pentru a avea acces la cursuri, achizitioneaza un abonament.",
+        6,
+      );
+    }
+  }, [router?.isReady]);
+
+  return (
+    <AppLayout authority={UserRoles.GUEST} layoutClass={"subscriptions-page"}>
+      <PageHelmet title="Ofertele tale" />
+      <div className="container" id="vreau-abonament">
+        <Row
+          gutter={16}
+          className="take-subscription"
+          style={{ marginBottom: "30px" }}
+        >
+          <Col span={24}>
+            <Title
+              id="subscriptions-title"
+              level={2}
+              style={{
+                marginTop: "30px",
+                marginBottom: "40px",
+                textAlign: "center",
+              }}
+            >
+              <p
+                style={{
+                  fontSize: isMobile ? "48px" : "36px",
+                  marginBottom: 0,
+                  lineHeight: "1",
+                }}
+              >
+                {title}
+              </p>
+              <p style={{ fontSize: "20px" }}>
+                Poți deveni membru Somaway cu abonamentele anuale limitate,{" "}
+                <br /> <b>acum cu un preț redus</b>
+              </p>
+            </Title>
+            {lpEnabled && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: "30px",
+                  textAlign: "center",
+                }}
+              >
+                <div>
+                  <span style={{ fontWeight: "bold" }}>
+                    Pregătim noutăți pentru comunitatea Somaway —
+                  </span>{" "}
+                  <span
+                    style={{ fontWeight: "bold", textDecoration: "underline" }}
+                  >
+                    cei înscriși la Summit vor afla primii.
+                  </span>
+                  <div style={{ margin: "10px" }}>
+                    Între timp, te încurajăm să te înscrii și să urmărești{" "}
+                    <span
+                      style={{
+                        fontWeight: "bold",
+                        textDecoration: "underline",
+                      }}
+                    >
+                      Somatic Healing Summit 2025
+                    </span>{" "}
+                    și să te bucuri de sesiunile live.
+                  </div>
+                </div>
+                <div style={{ fontWeight: "bold" }}>
+                  📅 27 septembrie – 5 octombrie
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: "15px",
+                  }}
+                >
+                  <span>
+                    În timpul Summitului{" "}
+                    <span style={{ textDecoration: "underline" }}>
+                      vom anunța noutățile
+                    </span>{" "}
+                    pentru comunitatea Somaway.
+                  </span>
+                  <span>Vei primi notificări în platformă și pe email.</span>
+                  <span>Îți mulțumim pentru răbdare și încredere. 💛</span>
+                </div>
+              </div>
+            )}
+          </Col>
+        </Row>
+        {!lpEnabled && <SubscriptionsContainer />}
+      </div>
+    </AppLayout>
+  );
+};
+
+export default SubscriptionFormsPage;
+```
+
+Key Patterns:
+- useRouter pentru query params access
+- useEffect cu router.isReady guard
+- message.error cu duration parameter
+- useMediaQuery pentru responsive font sizes
+- Conditional rendering cu lpEnabled flag
+- Inline styles pentru announcement layout
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+Location: web/pages/abonamente.vue
+
+```vue
+<template>
+  <AppLayout :authority="UserRoles.GUEST" layout-class="subscriptions-page">
+    <Head>
+      <Title>Ofertele tale | Somaway</Title>
+    </Head>
+
+    <div class="container" id="vreau-abonament">
+      <a-row :gutter="16" class="take-subscription" style="margin-bottom: 30px">
+        <a-col :span="24">
+          <a-typography-title
+            id="subscriptions-title"
+            :level="2"
+            :style="{
+              marginTop: '30px',
+              marginBottom: '40px',
+              textAlign: 'center',
+            }"
+          >
+            <p
+              :style="{
+                fontSize: isMobile ? '48px' : '36px',
+                marginBottom: 0,
+                lineHeight: '1',
+              }"
+            >
+              {{ title }}
+            </p>
+            <p style="font-size: 20px">
+              Poți deveni membru Somaway cu abonamentele anuale limitate,
+              <br /> <b>acum cu un preț redus</b>
+            </p>
+          </a-typography-title>
+
+          <!-- LP Announcement -->
+          <div
+            v-if="lpEnabled"
+            style="
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              gap: 30px;
+              text-align: center;
+            "
+          >
+            <div>
+              <span style="font-weight: bold">
+                Pregătim noutăți pentru comunitatea Somaway —
+              </span>
+              <span style="font-weight: bold; text-decoration: underline">
+                cei înscriși la Summit vor afla primii.
+              </span>
+              <div style="margin: 10px">
+                Între timp, te încurajăm să te înscrii și să urmărești
+                <span style="font-weight: bold; text-decoration: underline">
+                  Somatic Healing Summit 2025
+                </span>
+                și să te bucuri de sesiunile live.
+              </div>
+            </div>
+            <div style="font-weight: bold">📅 27 septembrie – 5 octombrie</div>
+            <div
+              style="
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 15px;
+              "
+            >
+              <span>
+                În timpul Summitului
+                <span style="text-decoration: underline">
+                  vom anunța noutățile
+                </span>
+                pentru comunitatea Somaway.
+              </span>
+              <span>Vei primi notificări în platformă și pe email.</span>
+              <span>Îți mulțumim pentru răbdare și încredere. 💛</span>
+            </div>
+          </div>
+        </a-col>
+      </a-row>
+
+      <SubscriptionsContainer v-if="!lpEnabled" />
+    </div>
+  </AppLayout>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
+import { message } from 'ant-design-vue'
+import { useBreakpoints } from '@vueuse/core'
+import { UserRoles } from '@/@types/enums/user-role.enum'
+
+const route = useRoute()
+const breakpoints = useBreakpoints({
+  mobile: 769,
+})
+
+const isMobile = breakpoints.smaller('mobile')
+const lpEnabled = ref(false)
+
+const title = computed(() =>
+  lpEnabled.value
+    ? 'Momentan nu avem abonamente disponibile'
+    : 'Avem o ofertă pentru tine'
+)
+
+onMounted(() => {
+  // Check for alert query parameter
+  if (route.query.alert === 'no_subscription') {
+    message.error(
+      'Nu ai un abonament activ. Pentru a avea acces la cursuri, achizitioneaza un abonament.',
+      6
+    )
+  }
+})
+</script>
+
+<style scoped lang="scss">
+.subscriptions-page {
+  .container {
+    padding: 2rem 1rem;
+  }
+
+  .take-subscription {
+    :deep(.ant-typography-title) {
+      p {
+        margin: 0;
+      }
+    }
+  }
+}
+</style>
+```
+
+Vue 3 Patterns:
+- useRoute() pentru query params
+- computed() pentru reactive title
+- onMounted pentru query check (no router.isReady needed)
+- useBreakpoints din @vueuse/core pentru responsive
+- message.error din Ant Design Vue
+- <Head> component pentru SEO
+- v-if pentru conditional rendering
+- ref() pentru lpEnabled flag
+
+--------------------------------------------------------------------------------
+API REQUEST/RESPONSE
+--------------------------------------------------------------------------------
+
+No direct API calls (handled by SubscriptionsContainer child component)
+
+Query Parameter:
+- alert=no_subscription → triggers error message
+
+--------------------------------------------------------------------------------
+DEPENDENCIES
+--------------------------------------------------------------------------------
+
+Current (React/Next.js):
+- next/router (useRouter)
+- react (useEffect)
+- antd (Row, Col, message, Typography)
+- react-responsive (useMediaQuery)
+- @/components/global/PageHelmet
+- @/layouts/AppLayout
+- @/components/pages/subscriptions/SubscriptionsContainer
+- @/@types/enums/user-role.enum
+
+Target (Vue/Nuxt 3):
+- vue-router (useRoute)
+- vue (ref, computed, onMounted)
+- ant-design-vue (Row, Col, message, Typography)
+- @vueuse/core (useBreakpoints)
+- nuxt/head (<Head> component)
+- @/layouts/AppLayout.vue
+- @/components/pages/subscriptions/SubscriptionsContainer.vue
+- @/@types/enums/user-role.enum
+
+--------------------------------------------------------------------------------
+AUTHORIZATION
+--------------------------------------------------------------------------------
+
+Required Role: GUEST (public access)
+Authentication: Not required
+Access Control: Open page, accessible pentru toți utilizatorii
+
+Note:
+- Public page pentru encourage subscription signup
+- No authentication check needed
+- Child components may require auth pentru specific features
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+1. **LP Feature Flag**: lpEnabled hardcoded to false (poate fi mutat în config/env)
+2. **Query Alert**: ?alert=no_subscription common redirect de la course pages
+3. **Anchor ID**: #vreau-abonament pentru direct navigation from landing page
+4. **Mobile Font**: 48px vs 36px pentru responsive title
+5. **Message Duration**: 6 seconds pentru error notifications
+6. **Inline Styles**: Multe inline styles (poate fi refactorizat în CSS)
+
+Performance:
+7. **No SSR**: Client-side query param check (not SEO-critical)
+8. **Lazy Loading**: SubscriptionsContainer loaded conditionally
+
+UX:
+9. **Summit Announcement**: LP mode cu informații despre evenimente speciale
+10. **Emoji**: 💛 și 📅 folosite în announcement text
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+1. **Move LP Flag to Config**:
+   ```typescript
+   // nuxt.config.ts
+   export default defineNuxtConfig({
+     runtimeConfig: {
+       public: {
+         lpEnabled: false
+       }
+     }
+   })
+   ```
+
+2. **Extract Announcement Component**:
+   - Create SummitAnnouncement.vue component
+   - Reusable pentru alte pagini
+
+3. **Refactor Inline Styles**:
+   - Move to scoped CSS
+   - Use CSS classes pentru maintainability
+
+4. **Add Analytics**:
+   - Track page views
+   - Track alert impressions
+
+5. **Improve Query Handling**:
+   - Support multiple alert types
+   - Use enum pentru alert messages
+
+6. **Add Breadcrumbs**:
+   - Home > Abonamente
+   - Better navigation context
+
+7. **SEO Optimization**:
+   - Add meta description
+   - Add structured data (Offer schema.org)
+
+8. **Add Loading State**:
+   - Show skeleton while SubscriptionsContainer loads data
+
+Migration Notes:
+- Test query parameter handling cu different browsers
+- Verify message.error display în Nuxt 3
+- Test responsive breakpoints cu @vueuse/core
+
+
+================================================================================
+TASK 2: SUBSCRIPTIONS CONTAINER - MAIN ORCHESTRATOR
+================================================================================
+
+Title: SubscriptionsContainer Component - Plans Display & Selection Logic
+
+Priority: High
+Complexity: Very High
+Estimated Time: 12h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+SubscriptionsContainer orchestrează afișarea tuturor planurilor de abonament (standard + campanii) și gestionează logica de selecție.
+
+Acest component este inima modulului subscriptions, gestionând:
+1. **Dual Data Sources**: Fetch subscription types + campaigns
+2. **Custom Rendering**: Planuri speciale (annual, 3-month, 1-month) cu design personalizat
+3. **Campaign Integration**: Timer și counter pentru oferte limitate
+4. **Selection Flow**: Authenticated → checkout, Non-authenticated → signup
+5. **Facebook Pixel**: addToCart tracking la selecție
+6. **Allowed IDs Filtering**: White-label filtering pentru display specific
+7. **Empty State**: Announcement când nu există planuri active
+8. **DOM Manipulation**: Remove title element când no subscriptions
+
+Flow principal:
+1. Mount → fetch subscription types (GET /v1/subscription-types/active)
+2. Dacă authenticated → fetch campaigns (GET /v1/campaigns)
+3. Separate special plans (annual, 3-month, 1-month) pentru custom rendering
+4. Render remaining plans cu SubscriptionItems component
+5. Render special plans cu PersonalizedStandardSubItem
+6. Render campaign plans cu CampaignSubItem sau PersonalizedCampaignSubItem
+7. User click → selectSubscriptionType(id)
+8. Trigger Facebook Pixel addToCart(price, currency)
+9. Check authentication:
+   - Authenticated → redirect la /subscription/{id}
+   - Not authenticated → save ID in Redux, redirect la /signup
+10. Show empty state dacă no active subscriptions
+
+Business Rules:
+- Special subscription IDs: 2 (1-month), 14 (annual), 15 (3-month), 16 (campaign)
+- Campaigns fetch doar pentru authenticated users
+- allowedIds prop override default filtering
+- Facebook Pixel currency: "RON"
+- Recurring disclaimer: "*Abonamentele Somaway au plată recurentă..."
+- Empty state: remove #subscriptions-title element din DOM
+- Campaign "1 Luna" → PersonalizedCampaignSubItem (special design)
+- Other campaigns → CampaignSubItem (cu timer/counter)
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/components/pages/subscriptions/SubscriptionsContainer.tsx
+
+```typescript
+import React, { useEffect, useState } from "react";
+import { AxiosResponse } from "axios";
+import { useDispatch, useSelector } from "react-redux";
+import { Col, message, Row } from "antd/lib";
+import { useRouter } from "next/router";
+import { addToCart } from "@/lib/fpixel";
+import { v4 as uuid } from "uuid";
+
+import { SubscriptionTypeEntity } from "@/@types/pages/subscriptions";
+import {
+  fetchActiveSubscriptionFormsApi,
+  retrieveCampaignsApi,
+} from "@/services/api/api";
+
+import { PATHS } from "../../../../config/constants";
+import { SELECT_SUB_TYPE } from "@/redux/Actions/Subscription";
+import SubscriptionItems from "./SubscriptionItems";
+import PersonalizedStandardSubItem from "@/components/pages/subscriptions/PersonalizedStandardSubItem";
+import PersonalizedCampaignSubItem from "@/components/pages/subscriptions/PersonalizedCampaignSubItem";
+import CampaignSubItem from "./CampaignSubItem";
+import { useMediaQuery } from "react-responsive";
+
+const MONTH1_SUBSCRIPTION_ID = 2;
+const ANNUAL_SUBSCRIPTION_ID = 14;
+const MONTH3_SUBSCRIPTION_ID = 15;
+const CAMPAIGN_SUBSCRIPTION_ID = 16;
+
+interface SubscriptionsContainerProps {
+  allowedIds?: number[];
+}
+
+const SubscriptionsContainer: React.FC<SubscriptionsContainerProps> = ({
+  allowedIds,
+}) => {
+  const dispatch = useDispatch();
+  const router = useRouter();
+  const authUser = useSelector((state: any) => state.user);
+  const isMobile = useMediaQuery({ maxWidth: 769 });
+
+  const [subscriptionTypes, setSubscriptionForms] = useState<
+    SubscriptionTypeEntity[]
+  >([]);
+  const [campaignSubItems, setCampaignSubItems] = useState<
+    SubscriptionTypeEntity[]
+  >([]);
+  const { subscriptions } = useSelector((state: any) => state.subscriptions);
+
+  // Custom designs cards for annual and monthly subscriptions
+  const annualSubItem = subscriptionTypes?.find(
+    (item) => item.id === ANNUAL_SUBSCRIPTION_ID,
+  );
+  const month3SubItem = subscriptionTypes?.find(
+    (item) => item.id === MONTH3_SUBSCRIPTION_ID,
+  );
+  const month1SubItem = subscriptionTypes?.find(
+    (item) => item.id === MONTH1_SUBSCRIPTION_ID,
+  );
+
+  const subscriptionsActive =
+    subscriptionTypes.length > 0 || campaignSubItems.length > 0;
+
+  if (!subscriptionsActive) {
+    let pageTitleHeader = document.getElementById("subscriptions-title");
+    if (pageTitleHeader) {
+      pageTitleHeader.remove();
+    }
+  }
+
+  // Function to handle subscription type selection
+  const selectSubscriptionType = async (subTypeId: number) => {
+    const selectedSubType =
+      subscriptionTypes &&
+      [...subscriptionTypes, ...campaignSubItems].find(
+        (item) => Number(item.id) === Number(subTypeId),
+      );
+
+    if (selectedSubType) {
+      // Trigger Facebook Pixel addToCart event with the subscription price
+      addToCart(selectedSubType.price, "RON");
+
+      if (Boolean(authUser?.id)) {
+        router.push(`${PATHS.SUBSCRIPTION}/${selectedSubType.id}`);
+      } else {
+        // First memorize the selected sub type then go to login or register.
+        dispatch({
+          type: SELECT_SUB_TYPE,
+          selectedSubscriptionTypeId: selectedSubType.id,
+        });
+        router.push(PATHS.SIGNUP);
+      }
+    } else {
+      message.error(
+        "Abonament este dezactivat de catre administrator. Te rugam sa iei legatura cu echipa Somaway pentru mai multe informatii.",
+        6,
+      );
+      console.error("eroare, no subscription type found with this id");
+    }
+  };
+
+  useEffect(() => {
+    // Fetch all subscription types from the API
+    fetchActiveSubscriptionFormsApi().then(async (res: AxiosResponse) => {
+      let subs = res?.data?.subscriptionTypes || [];
+
+      // Filter by allowedIds if provided
+      if (allowedIds && allowedIds.length > 0) {
+        subs = subs.filter((item: SubscriptionTypeEntity) =>
+          allowedIds.includes(Number(item.id)),
+        );
+      }
+      setSubscriptionForms(subs);
+    });
+
+    authUser?.id &&
+      !allowedIds &&
+      retrieveCampaignsApi().then((res: AxiosResponse) => {
+        if (res?.status === 200 && res.data?.campaigns?.length > 0) {
+          const subTypesFromCampaigns: SubscriptionTypeEntity[] =
+            res.data?.campaigns.reduce(
+              (
+                acc: SubscriptionTypeEntity[],
+                item: {
+                  subType: SubscriptionTypeEntity;
+                  endDate: string;
+                  maxAcquisitions: number;
+                  timerEnabled: boolean;
+                  counterEnabled: boolean;
+                },
+              ) => {
+                acc.push({
+                  ...item.subType,
+                  endDate: new Date(item.endDate),
+                  maxAcquisitions: item.maxAcquisitions,
+                  timerEnabled: item.timerEnabled,
+                  counterEnabled: item.counterEnabled,
+                });
+                return acc;
+              },
+              [],
+            );
+          setCampaignSubItems(subTypesFromCampaigns);
+        }
+      });
+  }, []);
+
+  return (
+    <>
+      <Row
+        gutter={7}
+        align={"middle"}
+        justify={"center"}
+        className="subscriptions-container"
+      >
+        {allowedIds && allowedIds.length > 0 ? (
+          // If allowedIds are provided, render only those
+          subscriptionTypes.map((item, index) => (
+            <Col key={`sub-${item.id}-${index}`} data-form={item.form}>
+              <SubscriptionItems
+                subscriptionType={item}
+                subscriptions={subscriptions}
+                onSubscribe={() => selectSubscriptionType(Number(item.id))}
+              />
+            </Col>
+          ))
+        ) : (
+          // Default rendering logic if allowedIds is not provided
+          <>
+            {subscriptionTypes?.map((item, index) => {
+              if (
+                ![
+                  ANNUAL_SUBSCRIPTION_ID,
+                  MONTH1_SUBSCRIPTION_ID,
+                  MONTH3_SUBSCRIPTION_ID,
+                  CAMPAIGN_SUBSCRIPTION_ID,
+                ].includes(Number(item.id))
+              ) {
+                return (
+                  <Col key={`oo+${index}`} data-form={item.form}>
+                    <SubscriptionItems
+                      subscriptionType={item}
+                      subscriptions={subscriptions}
+                      onSubscribe={() =>
+                        selectSubscriptionType(Number(item.id))
+                      }
+                    />
+                  </Col>
+                );
+              }
+              return null;
+            })}
+
+            {annualSubItem && (
+              <Col
+                data-form={1}
+                style={{
+                  marginBottom: "20px",
+                  height: isMobile ? "100%" : "505px",
+                }}
+              >
+                <PersonalizedStandardSubItem
+                  title={annualSubItem!.title}
+                  price={annualSubItem!.price}
+                  originalPrice={parseFloat(annualSubItem.subtitle || "0")}
+                  buttonText={annualSubItem.buttonTitle}
+                  isPopular={true}
+                  planType="anual"
+                  onSubscribe={() =>
+                    selectSubscriptionType(ANNUAL_SUBSCRIPTION_ID)
+                  }
+                />
+              </Col>
+            )}
+
+            {month3SubItem && (
+              <Col
+                data-form={1}
+                style={{
+                  marginBottom: "20px",
+                  height: isMobile ? "100%" : "505px",
+                }}
+              >
+                <PersonalizedStandardSubItem
+                  title={month3SubItem!.title}
+                  price={month3SubItem!.price}
+                  originalPrice={parseFloat(month3SubItem.subtitle || "0")}
+                  buttonText={month3SubItem.buttonTitle}
+                  isPopular={true}
+                  planType="trimestrial"
+                  onSubscribe={() =>
+                    selectSubscriptionType(MONTH3_SUBSCRIPTION_ID)
+                  }
+                />
+              </Col>
+            )}
+
+            {month1SubItem && (
+              <Col
+                data-form={1}
+                style={{
+                  marginBottom: "20px",
+                  height: isMobile ? "100%" : "505px",
+                }}
+              >
+                <PersonalizedStandardSubItem
+                  title={month1SubItem!.title}
+                  price={month1SubItem!.price}
+                  originalPrice={parseFloat(month1SubItem.subtitle || "0")}
+                  buttonText={month1SubItem.buttonTitle}
+                  isPopular={false}
+                  planType="permonth"
+                  onSubscribe={() =>
+                    selectSubscriptionType(MONTH1_SUBSCRIPTION_ID)
+                  }
+                />
+              </Col>
+            )}
+
+            {campaignSubItems.map((campaignSubItem) => (
+              <Col
+                data-form={1}
+                style={{
+                  marginBottom: "20px",
+                }}
+                key={uuid()}
+              >
+                {campaignSubItem.title !== "1 Luna" ? (
+                  <CampaignSubItem
+                    subTypeId={campaignSubItem!.id}
+                    title={campaignSubItem!.title}
+                    submitButtonText={campaignSubItem.buttonTitle}
+                    timerEnabled={campaignSubItem!.timerEnabled ?? false}
+                    counterEnabled={campaignSubItem!.counterEnabled ?? false}
+                    maxAcquisitions={campaignSubItem!.maxAcquisitions}
+                    endDate={campaignSubItem!.endDate!}
+                    price={campaignSubItem!.price}
+                    initialPrice={
+                      campaignSubItem.subtitle
+                        ? Number(campaignSubItem.subtitle)
+                        : undefined
+                    }
+                    onSubscribe={() =>
+                      selectSubscriptionType(campaignSubItem.id)
+                    }
+                  />
+                ) : (
+                  <PersonalizedCampaignSubItem
+                    title={campaignSubItem!.title}
+                    price={campaignSubItem!.price}
+                    originalPrice={parseFloat(campaignSubItem.subtitle || "0")}
+                    buttonText={campaignSubItem.buttonTitle}
+                    isPopular={true}
+                    campaignType={true}
+                    planType="campanie"
+                    onSubscribe={() =>
+                      selectSubscriptionType(campaignSubItem.id)
+                    }
+                  />
+                )}
+              </Col>
+            ))}
+
+            {!subscriptionsActive && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: "30px",
+                  textAlign: "center",
+                }}
+              >
+                <div>
+                  <span style={{ fontWeight: "bold" }}>
+                    Pregătim noutăți pentru comunitatea Somaway —
+                  </span>{" "}
+                  <span
+                    style={{ fontWeight: "bold", textDecoration: "underline" }}
+                  >
+                    cei înscriși la Summit vor afla primii.
+                  </span>
+                  <div style={{ margin: "10px" }}>
+                    Între timp, te încurajăm să te înscrii și să urmărești{" "}
+                    <span
+                      style={{
+                        fontWeight: "bold",
+                        textDecoration: "underline",
+                      }}
+                    >
+                      Somatic Healing Summit 2025
+                    </span>{" "}
+                    și să te bucuri de sesiunile live.
+                  </div>
+                </div>
+                <div style={{ fontWeight: "bold" }}>
+                  📅 27 septembrie – 5 octombrie
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: "15px",
+                  }}
+                >
+                  <span>
+                    În timpul Summitului{" "}
+                    <span style={{ textDecoration: "underline" }}>
+                      vom anunța noutățile
+                    </span>{" "}
+                    pentru comunitatea Somaway.
+                  </span>
+                  <span>Vei primi notificări în platformă și pe email.</span>
+                  <span>Îți mulțumim pentru răbdare și încredere. 💛</span>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </Row>
+      {subscriptionsActive && (
+        <Row>
+          <span
+            style={{
+              textAlign: "center",
+              width: "100%",
+              fontSize: "14px",
+              marginBottom: isMobile ? "20px" : 0,
+            }}
+          >
+            *Abonamentele Somaway au plată recurentă. O poți opri oricând din
+            contul tău.
+          </span>
+        </Row>
+      )}
+    </>
+  );
+};
+
+export default SubscriptionsContainer;
+```
+
+API Calls:
+```typescript
+// web/src/services/api/api.ts
+export const fetchActiveSubscriptionFormsApi = async (): Promise<AxiosResponse> => {
+  return await axios.get(`${API_URL}/v1/subscription-types/active`, {
+    headers: getAuthHeaders(),
+  });
+};
+
+export const retrieveCampaignsApi = async (): Promise<AxiosResponse> => {
+  return await axios.get(`${API_URL}/v1/campaigns`, {
+    headers: getAuthHeaders(),
+  });
+};
+```
+
+Facebook Pixel:
+```typescript
+// web/src/lib/fpixel.ts
+export const addToCart = (value: number, currency: string) => {
+  if (typeof window !== 'undefined' && (window as any).fbq) {
+    (window as any).fbq('track', 'AddToCart', {
+      value: value,
+      currency: currency
+    });
+  }
+};
+```
+
+Redux Action:
+```typescript
+// web/src/redux/Actions/Subscription.ts
+export const SELECT_SUB_TYPE = 'SELECT_SUB_TYPE';
+```
+
+Key Patterns:
+- useState pentru dual state (subscriptionTypes + campaignSubItems)
+- useSelector pentru auth user și subscriptions state
+- useEffect pentru dual API calls (sequential cu condition)
+- Complex conditional rendering cu allowedIds
+- DOM manipulation cu getElementById().remove()
+- Facebook Pixel integration
+- Redux dispatch pentru memorize selection
+- Array.reduce pentru transform campaigns data
+- uuid() pentru unique keys în map
+- Nested ternary pentru campaign item type determination
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+[CONTINUAT ÎN PARTEA 2...]
+================================================================================
+WEB CLIENT - JIRA SUBSCRIPTIONS MODULE DOCUMENTATION - PART 2
+================================================================================
+
+[CONTINUARE DIN PARTEA 1 - TARGET IMPLEMENTATION TASK 2]
+
+**Target Implementation (Vue 3 + Nuxt 3) - SubscriptionsContainer.vue:**
+
+```vue
+<template>
+  <div>
+    <ARow :gutter="7" align="middle" justify="center" class="subscriptions-container">
+      <!-- allowedIds mode: render only filtered subscriptions -->
+      <template v-if="allowedIds && allowedIds.length > 0">
+        <ACol
+          v-for="(item, index) in subscriptionTypes"
+          :key="`sub-${item.id}-${index}`"
+          :data-form="item.form"
+        >
+          <SubscriptionItems
+            :subscription-type="item"
+            :subscriptions="subscriptions"
+            @subscribe="selectSubscriptionType(Number(item.id))"
+          />
+        </ACol>
+      </template>
+
+      <!-- Default mode: render with custom components for special plans -->
+      <template v-else>
+        <!-- Render non-special subscription types -->
+        <ACol
+          v-for="(item, index) in nonSpecialSubscriptions"
+          :key="`oo+${index}`"
+          :data-form="item.form"
+        >
+          <SubscriptionItems
+            :subscription-type="item"
+            :subscriptions="subscriptions"
+            @subscribe="selectSubscriptionType(Number(item.id))"
+          />
+        </ACol>
+
+        <!-- Annual subscription with custom design -->
+        <ACol
+          v-if="annualSubItem"
+          :data-form="1"
+          :style="{ marginBottom: '20px', height: isMobile ? '100%' : '505px' }"
+        >
+          <PersonalizedStandardSubItem
+            :title="annualSubItem.title"
+            :price="annualSubItem.price"
+            :original-price="parseFloat(annualSubItem.subtitle || '0')"
+            :button-text="annualSubItem.buttonTitle"
+            :is-popular="true"
+            plan-type="anual"
+            @subscribe="selectSubscriptionType(ANNUAL_SUBSCRIPTION_ID)"
+          />
+        </ACol>
+
+        <!-- 3-month subscription with custom design -->
+        <ACol
+          v-if="month3SubItem"
+          :data-form="1"
+          :style="{ marginBottom: '20px', height: isMobile ? '100%' : '505px' }"
+        >
+          <PersonalizedStandardSubItem
+            :title="month3SubItem.title"
+            :price="month3SubItem.price"
+            :original-price="parseFloat(month3SubItem.subtitle || '0')"
+            :button-text="month3SubItem.buttonTitle"
+            :is-popular="true"
+            plan-type="trimestrial"
+            @subscribe="selectSubscriptionType(MONTH3_SUBSCRIPTION_ID)"
+          />
+        </ACol>
+
+        <!-- 1-month subscription with custom design -->
+        <ACol
+          v-if="month1SubItem"
+          :data-form="1"
+          :style="{ marginBottom: '20px', height: isMobile ? '100%' : '505px' }"
+        >
+          <PersonalizedStandardSubItem
+            :title="month1SubItem.title"
+            :price="month1SubItem.price"
+            :original-price="parseFloat(month1SubItem.subtitle || '0')"
+            :button-text="month1SubItem.buttonTitle"
+            :is-popular="false"
+            plan-type="permonth"
+            @subscribe="selectSubscriptionType(MONTH1_SUBSCRIPTION_ID)"
+          />
+        </ACol>
+
+        <!-- Campaign subscriptions -->
+        <ACol
+          v-for="campaignSubItem in campaignSubItems"
+          :key="campaignSubItem.id"
+          :data-form="1"
+          :style="{ marginBottom: '20px' }"
+        >
+          <!-- Special case: "1 Luna" campaign uses different component -->
+          <CampaignSubItem
+            v-if="campaignSubItem.title !== '1 Luna'"
+            :sub-type-id="campaignSubItem.id"
+            :title="campaignSubItem.title"
+            :submit-button-text="campaignSubItem.buttonTitle"
+            :timer-enabled="campaignSubItem.timerEnabled ?? false"
+            :counter-enabled="campaignSubItem.counterEnabled ?? false"
+            :max-acquisitions="campaignSubItem.maxAcquisitions"
+            :end-date="campaignSubItem.endDate!"
+            :price="campaignSubItem.price"
+            :initial-price="campaignSubItem.subtitle ? Number(campaignSubItem.subtitle) : undefined"
+            @subscribe="selectSubscriptionType(campaignSubItem.id)"
+          />
+          <PersonalizedCampaignSubItem
+            v-else
+            :title="campaignSubItem.title"
+            :price="campaignSubItem.price"
+            :original-price="parseFloat(campaignSubItem.subtitle || '0')"
+            :button-text="campaignSubItem.buttonTitle"
+            :is-popular="true"
+            :campaign-type="true"
+            plan-type="campanie"
+            @subscribe="selectSubscriptionType(campaignSubItem.id)"
+          />
+        </ACol>
+
+        <!-- Empty state when no subscriptions available -->
+        <div
+          v-if="!subscriptionsActive"
+          style="display: flex; flex-direction: column; align-items: center; gap: 30px; text-align: center;"
+        >
+          <div>
+            <span style="font-weight: bold;">Pregătim noutăți pentru comunitatea Somaway —</span>
+            <span style="font-weight: bold; text-decoration: underline;">
+              cei înscriși la Summit vor afla primii.
+            </span>
+            <div style="margin: 10px;">
+              Între timp, te încurajăm să te înscrii și să urmărești
+              <span style="font-weight: bold; text-decoration: underline;">
+                Somatic Healing Summit 2025
+              </span>
+              și să te bucuri de sesiunile live.
+            </div>
+          </div>
+          <div style="font-weight: bold;">📅 27 septembrie – 5 octombrie</div>
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 15px;">
+            <span>
+              În timpul Summitului <span style="text-decoration: underline;">vom anunța noutățile</span>
+              pentru comunitatea Somaway.
+            </span>
+            <span>Vei primi notificări în platformă și pe email.</span>
+            <span>Îți mulțumim pentru răbdare și încredere. 💛</span>
+          </div>
+        </div>
+      </template>
+    </ARow>
+
+    <!-- Recurring payment disclaimer -->
+    <ARow v-if="subscriptionsActive">
+      <span
+        :style="{
+          textAlign: 'center',
+          width: '100%',
+          fontSize: '14px',
+          marginBottom: isMobile ? '20px' : 0,
+        }"
+      >
+        *Abonamentele Somaway au plată recurentă. O poți opri oricând din contul tău.
+      </span>
+    </ARow>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue';
+import { storeToRefs } from 'pinia';
+import { useRouter } from 'vue-router';
+import { useBreakpoints } from '@vueuse/core';
+import { message } from 'ant-design-vue';
+import { useUserStore } from '@/stores/user';
+import { useSubscriptionStore } from '@/stores/subscription';
+import { addToCart } from '@/lib/fpixel';
+import {
+  fetchActiveSubscriptionFormsApi,
+  retrieveCampaignsApi
+} from '@/services/api/api';
+import { PATHS } from '@/config/constants';
+import SubscriptionItems from './SubscriptionItems.vue';
+import PersonalizedStandardSubItem from './PersonalizedStandardSubItem.vue';
+import PersonalizedCampaignSubItem from './PersonalizedCampaignSubItem.vue';
+import CampaignSubItem from './CampaignSubItem.vue';
+
+// Constants for special subscription IDs
+const MONTH1_SUBSCRIPTION_ID = 2;
+const ANNUAL_SUBSCRIPTION_ID = 14;
+const MONTH3_SUBSCRIPTION_ID = 15;
+const CAMPAIGN_SUBSCRIPTION_ID = 16;
+
+interface Props {
+  allowedIds?: number[];
+}
+
+const props = defineProps<Props>();
+
+const router = useRouter();
+const userStore = useUserStore();
+const subscriptionStore = useSubscriptionStore();
+const { user: authUser } = storeToRefs(userStore);
+const { subscriptions } = storeToRefs(subscriptionStore);
+
+// Responsive breakpoint
+const breakpoints = useBreakpoints({ mobile: 769 });
+const isMobile = breakpoints.smaller('mobile');
+
+// State
+const subscriptionTypes = ref<SubscriptionTypeEntity[]>([]);
+const campaignSubItems = ref<SubscriptionTypeEntity[]>([]);
+
+// Computed values
+const subscriptionsActive = computed(() =>
+  subscriptionTypes.value.length > 0 || campaignSubItems.value.length > 0
+);
+
+// Extract special subscription plans
+const annualSubItem = computed(() =>
+  subscriptionTypes.value.find(item => item.id === ANNUAL_SUBSCRIPTION_ID)
+);
+const month3SubItem = computed(() =>
+  subscriptionTypes.value.find(item => item.id === MONTH3_SUBSCRIPTION_ID)
+);
+const month1SubItem = computed(() =>
+  subscriptionTypes.value.find(item => item.id === MONTH1_SUBSCRIPTION_ID)
+);
+
+// Non-special subscriptions (exclude the three hardcoded IDs)
+const nonSpecialSubscriptions = computed(() =>
+  subscriptionTypes.value.filter(item =>
+    ![
+      ANNUAL_SUBSCRIPTION_ID,
+      MONTH1_SUBSCRIPTION_ID,
+      MONTH3_SUBSCRIPTION_ID,
+      CAMPAIGN_SUBSCRIPTION_ID
+    ].includes(Number(item.id))
+  )
+);
+
+// Function to handle subscription selection
+const selectSubscriptionType = async (subTypeId: number) => {
+  const selectedSubType = [...subscriptionTypes.value, ...campaignSubItems.value].find(
+    (item) => Number(item.id) === Number(subTypeId)
+  );
+
+  if (selectedSubType) {
+    // Trigger Facebook Pixel addToCart event
+    addToCart(selectedSubType.price, 'RON');
+
+    if (authUser.value?.id) {
+      // Authenticated user: go to checkout
+      router.push(`${PATHS.SUBSCRIPTION}/${selectedSubType.id}`);
+    } else {
+      // Non-authenticated: save selection and redirect to signup
+      subscriptionStore.selectSubscriptionType(selectedSubType.id);
+      router.push(PATHS.SIGNUP);
+    }
+  } else {
+    message.error(
+      'Abonament este dezactivat de catre administrator. Te rugam sa iei legatura cu echipa Somaway pentru mai multe informatii.',
+      6
+    );
+    console.error('eroare, no subscription type found with this id');
+  }
+};
+
+// Fetch subscription types and campaigns on mount
+onMounted(async () => {
+  try {
+    // Fetch subscription types
+    const res = await fetchActiveSubscriptionFormsApi();
+    let subs = res?.data?.subscriptionTypes || [];
+
+    // Filter by allowedIds if provided
+    if (props.allowedIds && props.allowedIds.length > 0) {
+      subs = subs.filter((item: SubscriptionTypeEntity) =>
+        props.allowedIds!.includes(Number(item.id))
+      );
+    }
+    subscriptionTypes.value = subs;
+
+    // Fetch campaigns only for authenticated users and when allowedIds not provided
+    if (authUser.value?.id && !props.allowedIds) {
+      const campaignRes = await retrieveCampaignsApi();
+      if (campaignRes?.status === 200 && campaignRes.data?.campaigns?.length > 0) {
+        const subTypesFromCampaigns = campaignRes.data.campaigns.reduce(
+          (acc: SubscriptionTypeEntity[], item: any) => {
+            acc.push({
+              ...item.subType,
+              endDate: new Date(item.endDate),
+              maxAcquisitions: item.maxAcquisitions,
+              timerEnabled: item.timerEnabled,
+              counterEnabled: item.counterEnabled,
+            });
+            return acc;
+          },
+          []
+        );
+        campaignSubItems.value = subTypesFromCampaigns;
+      }
+    }
+  } catch (error) {
+    console.error('Failed to fetch subscriptions:', error);
+    message.error('Eroare la încărcarea abonamentelor.');
+  }
+});
+</script>
+
+<style scoped lang="scss">
+.subscriptions-container {
+  // Add your styles here
+}
+</style>
+```
+
+**API Request/Response:**
+
+1. **Fetch Active Subscription Forms:**
+```typescript
+GET /v1/subscription-types/active
+
+Response 200:
+{
+  subscriptionTypes: [
+    {
+      id: 2,
+      title: "Abonament Lunar",
+      subtitle: "199",
+      description: "Acces la toate cursurile",
+      price: 97,
+      buttonTitle: "Abonează-te",
+      form: 1, // SubscriptionForms.STANDARD
+      // ... other fields
+    },
+    // ... more subscription types
+  ]
+}
+```
+
+2. **Retrieve Campaigns (authenticated users only):**
+```typescript
+GET /v1/campaigns
+
+Response 200:
+{
+  campaigns: [
+    {
+      subType: {
+        id: 30,
+        title: "Abonament Campanie",
+        price: 197,
+        buttonTitle: "Profită de ofertă",
+        // ... other fields
+      },
+      endDate: "2025-12-31T23:59:59.000Z",
+      maxAcquisitions: 50,
+      timerEnabled: true,
+      counterEnabled: true
+    },
+    // ... more campaigns
+  ]
+}
+```
+
+**Dependencies:**
+
+**Current (React + Next.js):**
+- React 18.2.0
+- Redux Toolkit (useSelector, useDispatch)
+- React Router (useRouter)
+- Axios
+- Ant Design (Row, Col)
+- react-responsive (useMediaQuery)
+- uuid (v4)
+- Facebook Pixel library (@/lib/fpixel)
+
+**Target (Vue 3 + Nuxt 3):**
+- Vue 3.4+ (ref, computed, onMounted)
+- Pinia (storeToRefs, useUserStore, useSubscriptionStore)
+- Vue Router (useRouter from 'vue-router')
+- Axios (same)
+- Ant Design Vue 4.x (ARow, ACol)
+- @vueuse/core (useBreakpoints)
+- Facebook Pixel composable (@/composables/useFacebookPixel)
+
+**Authorization:**
+- Public access (UserRoles.GUEST)
+- Campaign retrieval requires authentication (authUser.id check)
+- Selection flow redirects non-authenticated users to signup
+
+**Notes:**
+
+1. **DOM Manipulation Issue:** Current implementation uses `document.getElementById('subscriptions-title').remove()` which is not Vue-friendly. **Recommendation:** Use `v-if` with reactive state to control title visibility.
+
+2. **Facebook Pixel Integration:** Uses addToCart function from @/lib/fpixel. **Migration:** Create Nuxt plugin for Facebook Pixel with client-side only execution.
+
+3. **Hardcoded Subscription IDs:** Three subscription IDs are hardcoded (2, 14, 15, 16). **Consideration:** Consider moving to environment variables or config file for easier maintenance.
+
+4. **Campaign Filtering:** Title check `campaignSubItem.title !== "1 Luna"` determines component type. **Consideration:** Use a dedicated flag (e.g., `usesPersonalizedCard`) instead of string matching.
+
+5. **UUID Usage:** Current code uses uuid() for campaign keys. **Migration:** Vue's built-in key generation with `item.id` is sufficient.
+
+6. **Array Reduce Pattern:** Campaign data transformation uses Array.reduce. **Migration:** Keep same pattern in Vue.
+
+7. **Redux Action:** Uses SELECT_SUB_TYPE action. **Migration:** Create Pinia store action `selectSubscriptionType(id)`.
+
+8. **Error Handling:** Error messages shown with Ant Design message. **Migration:** Same API available in Ant Design Vue.
+
+**Recommendations:**
+
+1. **Replace DOM Manipulation:**
+```vue
+<!-- Instead of document.getElementById().remove() -->
+<ATitle v-if="subscriptionsActive" id="subscriptions-title">...</ATitle>
+```
+
+2. **Create Facebook Pixel Plugin:**
+```typescript
+// plugins/facebook-pixel.client.ts
+export default defineNuxtPlugin(() => {
+  return {
+    provide: {
+      fbPixel: {
+        addToCart: (price: number, currency: string) => {
+          if (window.fbq) {
+            window.fbq('track', 'AddToCart', { value: price, currency });
+          }
+        }
+      }
+    }
+  };
+});
+```
+
+3. **Create Subscription Store Actions:**
+```typescript
+// stores/subscription.ts
+export const useSubscriptionStore = defineStore('subscription', () => {
+  const selectedSubscriptionTypeId = ref<number | null>(null);
+
+  const selectSubscriptionType = (id: number) => {
+    selectedSubscriptionTypeId.value = id;
+  };
+
+  return { selectedSubscriptionTypeId, selectSubscriptionType };
+});
+```
+
+4. **Move Hardcoded IDs to Config:**
+```typescript
+// config/subscription-constants.ts
+export const SPECIAL_SUBSCRIPTION_IDS = {
+  MONTH1: 2,
+  ANNUAL: 14,
+  MONTH3: 15,
+  CAMPAIGN: 16,
+} as const;
+```
+
+5. **Use Dedicated Campaign Flag:** Add `usesPersonalizedCard` flag to subType instead of title string matching.
+
+--------------------------------------------------------------------------------
+Task 3: SubscriptionItems Router Component
+--------------------------------------------------------------------------------
+
+**Locație cod sursă:**
+- `web/src/components/pages/subscriptions/SubscriptionItems.tsx:1-49`
+
+**Business Logic:**
+
+1. Receive subscription type and route to appropriate card component based on `form` property
+2. Process text formatting (bold and italic markers) before passing to child components
+3. Three subscription form types supported:
+   - FREE: Free tier subscription
+   - STANDARD: Regular paid subscription
+   - COURSE_BASED: Course-specific subscription
+4. Text processing converts custom markup to HTML:
+   - `**text**` → `<strong>text</strong>`
+   - `/**` → `</strong>` (closing tag)
+   - `~text~` → `<i>text</i>`
+   - `/~` → `</i>` (closing tag)
+5. Render processed text using dangerouslySetInnerHTML (XSS risk)
+
+**Current Implementation (React + Next.js):**
+
+```typescript
+import React from "react";
+import { SubscriptionTypeEntity } from "@/@types/pages/subscriptions";
+import { SubscriptionForms } from "../../../../config/constants";
+import FreeSubItem from "./FreeSubItem";
+import StandardSubItem from "./StandardSubItem";
+import CourseBasedSubItem from "./CourseBasedSubItem";
+import { SubscriptionEntity } from "@/@types/api";
+
+interface SubscriptionItemsProps {
+  subscriptionType: SubscriptionTypeEntity;
+  subscriptions: SubscriptionEntity[];
+  onSubscribe: () => void;
+}
+
+const SubscriptionItems: React.FC<SubscriptionItemsProps> = (props) => {
+
+  const processText = (text?: string) => {
+    if (!text) return <></>;
+    const parsedText = text
+      .replace(/\/\*\*/g, "</strong>")
+      .replace(/\*\*/g, "<strong>")
+      .replace(/\/~/g, "</i>")
+      .replace(/~/g, "<i>");
+    return <div dangerouslySetInnerHTML={{ __html: parsedText }} />;
+  };
+
+  return (
+    <>
+      {props.subscriptionType.form === SubscriptionForms.FREE && (
+        <FreeSubItem {...props} processText={processText} />
+      )}
+      {props.subscriptionType.form === SubscriptionForms.STANDARD && (
+        <StandardSubItem
+          {...props}
+          processText={processText}
+        />
+      )}
+      {props.subscriptionType.form === SubscriptionForms.COURSE_BASED && (
+        <CourseBasedSubItem
+          {...props}
+          processText={processText}
+        />
+      )}
+    </>
+  );
+};
+
+export default SubscriptionItems;
+```
+
+**Target Implementation (Vue 3 + Nuxt 3):**
+
+```vue
+<template>
+  <component
+    :is="componentToRender"
+    :subscription-type="subscriptionType"
+    :subscriptions="subscriptions"
+    :process-text="processText"
+    @subscribe="$emit('subscribe')"
+  />
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+import type { SubscriptionTypeEntity } from '@/@types/pages/subscriptions';
+import type { SubscriptionEntity } from '@/@types/api';
+import { SubscriptionForms } from '@/config/constants';
+import FreeSubItem from './FreeSubItem.vue';
+import StandardSubItem from './StandardSubItem.vue';
+import CourseBasedSubItem from './CourseBasedSubItem.vue';
+
+interface Props {
+  subscriptionType: SubscriptionTypeEntity;
+  subscriptions: SubscriptionEntity[];
+}
+
+const props = defineProps<Props>();
+defineEmits<{ subscribe: [] }>();
+
+// Text processing function with security warning
+const processText = (text?: string): string => {
+  if (!text) return '';
+
+  // Convert custom markup to HTML
+  const parsedText = text
+    .replace(/\/\*\*/g, '</strong>')
+    .replace(/\*\*/g, '<strong>')
+    .replace(/\/~/g, '</i>')
+    .replace(/~/g, '<i>');
+
+  return parsedText;
+};
+
+// Dynamic component selection based on form type
+const componentToRender = computed(() => {
+  switch (props.subscriptionType.form) {
+    case SubscriptionForms.FREE:
+      return FreeSubItem;
+    case SubscriptionForms.STANDARD:
+      return StandardSubItem;
+    case SubscriptionForms.COURSE_BASED:
+      return CourseBasedSubItem;
+    default:
+      return null;
+  }
+});
+</script>
+```
+
+**Usage in Child Components (with v-html):**
+
+```vue
+<!-- Example in FreeSubItem.vue -->
+<template>
+  <ACard class="subscription-item free-sub-item">
+    <div v-html="processText(title)" />
+    <div v-html="processText(subtitle)" />
+  </ACard>
+</template>
+```
+
+**API Request/Response:**
+- No direct API calls
+- Receives data through props from parent SubscriptionsContainer
+
+**Dependencies:**
+
+**Current (React + Next.js):**
+- React 18.2.0
+- Custom type definitions (@/@types/pages/subscriptions, @/@types/api)
+- SubscriptionForms constant enum
+
+**Target (Vue 3 + Nuxt 3):**
+- Vue 3.4+ (component, computed)
+- Same type definitions (ported to TypeScript interfaces)
+- Same SubscriptionForms constant enum
+
+**Authorization:**
+- No authorization logic (inherits from parent)
+- Public component
+
+**Notes:**
+
+1. **Security Issue - XSS Risk:** Using `dangerouslySetInnerHTML` (React) or `v-html` (Vue) with user-provided text is dangerous. The `processText` function only adds HTML tags without sanitizing input.
+
+2. **Text Markup Pattern:** Custom markup syntax (`**bold**`, `~italic~`) requires regex replacement. This pattern suggests content is managed in admin panel with this syntax.
+
+3. **Component Type Discrimination:** Uses `form` property from SubscriptionTypeEntity to determine which component to render.
+
+4. **Props Spreading:** Current React code uses `{...props}` spreading. Vue migration needs explicit props passing.
+
+5. **Enum Constants:** SubscriptionForms.FREE, .STANDARD, .COURSE_BASED are constants defined in config/constants.
+
+**Recommendations:**
+
+1. **Sanitize HTML to Prevent XSS:**
+```typescript
+// Install: npm install dompurify
+// Install types: npm install --save-dev @types/dompurify
+
+import DOMPurify from 'dompurify';
+
+const processText = (text?: string): string => {
+  if (!text) return '';
+
+  const parsedText = text
+    .replace(/\/\*\*/g, '</strong>')
+    .replace(/\*\*/g, '<strong>')
+    .replace(/\/~/g, '</i>')
+    .replace(/~/g, '<i>');
+
+  // Sanitize before rendering
+  return DOMPurify.sanitize(parsedText, {
+    ALLOWED_TAGS: ['strong', 'i', 'b', 'em'],
+    ALLOWED_ATTR: []
+  });
+};
+```
+
+2. **Create Composable for Text Processing:**
+```typescript
+// composables/useTextFormatting.ts
+import DOMPurify from 'dompurify';
+
+export const useTextFormatting = () => {
+  const processText = (text?: string): string => {
+    if (!text) return '';
+
+    const parsedText = text
+      .replace(/\/\*\*/g, '</strong>')
+      .replace(/\*\*/g, '<strong>')
+      .replace(/\/~/g, '</i>')
+      .replace(/~/g, '<i>');
+
+    return DOMPurify.sanitize(parsedText, {
+      ALLOWED_TAGS: ['strong', 'i', 'b', 'em'],
+      ALLOWED_ATTR: []
+    });
+  };
+
+  return { processText };
+};
+```
+
+3. **Alternative: Use Markdown Instead:** Consider migrating from custom markup to standard Markdown syntax and using a Markdown parser library.
+
+4. **Type Safety for Component Discriminator:** Add TypeScript exhaustive checking for switch statement to catch missing cases at compile time.
+
+================================================================================
+[FIN PART 2 - A SE CONTINUA CU TASK 4 ÎN PARTEA 3]
+================================================================================================================================================================
+WEB CLIENT - JIRA SUBSCRIPTIONS MODULE DOCUMENTATION - PART 3
+================================================================================
+
+[CONTINUARE DIN PARTEA 2]
+
+--------------------------------------------------------------------------------
+Task 4: PersonalizedStandardSubItem - Custom Subscription Card
+--------------------------------------------------------------------------------
+
+**Locație cod sursă:**
+- `web/src/components/pages/subscriptions/PersonalizedStandardSubItem.tsx:1-204`
+
+**Business Logic:**
+
+1. Display personalized subscription card for standard plans (annual, 3-month, 1-month)
+2. Load benefits data from JSON file based on plan type
+3. Display price with original/discounted pricing
+4. Format benefit text with bold markers using custom function
+5. Show "OFERTĂ" badge for popular plans
+6. Display recurring payment disclaimer
+7. Responsive layout with mobile/desktop variations
+8. Benefits list with checkmark icons
+
+**Current Implementation (React + Next.js):**
+
+```typescript
+import React from "react";
+import { Card, Typography, Row, Col } from "antd/lib";
+import CustomButton from "../../global/Button/button";
+import Image from "next/image";
+import CheckIcon from "@/assets/check-mark.svg";
+import { useMediaQuery } from "react-responsive";
+
+// Benefits data files
+import benefitsAnual from "@/data/plans/anual.json";
+import benefitsTrimestrial from "@/data/plans/trimestrial.json";
+import benefitsPermonth from "@/data/plans/permonth.json";
+import benefitsCampanie from "@/data/plans/campanie.json";
+
+const { Title, Text } = Typography;
+
+type StandardSubCardProps = {
+  title: string;
+  price: number;
+  originalPrice?: number;
+  buttonText: string;
+  isPopular?: boolean;
+  planType: "anual" | "trimestrial" | "permonth" | "campanie";
+  onSubscribe?: () => void;
+};
+
+const StandardSubCard: React.FC<StandardSubCardProps> = ({
+  title,
+  price,
+  originalPrice = 0,
+  buttonText,
+  isPopular = false,
+  planType,
+  onSubscribe,
+}) => {
+  const isMobile = useMediaQuery({ maxWidth: 769 });
+
+  // Load benefits data based on plan type
+  const benefitsData: {
+    [key: string]: { text: string; bold: string[]; strike?: boolean }[];
+  } = {
+    anual: benefitsAnual,
+    trimestrial: benefitsTrimestrial,
+    permonth: benefitsPermonth,
+    campanie: benefitsCampanie,
+  };
+
+  const benefits = benefitsData[planType];
+
+  // Format text with bold markers
+  const formatTextWithBold = (props: {
+    text: any;
+    bold: any;
+    strike?: boolean;
+  }) => {
+    if (!props.bold.length) return props.text;
+
+    const parts = props.text.split(new RegExp(`(${props.bold.join("|")})`, "gi"));
+    const formattedParts = parts.map((part: any, index: any) =>
+      props.bold.includes(part) ? <strong key={index}>{part}</strong> : part
+    );
+
+    return props.strike ? (
+      <span className="strike">{formattedParts}</span>
+    ) : (
+      formattedParts
+    );
+  };
+
+  return (
+    <Card
+      className={`subscribe-card ${planType} ${isPopular ? "ispopular" : ""}`}
+      variant={"outlined"}
+      style={{ height: "100%" }}
+    >
+      <Row gutter={0}>
+        <Col
+          xs={{ span: 24, order: 2 }}
+          sm={{ span: 24, order: 2 }}
+          md={{ span: 13, order: 1 }}
+          lg={{ span: 13, order: 1 }}
+          className="price-section"
+        >
+          <Title level={5}>{title}</Title>
+        </Col>
+        <Col
+          xs={{ span: 24, order: 1 }}
+          sm={{ span: 24, order: 1 }}
+          md={{ span: 11, order: 2 }}
+          lg={{ span: 11, order: 2 }}
+          className="title-section"
+        >
+          <Title level={3} className="title">
+            {originalPrice > 0 && (
+              <span className="discount">{originalPrice} lei</span>
+            )}
+            <span>{price} lei</span>
+          </Title>
+          {isPopular && <span className="popular-badge">OFERTĂ</span>}
+        </Col>
+      </Row>
+
+      <div className="Subscribe-innerContent">
+        <Text className="section-title">CE INCLUDE:</Text>
+        <ul className="benefits-list">
+          {benefits.map((benefit: Benefit, index) => (
+            <li key={index} className="benefit-item">
+              <Image src={CheckIcon} alt="Available" width={20} height={20} />
+              {formatTextWithBold(benefit)}
+            </li>
+          ))}
+        </ul>
+
+        <div className="Subscribe-actions">
+          <CustomButton
+            size="medium"
+            type="primary"
+            className="cta-button fill-100"
+            onClick={onSubscribe}
+          >
+            {buttonText}
+          </CustomButton>
+        </div>
+
+        <span
+          style={{
+            fontSize: "12px",
+            fontStyle: "italic",
+            paddingTop: "5px",
+            textAlign: "center",
+          }}
+        >
+          *Abonamentul se reînnoiește automat. Îl poți opri din cont.
+        </span>
+      </div>
+    </Card>
+  );
+};
+
+export default StandardSubCard;
+```
+
+**Benefits JSON Example:**
+
+```json
+// data/plans/anual.json
+[
+  {
+    "text": "6 sesiuni LIVE / lună",
+    "bold": ["6 sesiuni LIVE"],
+    "strike": false
+  },
+  {
+    "text": "Acces la +70 practici somatice și programe",
+    "bold": ["+70 practici"],
+    "strike": false
+  },
+  {
+    "text": "O comunitate implicată și susținătoare",
+    "bold": ["comunitate implicată și susținătoare"],
+    "strike": false
+  }
+]
+```
+
+**Target Implementation (Vue 3 + Nuxt 3):**
+
+```vue
+<template>
+  <ACard
+    :class="['subscribe-card', planType, { ispopular: isPopular }]"
+    variant="outlined"
+    :style="{ height: '100%' }"
+  >
+    <ARow :gutter="0">
+      <ACol
+        :xs="{ span: 24, order: 2 }"
+        :sm="{ span: 24, order: 2 }"
+        :md="{ span: 13, order: 1 }"
+        :lg="{ span: 13, order: 1 }"
+        class="price-section"
+      >
+        <ATypographyTitle :level="5">{{ title }}</ATypographyTitle>
+      </ACol>
+      <ACol
+        :xs="{ span: 24, order: 1 }"
+        :sm="{ span: 24, order: 1 }"
+        :md="{ span: 11, order: 2 }"
+        :lg="{ span: 11, order: 2 }"
+        class="title-section"
+      >
+        <ATypographyTitle :level="3" class="title">
+          <span v-if="originalPrice > 0" class="discount">{{ originalPrice }} lei</span>
+          <span>{{ price }} lei</span>
+        </ATypographyTitle>
+        <span v-if="isPopular" class="popular-badge">OFERTĂ</span>
+      </ACol>
+    </ARow>
+
+    <div class="Subscribe-innerContent">
+      <ATypographyText class="section-title">CE INCLUDE:</ATypographyText>
+      <ul class="benefits-list">
+        <li
+          v-for="(benefit, index) in benefits"
+          :key="index"
+          class="benefit-item"
+        >
+          <img :src="CheckIcon" alt="Available" width="20" height="20" />
+          <component :is="formatTextWithBold(benefit)" />
+        </li>
+      </ul>
+
+      <div class="Subscribe-actions">
+        <CustomButton
+          size="medium"
+          type="primary"
+          class="cta-button fill-100"
+          @click="onSubscribe"
+        >
+          {{ buttonText }}
+        </CustomButton>
+      </div>
+
+      <span
+        style="
+          font-size: 12px;
+          font-style: italic;
+          padding-top: 5px;
+          text-align: center;
+        "
+      >
+        *Abonamentul se reînnoiește automat. Îl poți opri din cont.
+      </span>
+    </div>
+  </ACard>
+</template>
+
+<script setup lang="ts">
+import { computed, h } from 'vue';
+import { useBreakpoints } from '@vueuse/core';
+import CheckIcon from '@/assets/check-mark.svg';
+import CustomButton from '@/components/global/Button/button.vue';
+
+// Import benefits data
+import benefitsAnual from '@/data/plans/anual.json';
+import benefitsTrimestrial from '@/data/plans/trimestrial.json';
+import benefitsPermonth from '@/data/plans/permonth.json';
+import benefitsCampanie from '@/data/plans/campanie.json';
+
+interface Props {
+  title: string;
+  price: number;
+  originalPrice?: number;
+  buttonText: string;
+  isPopular?: boolean;
+  planType: 'anual' | 'trimestrial' | 'permonth' | 'campanie';
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  originalPrice: 0,
+  isPopular: false,
+});
+
+const emit = defineEmits<{
+  subscribe: [];
+}>();
+
+const breakpoints = useBreakpoints({ mobile: 769 });
+const isMobile = breakpoints.smaller('mobile');
+
+// Benefits data mapping
+const benefitsData: Record<string, any[]> = {
+  anual: benefitsAnual,
+  trimestrial: benefitsTrimestrial,
+  permonth: benefitsPermonth,
+  campanie: benefitsCampanie,
+};
+
+const benefits = computed(() => benefitsData[props.planType]);
+
+// Format text with bold markers using Vue's h() function
+const formatTextWithBold = (benefit: {
+  text: string;
+  bold: string[];
+  strike?: boolean;
+}) => {
+  if (!benefit.bold.length) return benefit.text;
+
+  const parts = benefit.text.split(new RegExp(`(${benefit.bold.join('|')})`, 'gi'));
+  const formattedParts = parts.map((part) =>
+    benefit.bold.includes(part) ? h('strong', part) : part
+  );
+
+  return benefit.strike
+    ? h('span', { class: 'strike' }, formattedParts)
+    : formattedParts;
+};
+
+const onSubscribe = () => emit('subscribe');
+</script>
+
+<style scoped lang="scss">
+.subscribe-card {
+  // Add your styles here
+}
+</style>
+```
+
+**API Request/Response:**
+- No direct API calls
+- Benefits data loaded from static JSON files
+
+**Dependencies:**
+
+**Current (React + Next.js):**
+- React 18.2.0
+- Ant Design (Card, Typography, Row, Col)
+- Next Image
+- react-responsive (useMediaQuery)
+- JSON imports (benefits data)
+
+**Target (Vue 3 + Nuxt 3):**
+- Vue 3.4+ (h function for VNodes)
+- Ant Design Vue 4.x (ACard, ATypographyTitle, ATypographyText, ARow, ACol)
+- Native img or Nuxt Image
+- @vueuse/core (useBreakpoints)
+- Same JSON imports
+
+**Authorization:**
+- Public component (no authorization)
+
+**Notes:**
+
+1. **Benefits JSON Structure:** Benefits data is stored in separate JSON files for each plan type (anual.json, trimestrial.json, permonth.json, campanie.json).
+
+2. **Text Formatting:** `formatTextWithBold` function uses regex to split text and apply bold styling to specific words.
+
+3. **Responsive Column Ordering:** Uses Ant Design Grid's order property to reorder columns on mobile (price first, title second).
+
+4. **Popular Badge:** "OFERTĂ" badge displayed conditionally based on `isPopular` prop.
+
+5. **Original Price:** Strikethrough original price displayed when `originalPrice > 0`.
+
+**Recommendations:**
+
+1. **Type Safety for Benefits:**
+```typescript
+// types/subscription.ts
+export interface Benefit {
+  text: string;
+  bold: string[];
+  strike?: boolean;
+}
+```
+
+2. **Create Composable for Text Formatting:**
+```typescript
+// composables/useBenefitFormatting.ts
+import { h } from 'vue';
+
+export const useBenefitFormatting = () => {
+  const formatTextWithBold = (benefit: Benefit) => {
+    if (!benefit.bold.length) return benefit.text;
+
+    const parts = benefit.text.split(
+      new RegExp(`(${benefit.bold.join('|')})`, 'gi')
+    );
+
+    const formattedParts = parts.map((part) =>
+      benefit.bold.includes(part) ? h('strong', part) : part
+    );
+
+    return benefit.strike
+      ? h('span', { class: 'strike' }, formattedParts)
+      : formattedParts;
+  };
+
+  return { formatTextWithBold };
+};
+```
+
+3. **Nuxt Image Optimization:**
+```vue
+<NuxtImg :src="CheckIcon" alt="Available" width="20" height="20" />
+```
+
+--------------------------------------------------------------------------------
+Task 5: CampaignSubItem - Campaign Card with Timer/Counter
+--------------------------------------------------------------------------------
+
+**Locație cod sursă:**
+- `web/src/components/pages/subscriptions/CampaignSubItem.tsx:1-1217`
+
+**Business Logic:**
+
+1. Display campaign subscription card with countdown timer and acquisition counter
+2. Calculate time remaining until campaign end date (days, hours, minutes, seconds)
+3. Update timer every second with setInterval
+4. Show counter for remaining acquisition slots (maxAcquisitions)
+5. Disable submit button when counter reaches 0
+6. Expandable benefits sections (collapsible with click)
+7. Support for special OTP subscription IDs (50, 51, 52) with custom content
+8. Three bonus sections with expand/collapse functionality
+9. Different pricing display based on subscription type
+10. Retreat schedule information with expandable details
+
+**Current Implementation (React + Next.js):**
+
+```typescript
+import React, { useEffect, useState } from "react";
+import { Card, Row } from "antd/lib";
+import Image from "next/image";
+import CheckIcon from "@/assets/check-mark.svg";
+import CheckIcon2 from "@/assets/check-mark-2.svg";
+import ExpandCircleDown from "@/assets/expand-circle-down.svg";
+import ExpandCircleDown2 from "@/assets/expand-circle-down-2.svg";
+import ExpandCircleUp from "@/assets/expand-circle-up.svg";
+import ExpandCircleUp2 from "@/assets/expand-circle-up-2.svg";
+import FeedPlus from "@/assets/feed-plus.svg";
+import CustomButton from "@/components/global/Button/button";
+import { useMediaQuery } from "react-responsive";
+
+type CampaignSubCardProps = {
+  subTypeId: number;
+  title: string;
+  submitButtonText: string;
+  timerEnabled: boolean;
+  endDate: Date;
+  counterEnabled: boolean;
+  maxAcquisitions?: number;
+  price: number;
+  initialPrice?: number;
+  onSubscribe?: () => void;
+};
+
+const CampaignSubCard: React.FC<CampaignSubCardProps> = ({
+  subTypeId,
+  title,
+  submitButtonText,
+  timerEnabled,
+  counterEnabled,
+  maxAcquisitions,
+  endDate,
+  price,
+  initialPrice,
+  onSubscribe,
+}) => {
+  const OTP_SUBSCRIPTION_IDS = [50, 51, 52];
+  const isMobile = useMediaQuery({ maxWidth: 769 });
+
+  // Timer state
+  const [timeLeft, setTimeLeft] = useState({
+    days: 0,
+    hours: 0,
+    minutes: 0,
+    seconds: 0,
+  });
+
+  // Expandable sections state
+  const [expandedBenefits, setExpandedBenefits] = useState<{
+    [key: number]: boolean;
+  }>({});
+  const [expandedBonus, setExpandedBonus] = useState<Boolean>(false);
+  const [expandedBonus1, setExpandedBonus1] = useState<Boolean>(false);
+  const [expandedBonus2, setExpandedBonus2] = useState<Boolean>(false);
+  const [expandedBonus3, setExpandedBonus3] = useState<Boolean>(false);
+
+  const submitDisabled = counterEnabled && (maxAcquisitions ?? -1) === 0;
+
+  // Countdown timer calculation
+  useEffect(() => {
+    const calculateTimeLeft = () => {
+      const now = new Date().getTime();
+      const endTime = new Date(
+        endDate.getFullYear(),
+        endDate.getMonth(),
+        endDate.getDate(),
+        23,
+        59,
+        59,
+        999
+      ).getTime();
+      const difference = endTime - now;
+
+      if (difference > 0) {
+        const days = Math.floor(difference / (1000 * 60 * 60 * 24));
+        const hours = Math.floor(
+          (difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
+        );
+        const minutes = Math.floor(
+          (difference % (1000 * 60 * 60)) / (1000 * 60)
+        );
+        const seconds = Math.floor((difference % (1000 * 60)) / 1000);
+
+        setTimeLeft({ days, hours, minutes, seconds });
+      } else {
+        setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+      }
+    };
+
+    calculateTimeLeft();
+    const timer = setInterval(calculateTimeLeft, 1000);
+
+    return () => clearInterval(timer);
+  }, [endDate]);
+
+  // Format time text
+  const formatTimeText = () => {
+    const parts = [];
+
+    if (timeLeft.days > 0) {
+      parts.push(`${timeLeft.days} ${timeLeft.days === 1 ? "zi" : "zile"}`);
+    }
+    if (timeLeft.hours > 0) {
+      parts.push(`${timeLeft.hours} ${timeLeft.hours === 1 ? "oră" : "ore"}`);
+    }
+    if (timeLeft.minutes > 0) {
+      parts.push(`${timeLeft.minutes} min`);
+    }
+
+    if (parts.length === 0) {
+      return "Expirat";
+    }
+
+    return `${parts.join(" ")}`;
+  };
+
+  // Toggle functions for expandable sections
+  const toggleBenefit = (index: number) => {
+    setExpandedBenefits((prev) => ({
+      ...prev,
+      [index]: !prev[index],
+    }));
+  };
+
+  const toggleBonus = () => setExpandedBonus(!expandedBonus);
+  const toggleBonus1 = () => setExpandedBonus1(!expandedBonus1);
+  const toggleBonus2 = () => setExpandedBonus2(!expandedBonus2);
+  const toggleBonus3 = () => setExpandedBonus3(!expandedBonus3);
+
+  // Benefits data
+  const benefits = [
+    {
+      main: (
+        <span>
+          <b>6 sesiuni LIVE</b> / lună
+        </span>
+      ),
+      expanded:
+        "O oră ghidată de un terapeut somatic, unde lucrezi direct cu corpul tău astfel încât să aduci liniște la interior și odihnă profundă",
+    },
+    {
+      main: (
+        <span>
+          Acces la <b>+70 practici</b> somatice și programe
+        </span>
+      ),
+      expanded:
+        "Resurse create să-ți redea echilibrul și vitalitatea și să îți aline suferința atunci când ai nevoie",
+    },
+    {
+      main: (
+        <span>
+          O <b>comunitate implicată și susținătoare</b>
+        </span>
+      ),
+      expanded:
+        "Spațiul în care te simți văzut(ă), înțeles(ă) și motivat(ă) să mergi mai departe. Un grup de Facebook dedicat discuțiilor și întrebărilor tale",
+    },
+  ];
+
+  return (
+    <Card className="campaign-subscription-card">
+      <Row className="card-header">
+        <span className="title">{title}</span>
+        <div className="divider-container">
+          <div className="divider-line" />
+        </div>
+      </Row>
+
+      {/* Timer and Counter */}
+      {(timerEnabled || counterEnabled) && (
+        <Row className="card-timers">
+          {counterEnabled && (
+            <div className="timer">
+              <b>{maxAcquisitions}</b> abonamente rămase
+            </div>
+          )}
+          {timerEnabled && (
+            <div className="timer">
+              <b>Expiră în </b>
+              {formatTimeText()}
+            </div>
+          )}
+        </Row>
+      )}
+
+      {/* Initial Price (strikethrough for subTypeId 55) */}
+      {subTypeId === 55 && (
+        <div style={{ width: "100%", textAlign: "center", translate: "0 20px" }}>
+          <s
+            style={{
+              fontSize: "32px",
+              fontWeight: "700",
+              color: "rgba(249, 115, 22, 1)",
+            }}
+          >
+            {initialPrice} lei
+          </s>
+        </div>
+      )}
+
+      {/* Price */}
+      <Row className="card-price">
+        <span>{price} lei</span>
+        <span>
+          {(() => {
+            switch (subTypeId) {
+              case 30:
+                return "prima lună și apoi 97 lei/lună";
+              case 50:
+              case 51:
+                return "Acces 3 luni";
+              case 52:
+                return "Acces 6 luni";
+              case 55:
+                return "cu Martie cadou";
+              default:
+                return "o singură plată";
+            }
+          })()}
+        </span>
+      </Row>
+
+      {/* Benefits (expandable) */}
+      <Row className="card-benefits">
+        {/* ... OTP subscription content or regular benefits ... */}
+      </Row>
+
+      {/* Bonuses */}
+      <Row className="card-bonuses">
+        <div className="bonus-icon">
+          <Image src={FeedPlus} alt="Available" width={36} height={36} />
+        </div>
+        {/* ... Bonus content with expand/collapse ... */}
+
+        <div className="card-submit">
+          <CustomButton
+            size="small"
+            type="secondary"
+            disabled={submitDisabled}
+            onClick={onSubscribe}
+          >
+            {submitButtonText}
+          </CustomButton>
+        </div>
+      </Row>
+    </Card>
+  );
+};
+
+export default CampaignSubCard;
+```
+
+[NOTA: Implementarea completă este foarte lungă (1217 linii). Am rezumat structura principală. Fișierul complet conține 3 variante de conținut pentru OTP IDs 50, 51, 52 cu texte specifice.]
+
+**Target Implementation (Vue 3 + Nuxt 3):**
+
+```vue
+<template>
+  <ACard class="campaign-subscription-card">
+    <ARow class="card-header">
+      <span class="title">{{ title }}</span>
+      <div class="divider-container">
+        <div class="divider-line" />
+      </div>
+    </ARow>
+
+    <!-- Timer and Counter -->
+    <ARow v-if="timerEnabled || counterEnabled" class="card-timers">
+      <div v-if="counterEnabled" class="timer">
+        <b>{{ maxAcquisitions }}</b> abonamente rămase
+      </div>
+      <div v-if="timerEnabled" class="timer">
+        <b>Expiră în </b>{{ formattedTimeText }}
+      </div>
+    </ARow>
+
+    <!-- Initial Price (strikethrough for subTypeId 55) -->
+    <div
+      v-if="subTypeId === 55"
+      style="width: 100%; text-align: center; translate: 0 20px;"
+    >
+      <s
+        style="
+          font-size: 32px;
+          font-weight: 700;
+          color: rgba(249, 115, 22, 1);
+        "
+      >
+        {{ initialPrice }} lei
+      </s>
+    </div>
+
+    <!-- Price -->
+    <ARow class="card-price">
+      <span>{{ price }} lei</span>
+      <span>{{ priceSubtext }}</span>
+    </ARow>
+
+    <!-- Benefits (expandable) -->
+    <ARow class="card-benefits">
+      <template v-if="OTP_SUBSCRIPTION_IDS.includes(subTypeId)">
+        <!-- OTP specific content -->
+        <component :is="otpContent" />
+      </template>
+      <template v-else-if="subTypeId === 55">
+        <!-- Special content for subTypeId 55 -->
+        <span class="card-benefits-title">
+          Păstrează-ți abonamentul activ și luna martie 2026 e din partea noastră!
+        </span>
+        <div class="card-benefits-list">
+          <div
+            v-for="(benefit, index) in benefits"
+            :key="index"
+            class="benefit"
+          >
+            <div class="content">
+              <img :src="CheckIcon" alt="Available" width="20" height="20" />
+              <component :is="benefit.main" />
+              <div
+                @click="toggleBenefit(index)"
+                style="cursor: pointer; padding: 4px; transition: transform 0.2s ease;"
+              >
+                <img
+                  :src="expandedBenefits[index] ? ExpandCircleUp : ExpandCircleDown"
+                  alt="Available"
+                  width="15"
+                  height="15"
+                />
+              </div>
+            </div>
+            <div
+              :style="{
+                maxHeight: expandedBenefits[index] ? '200px' : '0',
+                overflow: 'hidden',
+                marginTop: expandedBenefits[index] ? '8px' : '0',
+              }"
+            >
+              <div
+                style="
+                  padding-left: 28px;
+                  font-size: 13px;
+                  color: #707070;
+                  line-height: 1.4;
+                "
+              >
+                {{ benefit.expanded }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+      <template v-else>
+        <!-- Default benefits content -->
+        <!-- ... -->
+      </template>
+    </ARow>
+
+    <!-- Bonuses -->
+    <ARow v-if="subTypeId !== 55" class="card-bonuses">
+      <div class="bonus-icon">
+        <img :src="FeedPlus" alt="Available" width="36" height="36" />
+      </div>
+      <!-- ... Bonus content ... -->
+
+      <div class="card-submit">
+        <CustomButton
+          size="small"
+          type="secondary"
+          :disabled="submitDisabled"
+          @click="$emit('subscribe')"
+        >
+          {{ submitButtonText }}
+        </CustomButton>
+      </div>
+    </ARow>
+
+    <!-- Alternative submit for subTypeId 55 -->
+    <div
+      v-else
+      style="width: 100%; margin-bottom: 32px; text-align: center;"
+    >
+      <div class="card-submit">
+        <CustomButton
+          size="medium"
+          type="primary"
+          :disabled="submitDisabled"
+          @click="$emit('subscribe')"
+        >
+          {{ submitButtonText }}
+        </CustomButton>
+      </div>
+    </div>
+  </ACard>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, onUnmounted, h } from 'vue';
+import { useBreakpoints } from '@vueuse/core';
+import CheckIcon from '@/assets/check-mark.svg';
+import CheckIcon2 from '@/assets/check-mark-2.svg';
+import ExpandCircleDown from '@/assets/expand-circle-down.svg';
+import ExpandCircleDown2 from '@/assets/expand-circle-down-2.svg';
+import ExpandCircleUp from '@/assets/expand-circle-up.svg';
+import ExpandCircleUp2 from '@/assets/expand-circle-up-2.svg';
+import FeedPlus from '@/assets/feed-plus.svg';
+import CustomButton from '@/components/global/Button/button.vue';
+
+interface Props {
+  subTypeId: number;
+  title: string;
+  submitButtonText: string;
+  timerEnabled: boolean;
+  endDate: Date;
+  counterEnabled: boolean;
+  maxAcquisitions?: number;
+  price: number;
+  initialPrice?: number;
+}
+
+const props = defineProps<Props>();
+defineEmits<{ subscribe: [] }>();
+
+const OTP_SUBSCRIPTION_IDS = [50, 51, 52];
+const breakpoints = useBreakpoints({ mobile: 769 });
+const isMobile = breakpoints.smaller('mobile');
+
+// Timer state
+const timeLeft = ref({
+  days: 0,
+  hours: 0,
+  minutes: 0,
+  seconds: 0,
+});
+
+// Expandable sections state
+const expandedBenefits = ref<{ [key: number]: boolean }>({});
+const expandedBonus = ref(false);
+const expandedBonus1 = ref(false);
+const expandedBonus2 = ref(false);
+const expandedBonus3 = ref(false);
+
+// Computed values
+const submitDisabled = computed(() =>
+  props.counterEnabled && (props.maxAcquisitions ?? -1) === 0
+);
+
+const formattedTimeText = computed(() => {
+  const parts = [];
+
+  if (timeLeft.value.days > 0) {
+    parts.push(`${timeLeft.value.days} ${timeLeft.value.days === 1 ? 'zi' : 'zile'}`);
+  }
+  if (timeLeft.value.hours > 0) {
+    parts.push(`${timeLeft.value.hours} ${timeLeft.value.hours === 1 ? 'oră' : 'ore'}`);
+  }
+  if (timeLeft.value.minutes > 0) {
+    parts.push(`${timeLeft.value.minutes} min`);
+  }
+
+  if (parts.length === 0) {
+    return 'Expirat';
+  }
+
+  return parts.join(' ');
+});
+
+const priceSubtext = computed(() => {
+  switch (props.subTypeId) {
+    case 30:
+      return 'prima lună și apoi 97 lei/lună';
+    case 50:
+    case 51:
+      return 'Acces 3 luni';
+    case 52:
+      return 'Acces 6 luni';
+    case 55:
+      return 'cu Martie cadou';
+    default:
+      return 'o singură plată';
+  }
+});
+
+// Countdown timer
+let timerInterval: NodeJS.Timeout | null = null;
+
+const calculateTimeLeft = () => {
+  const now = new Date().getTime();
+  const endTime = new Date(
+    props.endDate.getFullYear(),
+    props.endDate.getMonth(),
+    props.endDate.getDate(),
+    23,
+    59,
+    59,
+    999
+  ).getTime();
+  const difference = endTime - now;
+
+  if (difference > 0) {
+    const days = Math.floor(difference / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((difference % (1000 * 60)) / 1000);
+
+    timeLeft.value = { days, hours, minutes, seconds };
+  } else {
+    timeLeft.value = { days: 0, hours: 0, minutes: 0, seconds: 0 };
+  }
+};
+
+// Toggle functions
+const toggleBenefit = (index: number) => {
+  expandedBenefits.value = {
+    ...expandedBenefits.value,
+    [index]: !expandedBenefits.value[index],
+  };
+};
+
+const toggleBonus = () => {
+  expandedBonus.value = !expandedBonus.value;
+};
+const toggleBonus1 = () => {
+  expandedBonus1.value = !expandedBonus1.value;
+};
+const toggleBonus2 = () => {
+  expandedBonus2.value = !expandedBonus2.value;
+};
+const toggleBonus3 = () => {
+  expandedBonus3.value = !expandedBonus3.value;
+};
+
+// Benefits data
+const benefits = [
+  {
+    main: h('span', [h('b', '6 sesiuni LIVE'), ' / lună']),
+    expanded:
+      'O oră ghidată de un terapeut somatic, unde lucrezi direct cu corpul tău astfel încât să aduci liniște la interior și odihnă profundă',
+  },
+  {
+    main: h('span', ['Acces la ', h('b', '+70 practici'), ' somatice și programe']),
+    expanded:
+      'Resurse create să-ți redea echilibrul și vitalitatea și să îți aline suferința atunci când ai nevoie',
+  },
+  {
+    main: h('span', ['O ', h('b', 'comunitate implicată și susținătoare')]),
+    expanded:
+      'Spațiul în care te simți văzut(ă), înțeles(ă) și motivat(ă) să mergi mai departe. Un grup de Facebook dedicat discuțiilor și întrebărilor tale',
+  },
+];
+
+// Lifecycle hooks
+onMounted(() => {
+  calculateTimeLeft();
+  timerInterval = setInterval(calculateTimeLeft, 1000);
+});
+
+onUnmounted(() => {
+  if (timerInterval) {
+    clearInterval(timerInterval);
+  }
+});
+</script>
+
+<style scoped lang="scss">
+.campaign-subscription-card {
+  // Add your styles here
+}
+</style>
+```
+
+**API Request/Response:**
+- No direct API calls
+- All data received through props
+
+**Dependencies:**
+
+**Current (React + Next.js):**
+- React 18.2.0
+- Ant Design (Card, Row)
+- Next Image
+- react-responsive (useMediaQuery)
+- setInterval for timer
+
+**Target (Vue 3 + Nuxt 3):**
+- Vue 3.4+ (ref, computed, h function, onMounted, onUnmounted)
+- Ant Design Vue 4.x (ACard, ARow)
+- Native img or Nuxt Image
+- @vueuse/core (useBreakpoints)
+- setInterval for timer (same)
+
+**Authorization:**
+- Public component (no authorization)
+
+**Notes:**
+
+1. **Countdown Timer:** Uses setInterval to update every second. Must be cleared in onUnmounted to prevent memory leaks.
+
+2. **OTP Subscription IDs:** Special content for subscription IDs 50, 51, 52 (each has unique text content about "Somatic Reset", "Dincolo de anxietate", and combined packages).
+
+3. **Expandable Sections:** Multiple toggle states (expandedBenefits, expandedBonus, expandedBonus1/2/3) for collapsible content.
+
+4. **Disabled State:** Button disabled when `counterEnabled && maxAcquisitions === 0`.
+
+5. **Complex Conditional Rendering:** Different layouts for OTP IDs vs regular subscriptions vs subTypeId 55.
+
+6. **Hardcoded Content:** Extensive hardcoded Romanian text for different subscription types. Consider moving to i18n or CMS.
+
+7. **Timer End Time:** Sets end time to 23:59:59.999 on the endDate.
+
+**Recommendations:**
+
+1. **Extract Content to Separate Files:** Move hardcoded content (card50p1, card50p2, card51p1, card51p2, card52p1, card52p2) to JSON files or CMS.
+
+2. **Create Composable for Timer:**
+```typescript
+// composables/useCountdownTimer.ts
+export const useCountdownTimer = (endDate: Date) => {
+  const timeLeft = ref({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+
+  const calculateTimeLeft = () => {
+    // ... calculation logic ...
+  };
+
+  const formattedTimeText = computed(() => {
+    // ... formatting logic ...
+  });
+
+  onMounted(() => {
+    calculateTimeLeft();
+    const interval = setInterval(calculateTimeLeft, 1000);
+    onUnmounted(() => clearInterval(interval));
+  });
+
+  return { timeLeft, formattedTimeText };
+};
+```
+
+3. **I18n for Multilingual Support:** Move all Romanian text to i18n translation files.
+
+4. **Consider Splitting Component:** Component is very large (1217 lines). Consider splitting into smaller sub-components (OTPCampaignCard, RegularCampaignCard, etc.).
+
+================================================================================
+[FIN PART 3 - A SE CONTINUA CU TASK 6-9 + SUMMARY ÎN PARTEA 4]
+================================================================================================================================================================
+WEB CLIENT - JIRA SUBSCRIPTIONS MODULE DOCUMENTATION - PART 4 (FINAL)
+================================================================================
+
+[CONTINUARE DIN PARTEA 3]
+
+--------------------------------------------------------------------------------
+Task 6: PersonalizedCampaignSubItem - Monthly Campaign Special Card
+--------------------------------------------------------------------------------
+
+**Locație cod sursă:**
+- `web/src/components/pages/subscriptions/PersonalizedCampaignSubItem.tsx:1-121`
+
+**Business Logic:**
+
+1. Display personalized campaign card for "1 Luna" special monthly campaign
+2. Show hardcoded benefits list with specific campaign details
+3. Display "OFERTĂ" badge for popular plans
+4. Show expiry date text ("Oferta valabilă până pe 16 iulie")
+5. Display recurring payment disclaimer
+6. Responsive grid layout with column reordering on mobile
+7. Benefits list includes:
+   - 6 LIVE sessions per month
+   - +70 practices/courses
+   - TABU conference recordings
+   - Somatic Healing Summit recordings
+   - Support group access
+   - 4th month free after 3 consecutive renewals (bold text)
+
+**Current Implementation (React + Next.js):**
+
+```typescript
+import React from "react";
+import { Card, Typography, Row, Col } from "antd/lib";
+import CustomButton from "../../global/Button/button";
+import Image from "next/image";
+import CheckIcon from "@/assets/check-mark.svg";
+
+const { Title, Text } = Typography;
+
+type PersonalizedCampaignSubCardProps = {
+  title: string;
+  price: number;
+  originalPrice?: number;
+  buttonText: string;
+  isPopular?: boolean;
+  expiryDate?: string;
+  planType: string;
+  campaignType?: boolean;
+  onSubscribe?: () => void;
+};
+
+const PersonalizedCampaignSubCard: React.FC<PersonalizedCampaignSubCardProps> = ({
+  price,
+  buttonText,
+  isPopular = true,
+  planType,
+  campaignType = false,
+  onSubscribe,
+}) => {
+  return (
+    <Card
+      className={`subscribe-card ${planType} ${isPopular ? "ispopular" : ""} ${campaignType ? "campaign-item" : ""}`}
+      variant={"outlined"}
+      style={{ height: "100%" }}
+    >
+      <Row gutter={0}>
+        <Col
+          xs={{ span: 24, order: 2 }}
+          sm={{ span: 24, order: 2 }}
+          md={{ span: 13, order: 1 }}
+          lg={{ span: 13, order: 1 }}
+          className="title"
+        >
+          <b>Lunar</b>
+        </Col>
+        <Col
+          xs={{ span: 24, order: 1 }}
+          sm={{ span: 24, order: 1 }}
+          md={{ span: 11, order: 2 }}
+          lg={{ span: 11, order: 2 }}
+          className="title-section"
+        >
+          <Title level={3} className="title">
+            {price} lei
+          </Title>
+          {isPopular && <span className="popular-badge">OFERTĂ</span>}
+        </Col>
+      </Row>
+
+      <div className="Subscribe-innerContent">
+        <ul className="benefits-list">
+          <Text className="section-title" style={{ display: "block" }}>
+            Oferta valabilă până pe 16 iulie
+          </Text>
+          <Text className="section-title">CE INCLUDE:</Text>
+          <li className="benefit-item">
+            <Image src={CheckIcon} alt="Available" width={20} height={20} />{" "}
+            <b>6 sesiuni LIVE</b> / lună
+          </li>
+          <li className="benefit-item">
+            <Image src={CheckIcon} alt="Available" width={20} height={20} />{" "}
+            Acces la <b>+70 de practici/cursuri</b> în platformă
+          </li>
+          <li className="benefit-item">
+            <Image src={CheckIcon} alt="Available" width={20} height={20} />{" "}
+            Înregistrările Conferinței <b>TABU</b>
+          </li>
+          <li className="benefit-item">
+            <Image src={CheckIcon} alt="Available" width={20} height={20} />{" "}
+            Înregistrările <b>Somatic Healing Summit</b>
+          </li>
+          <li className="benefit-item">
+            <Image src={CheckIcon} alt="Available" width={20} height={20} />{" "}
+            Acces la grupul de suport Somaway
+          </li>
+          <li className="benefit-item">
+            <Image src={CheckIcon} alt="Available" width={20} height={20} />{" "}
+            <b>
+              După primele trei reînnoiri consecutive primești a patra lună gratuită
+            </b>
+          </li>
+        </ul>
+        <div className="Subscribe-actions">
+          <CustomButton
+            size="medium"
+            type="primary"
+            className="cta-button fill-100"
+            onClick={onSubscribe}
+          >
+            {buttonText}
+          </CustomButton>
+        </div>
+        <span
+          style={{
+            fontSize: "12px",
+            fontStyle: "italic",
+            paddingTop: "5px",
+            textAlign: "center",
+          }}
+        >
+          *Abonamentul se reînnoiește automat. Îl poți opri din cont.
+        </span>
+      </div>
+    </Card>
+  );
+};
+
+export default PersonalizedCampaignSubCard;
+```
+
+**Target Implementation (Vue 3 + Nuxt 3):**
+
+```vue
+<template>
+  <ACard
+    :class="['subscribe-card', planType, { ispopular: isPopular }, { 'campaign-item': campaignType }]"
+    variant="outlined"
+    :style="{ height: '100%' }"
+  >
+    <ARow :gutter="0">
+      <ACol
+        :xs="{ span: 24, order: 2 }"
+        :sm="{ span: 24, order: 2 }"
+        :md="{ span: 13, order: 1 }"
+        :lg="{ span: 13, order: 1 }"
+        class="title"
+      >
+        <b>Lunar</b>
+      </ACol>
+      <ACol
+        :xs="{ span: 24, order: 1 }"
+        :sm="{ span: 24, order: 1 }"
+        :md="{ span: 11, order: 2 }"
+        :lg="{ span: 11, order: 2 }"
+        class="title-section"
+      >
+        <ATypographyTitle :level="3" class="title">
+          {{ price }} lei
+        </ATypographyTitle>
+        <span v-if="isPopular" class="popular-badge">OFERTĂ</span>
+      </ACol>
+    </ARow>
+
+    <div class="Subscribe-innerContent">
+      <ul class="benefits-list">
+        <ATypographyText class="section-title" style="display: block;">
+          Oferta valabilă până pe 16 iulie
+        </ATypographyText>
+        <ATypographyText class="section-title">CE INCLUDE:</ATypographyText>
+        <li class="benefit-item">
+          <img :src="CheckIcon" alt="Available" width="20" height="20" />
+          <b>6 sesiuni LIVE</b> / lună
+        </li>
+        <li class="benefit-item">
+          <img :src="CheckIcon" alt="Available" width="20" height="20" />
+          Acces la <b>+70 de practici/cursuri</b> în platformă
+        </li>
+        <li class="benefit-item">
+          <img :src="CheckIcon" alt="Available" width="20" height="20" />
+          Înregistrările Conferinței <b>TABU</b>
+        </li>
+        <li class="benefit-item">
+          <img :src="CheckIcon" alt="Available" width="20" height="20" />
+          Înregistrările <b>Somatic Healing Summit</b>
+        </li>
+        <li class="benefit-item">
+          <img :src="CheckIcon" alt="Available" width="20" height="20" />
+          Acces la grupul de suport Somaway
+        </li>
+        <li class="benefit-item">
+          <img :src="CheckIcon" alt="Available" width="20" height="20" />
+          <b>
+            După primele trei reînnoiri consecutive primești a patra lună gratuită
+          </b>
+        </li>
+      </ul>
+      <div class="Subscribe-actions">
+        <CustomButton
+          size="medium"
+          type="primary"
+          class="cta-button fill-100"
+          @click="$emit('subscribe')"
+        >
+          {{ buttonText }}
+        </CustomButton>
+      </div>
+      <span
+        style="
+          font-size: 12px;
+          font-style: italic;
+          padding-top: 5px;
+          text-align: center;
+        "
+      >
+        *Abonamentul se reînnoiește automat. Îl poți opri din cont.
+      </span>
+    </div>
+  </ACard>
+</template>
+
+<script setup lang="ts">
+import CheckIcon from '@/assets/check-mark.svg';
+import CustomButton from '@/components/global/Button/button.vue';
+
+interface Props {
+  title: string;
+  price: number;
+  originalPrice?: number;
+  buttonText: string;
+  isPopular?: boolean;
+  expiryDate?: string;
+  planType: string;
+  campaignType?: boolean;
+}
+
+withDefaults(defineProps<Props>(), {
+  originalPrice: 0,
+  isPopular: true,
+  expiryDate: '',
+  campaignType: false,
+});
+
+defineEmits<{ subscribe: [] }>();
+</script>
+
+<style scoped lang="scss">
+.subscribe-card {
+  // Add your styles here
+}
+</style>
+```
+
+**API Request/Response:**
+- No direct API calls
+- All data received through props
+
+**Dependencies:**
+
+**Current (React + Next.js):**
+- React 18.2.0
+- Ant Design (Card, Typography, Row, Col)
+- Next Image
+
+**Target (Vue 3 + Nuxt 3):**
+- Vue 3.4+
+- Ant Design Vue 4.x (ACard, ATypographyTitle, ATypographyText, ARow, ACol)
+- Native img or Nuxt Image
+
+**Authorization:**
+- Public component (no authorization)
+
+**Notes:**
+
+1. **Hardcoded Content:** All benefits text is hardcoded in Romanian. Should be moved to i18n or CMS.
+
+2. **Hardcoded Date:** "Oferta valabilă până pe 16 iulie" is hardcoded. Should use dynamic expiry date from props.
+
+3. **Unused Props:** `title`, `originalPrice`, `expiryDate` props are defined but not used in the component.
+
+4. **Campaign Type Class:** `campaign-item` class added when `campaignType` prop is true.
+
+5. **Title Hardcoded:** Title text "Lunar" is hardcoded instead of using `title` prop.
+
+**Recommendations:**
+
+1. **Use Dynamic Expiry Date:**
+```vue
+<ATypographyText class="section-title" style="display: block;">
+  Oferta valabilă până pe {{ expiryDate || '16 iulie' }}
+</ATypographyText>
+```
+
+2. **Use Title Prop:**
+```vue
+<b>{{ title || 'Lunar' }}</b>
+```
+
+3. **Extract Benefits to Data Array:**
+```typescript
+const benefits = [
+  '<b>6 sesiuni LIVE</b> / lună',
+  'Acces la <b>+70 de practici/cursuri</b> în platformă',
+  'Înregistrările Conferinței <b>TABU</b>',
+  // ... etc
+];
+```
+
+4. **I18n Support:** Move all text to translation files.
+
+--------------------------------------------------------------------------------
+Task 7: StandardSubItem - Generic Subscription Card
+--------------------------------------------------------------------------------
+
+**Locație cod sursă:**
+- `web/src/components/pages/subscriptions/StandardSubItem.tsx:1-73`
+
+**Business Logic:**
+
+1. Display generic standard subscription card
+2. Check if user has active standard subscription for this type
+3. Disable subscribe button if subscription is already active
+4. Show active subscription end date when disabled
+5. Process text with custom markup (bold/italic)
+6. Fetch active standard subscription if not in Redux state
+7. Display price with subtitle (asterisk if subtitle exists)
+8. Display description below subscribe button
+
+**Current Implementation (React + Next.js):**
+
+```typescript
+import React, { useEffect } from 'react';
+import { Card, Button, Typography } from 'antd/lib';
+import { dateFormatFront } from '../../../../config/constants';
+import dayjs from 'dayjs'
+import { getActiveStandardSubscription } from '@/services/api/api';
+import { AxiosResponse } from 'axios';
+import { useDispatch } from 'react-redux';
+import { CREATE_SUBSCRIPTION } from '@/redux/Actions/Subscription';
+import { SubscriptionEntity } from '@/@types/api';
+import { SubscriptionTypeEntity } from '@/@types/pages/subscriptions';
+
+interface StandardSubItemProps {
+  subscriptionType: SubscriptionTypeEntity;
+  subscriptions: SubscriptionEntity[];
+  processText: (text?: string) => JSX.Element;
+  onSubscribe: () => void;
+}
+const { Title, Text } = Typography;
+
+const StandardSubItem: React.FC<StandardSubItemProps> = ({
+  subscriptionType,
+  subscriptions,
+  onSubscribe,
+  processText
+}) => {
+  const dispatch = useDispatch();
+  const { title, subtitle, description, price, buttonTitle } = subscriptionType;
+
+  // Users can have only one standard subscription
+  const activeStandardSubscription: SubscriptionEntity | undefined =
+    subscriptions?.length ? subscriptions.find(
+      (sub: any) => parseInt(sub.subTypeId) === subscriptionType.id
+    ) : undefined;
+
+  const retrieveStandardSubscription = React.useCallback(() => {
+    getActiveStandardSubscription().then((res: AxiosResponse) => {
+      if (res?.data?.id) {
+        const standardSubscription = res?.data;
+
+        dispatch({
+          type: CREATE_SUBSCRIPTION,
+          items: [standardSubscription]
+        })
+      }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!activeStandardSubscription) {
+      retrieveStandardSubscription();
+    }
+  }, [activeStandardSubscription, retrieveStandardSubscription]);
+
+  return (
+    <Card className={`subscription-item standard-sub-item`}>
+      <Text className="title">{processText(title)}</Text>
+
+      <Text className="sub-section">
+        <Text className='sub-title'>{processText(subtitle)}</Text>
+        <Title level={3} className="price">{price}{subtitle && "*"} lei</Title>
+      </Text>
+
+      <Button
+        type="primary"
+        onClick={onSubscribe}
+        disabled={Boolean(activeStandardSubscription)}
+      >
+        {Boolean(activeStandardSubscription) ?
+          <strong>Activ pana la {dayjs(activeStandardSubscription?.endDate).format(dateFormatFront)}</strong> :
+          buttonTitle
+        }
+      </Button>
+      <Text className="description">{description}</Text>
+    </Card>
+  );
+};
+
+export default StandardSubItem;
+```
+
+**Target Implementation (Vue 3 + Nuxt 3):**
+
+```vue
+<template>
+  <ACard class="subscription-item standard-sub-item">
+    <div v-html="processText(title)" class="title" />
+
+    <div class="sub-section">
+      <div v-html="processText(subtitle)" class="sub-title" />
+      <ATypographyTitle :level="3" class="price">
+        {{ price }}{{ subtitle ? '*' : '' }} lei
+      </ATypographyTitle>
+    </div>
+
+    <AButton
+      type="primary"
+      :disabled="Boolean(activeStandardSubscription)"
+      @click="$emit('subscribe')"
+    >
+      <template v-if="activeStandardSubscription">
+        <strong>
+          Activ pana la {{ formatDate(activeStandardSubscription.endDate) }}
+        </strong>
+      </template>
+      <template v-else>
+        {{ buttonTitle }}
+      </template>
+    </AButton>
+    <ATypographyText class="description">{{ description }}</ATypographyText>
+  </ACard>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted } from 'vue';
+import { storeToRefs } from 'pinia';
+import dayjs from 'dayjs';
+import { useSubscriptionStore } from '@/stores/subscription';
+import { getActiveStandardSubscription } from '@/services/api/api';
+import { dateFormatFront } from '@/config/constants';
+import type { SubscriptionEntity } from '@/@types/api';
+import type { SubscriptionTypeEntity } from '@/@types/pages/subscriptions';
+
+interface Props {
+  subscriptionType: SubscriptionTypeEntity;
+  subscriptions: SubscriptionEntity[];
+  processText: (text?: string) => string;
+}
+
+const props = defineProps<Props>();
+defineEmits<{ subscribe: [] }>();
+
+const subscriptionStore = useSubscriptionStore();
+const { subscriptions: storeSubscriptions } = storeToRefs(subscriptionStore);
+
+const { title, subtitle, description, price, buttonTitle } = props.subscriptionType;
+
+// Users can have only one standard subscription
+const activeStandardSubscription = computed(() =>
+  props.subscriptions?.length
+    ? props.subscriptions.find(
+        (sub: any) => parseInt(sub.subTypeId) === props.subscriptionType.id
+      )
+    : undefined
+);
+
+const formatDate = (date: string | Date) => {
+  return dayjs(date).format(dateFormatFront);
+};
+
+// Fetch active standard subscription if not present
+const retrieveStandardSubscription = async () => {
+  try {
+    const res = await getActiveStandardSubscription();
+    if (res?.data?.id) {
+      subscriptionStore.createSubscription([res.data]);
+    }
+  } catch (error) {
+    console.error('Failed to fetch standard subscription:', error);
+  }
+};
+
+onMounted(() => {
+  if (!activeStandardSubscription.value) {
+    retrieveStandardSubscription();
+  }
+});
+</script>
+
+<style scoped lang="scss">
+.subscription-item {
+  // Add your styles here
+}
+</style>
+```
+
+**API Request/Response:**
+
+```typescript
+GET /v1/subscriptions/active/standard
+
+Response 200:
+{
+  id: 123,
+  subTypeId: 2,
+  form: 1,
+  endDate: "2025-12-31T23:59:59.000Z",
+  // ... other fields
+}
+```
+
+**Dependencies:**
+
+**Current (React + Next.js):**
+- React 18.2.0
+- Redux (useDispatch)
+- Ant Design (Card, Button, Typography)
+- dayjs
+- Axios
+
+**Target (Vue 3 + Nuxt 3):**
+- Vue 3.4+ (computed, onMounted)
+- Pinia (storeToRefs, useSubscriptionStore)
+- Ant Design Vue 4.x (ACard, AButton, ATypographyTitle, ATypographyText)
+- dayjs (same)
+- Axios (same)
+
+**Authorization:**
+- Requires authentication to fetch active subscription
+
+**Notes:**
+
+1. **Side Effect on Mount:** Automatically fetches active subscription if not in Redux state.
+
+2. **User Can Have Only One Standard Subscription:** Business rule enforced by checking if subTypeId matches.
+
+3. **Disabled State:** Button disabled when user already has active subscription.
+
+4. **Date Formatting:** Uses dayjs with `dateFormatFront` constant.
+
+5. **Text Processing:** Uses `processText` function passed from parent (v-html security concern).
+
+6. **Redux Action:** Dispatches CREATE_SUBSCRIPTION action. **Migration:** Use Pinia store action.
+
+**Recommendations:**
+
+1. **Create Pinia Store Action:**
+```typescript
+// stores/subscription.ts
+export const useSubscriptionStore = defineStore('subscription', () => {
+  const subscriptions = ref<SubscriptionEntity[]>([]);
+
+  const createSubscription = (items: SubscriptionEntity[]) => {
+    subscriptions.value.push(...items);
+  };
+
+  return { subscriptions, createSubscription };
+});
+```
+
+2. **Error Handling:** Add try-catch for API call and show user-friendly error message.
+
+3. **Loading State:** Add loading indicator while fetching subscription.
+
+--------------------------------------------------------------------------------
+Task 8: FreeSubItem - Free Tier Subscription Card
+--------------------------------------------------------------------------------
+
+**Locație cod sursă:**
+- `web/src/components/pages/subscriptions/FreeSubItem.tsx:1-82`
+
+**Business Logic:**
+
+1. Display free tier subscription card
+2. Check if user has active free subscription
+3. Create free subscription when user clicks "Accept"
+4. Disable button if subscription is already active
+5. Show "Activ" status for active free subscriptions
+6. Redirect to dashboard after successful subscription creation
+7. Process text with custom markup (bold/italic)
+8. Display subscription status and description
+
+**Current Implementation (React + Next.js):**
+
+```typescript
+import React from "react";
+import { Card, Button, Typography } from "antd/lib";
+import { PATHS, SubscriptionForms } from "../../../../config/constants";
+import { createSubscription } from "@/services/api/api";
+import { useRouter } from "next/router";
+import { useDispatch } from "react-redux";
+import { AxiosResponse } from "axios";
+import { CREATE_SUBSCRIPTION } from "@/redux/Actions/Subscription";
+import { SubscriptionEntity } from "@/@types/api";
+import { SubscriptionTypeEntity } from "@/@types/pages/subscriptions";
+
+interface FreeSubItemProps {
+  subscriptionType: SubscriptionTypeEntity;
+  subscriptions: SubscriptionEntity[];
+  processText: (text?: string) => JSX.Element;
+  onSubscribe: () => void;
+}
+const { Paragraph, Text } = Typography;
+
+const FreeSubItem: React.FC<FreeSubItemProps> = ({
+  subscriptionType,
+  subscriptions = [],
+  processText,
+}) => {
+  const router = useRouter();
+  const dispatch = useDispatch();
+  const {
+    id: subscriptionTypeId,
+    title,
+    subtitle,
+    description,
+    buttonTitle,
+  } = subscriptionType;
+
+  const activeFreeSubscription = subscriptions.find(
+    (sub: any) => parseInt(sub.form) === SubscriptionForms.FREE
+  );
+
+  const acceptFreeSubscription = async () => {
+    if (subscriptionTypeId) {
+      await createSubscription(subscriptionTypeId).then(
+        async (res: AxiosResponse) => {
+          if (res?.data?.id) {
+            const subscription = res.data;
+            dispatch({
+              type: CREATE_SUBSCRIPTION,
+              items: [subscription]
+            })
+
+            setTimeout(() => {
+              router.push(PATHS.DASHBOARD);
+            }, 500);
+          }
+        }
+      );
+    }
+  };
+
+  return (
+    <Card className={`subscription-item free-sub-item`}>
+      <Text className="title">{processText(title)}</Text>
+      <Text className="sub-title">{processText(subtitle)}</Text>
+      <Text className="description">{description}</Text>
+
+      <Paragraph className="subscription-status">
+        {Boolean(activeFreeSubscription) && <strong>Activ</strong>}
+      </Paragraph>
+
+      <Paragraph>{description}</Paragraph>
+
+      <Button
+        type="primary"
+        onClick={() => acceptFreeSubscription()}
+        disabled={Boolean(activeFreeSubscription)}
+      >
+        {Boolean(activeFreeSubscription) ? "Activ" : buttonTitle}
+      </Button>
+    </Card>
+  );
+};
+
+export default FreeSubItem;
+```
+
+**Target Implementation (Vue 3 + Nuxt 3):**
+
+```vue
+<template>
+  <ACard class="subscription-item free-sub-item">
+    <div v-html="processText(title)" class="title" />
+    <div v-html="processText(subtitle)" class="sub-title" />
+    <ATypographyText class="description">{{ description }}</ATypographyText>
+
+    <ATypographyParagraph class="subscription-status">
+      <strong v-if="activeFreeSubscription">Activ</strong>
+    </ATypographyParagraph>
+
+    <ATypographyParagraph>{{ description }}</ATypographyParagraph>
+
+    <AButton
+      type="primary"
+      :disabled="Boolean(activeFreeSubscription)"
+      @click="acceptFreeSubscription"
+    >
+      {{ activeFreeSubscription ? 'Activ' : buttonTitle }}
+    </AButton>
+  </ACard>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+import { useRouter } from 'vue-router';
+import { message } from 'ant-design-vue';
+import { useSubscriptionStore } from '@/stores/subscription';
+import { createSubscription } from '@/services/api/api';
+import { PATHS, SubscriptionForms } from '@/config/constants';
+import type { SubscriptionEntity } from '@/@types/api';
+import type { SubscriptionTypeEntity } from '@/@types/pages/subscriptions';
+
+interface Props {
+  subscriptionType: SubscriptionTypeEntity;
+  subscriptions: SubscriptionEntity[];
+  processText: (text?: string) => string;
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  subscriptions: () => [],
+});
+
+const router = useRouter();
+const subscriptionStore = useSubscriptionStore();
+
+const {
+  id: subscriptionTypeId,
+  title,
+  subtitle,
+  description,
+  buttonTitle,
+} = props.subscriptionType;
+
+const activeFreeSubscription = computed(() =>
+  props.subscriptions.find(
+    (sub: any) => parseInt(sub.form) === SubscriptionForms.FREE
+  )
+);
+
+const acceptFreeSubscription = async () => {
+  if (!subscriptionTypeId) return;
+
+  try {
+    const res = await createSubscription(subscriptionTypeId);
+    if (res?.data?.id) {
+      const subscription = res.data;
+      subscriptionStore.createSubscription([subscription]);
+
+      setTimeout(() => {
+        router.push(PATHS.DASHBOARD);
+      }, 500);
+    }
+  } catch (error) {
+    console.error('Failed to create subscription:', error);
+    message.error('Eroare la crearea abonamentului.');
+  }
+};
+</script>
+
+<style scoped lang="scss">
+.subscription-item {
+  // Add your styles here
+}
+</style>
+```
+
+**API Request/Response:**
+
+```typescript
+POST /v1/subscriptions
+Body: { subscriptionTypeId: 1 }
+
+Response 201:
+{
+  id: 456,
+  subTypeId: 1,
+  form: 0, // SubscriptionForms.FREE
+  status: "active",
+  // ... other fields
+}
+```
+
+**Dependencies:**
+
+**Current (React + Next.js):**
+- React 18.2.0
+- Redux (useDispatch)
+- Next Router (useRouter)
+- Ant Design (Card, Button, Typography)
+- Axios
+
+**Target (Vue 3 + Nuxt 3):**
+- Vue 3.4+ (computed)
+- Pinia (useSubscriptionStore)
+- Vue Router (useRouter)
+- Ant Design Vue 4.x (ACard, AButton, ATypographyText, ATypographyParagraph)
+- Axios (same)
+
+**Authorization:**
+- Requires authentication to create subscription
+
+**Notes:**
+
+1. **Duplicate Description:** Description is displayed twice (once as Text, once as Paragraph).
+
+2. **Subscription Creation:** Creates subscription via POST API call.
+
+3. **Redirect After Success:** Redirects to dashboard with 500ms delay after successful creation.
+
+4. **Form Type Check:** Uses `SubscriptionForms.FREE` enum to check if subscription is free.
+
+5. **Redux Action:** Dispatches CREATE_SUBSCRIPTION action. **Migration:** Use Pinia store action.
+
+6. **Error Handling:** No error handling in current implementation.
+
+**Recommendations:**
+
+1. **Remove Duplicate Description:** Only display description once.
+
+2. **Add Error Handling:** Show error message if subscription creation fails.
+
+3. **Add Loading State:** Disable button and show loading indicator during API call.
+
+4. **Success Message:** Show success toast before redirect.
+
+--------------------------------------------------------------------------------
+Task 9: SubscriptionEnrollment - Success Confirmation Page
+--------------------------------------------------------------------------------
+
+**Locație cod sursă:**
+- `web/src/pages/subscription-enrollment.tsx:1-103`
+
+**Business Logic:**
+
+1. Display success confirmation page after subscription enrollment
+2. Show congratulations message
+3. Inform user about upcoming email with important information
+4. Provide "Go to Dashboard" button
+5. Responsive layout with mobile/desktop styling
+6. Success card with green background (#e1f4d3)
+7. Two-column information layout
+
+**Current Implementation (React + Next.js):**
+
+```typescript
+import React from 'react';
+import { AppLayout } from '@/layouts/AppLayout';
+import { PageHelmet } from '@/components/global/PageHelmet';
+import { UserRoles } from '@/@types/enums/user-role.enum';
+import { useMediaQuery } from 'react-responsive';
+import CustomButton from '@/components/global/Button/button';
+
+const SubscriptionEnrollment: React.FC = () => {
+  const isMobile = useMediaQuery({ maxWidth: 769 });
+
+  return (
+    <AppLayout authority={UserRoles.CUSTOMER}>
+      <PageHelmet title="Ofertă Specială Eveniment" />
+
+      <div
+        className="container"
+        style={{
+          color: '#222222',
+          marginBottom: '32px',
+          paddingTop: isMobile ? '120px' : '40px',
+          paddingLeft: '30px',
+          paddingRight: '30px',
+          display: 'flex',
+          gap: '40px',
+          flexDirection: 'column',
+          alignItems: 'center',
+        }}
+      >
+        <div
+          style={{
+            backgroundColor: '#e1f4d3',
+            width: isMobile ? '100%' : '628px',
+            borderRadius: '16px',
+            padding: isMobile ? '24px 20px' : '32px 24px',
+            display: 'flex',
+            gap: '16px',
+            flexDirection: 'column',
+            alignItems: 'center',
+          }}
+        >
+          <span
+            style={{
+              color: '#263f1b',
+              fontSize: isMobile ? '24px' : '32px',
+              fontWeight: 700,
+            }}
+          >
+            Felicitări!
+          </span>
+          <span
+            style={{
+              fontSize: isMobile ? '14px' : '16px',
+              textAlign: 'center',
+            }}
+          >
+            Tocmai ai făcut un pas important spre starea ta de bine!
+          </span>
+          <span
+            style={{
+              fontSize: isMobile ? '14px' : '16px',
+              textAlign: 'center',
+            }}
+          >
+            Înscrierea este finalizată cu succes!
+          </span>
+        </div>
+        <div
+          style={{
+            width: isMobile ? '100%' : '628px',
+            display: 'flex',
+            gap: '24px',
+            flexDirection: 'column',
+            alignItems: 'center',
+          }}
+        >
+          <span
+            style={{
+              fontSize: isMobile ? '14px' : '16px',
+              textAlign: 'center',
+            }}
+          >
+            Urmează să primeșți un e-mail cu informații foarte importante despre
+            Somatic Reset și te rugăm să îl parcurgi cu atenție ca să nu ratezi
+            ceea ce ți-am pregătit!
+          </span>
+          <span
+            style={{
+              fontSize: isMobile ? '14px' : '16px',
+              textAlign: 'center',
+            }}
+          >
+            Pregătește-te să descoperi informații, tehnici și exerciții care vor
+            aduce o stare de bine și liniște profundă în interiorul tău!
+          </span>
+        </div>
+        <CustomButton href="/dashboard">Mergi către Dashboard</CustomButton>
+      </div>
+    </AppLayout>
+  );
+};
+
+export default SubscriptionEnrollment;
+```
+
+**Target Implementation (Vue 3 + Nuxt 3):**
+
+```vue
+<template>
+  <AppLayout :authority="UserRoles.CUSTOMER">
+    <PageHelmet title="Ofertă Specială Eveniment" />
+
+    <div
+      class="container"
+      :style="{
+        color: '#222222',
+        marginBottom: '32px',
+        paddingTop: isMobile ? '120px' : '40px',
+        paddingLeft: '30px',
+        paddingRight: '30px',
+        display: 'flex',
+        gap: '40px',
+        flexDirection: 'column',
+        alignItems: 'center',
+      }"
+    >
+      <!-- Success Card -->
+      <div
+        :style="{
+          backgroundColor: '#e1f4d3',
+          width: isMobile ? '100%' : '628px',
+          borderRadius: '16px',
+          padding: isMobile ? '24px 20px' : '32px 24px',
+          display: 'flex',
+          gap: '16px',
+          flexDirection: 'column',
+          alignItems: 'center',
+        }"
+      >
+        <span
+          :style="{
+            color: '#263f1b',
+            fontSize: isMobile ? '24px' : '32px',
+            fontWeight: 700,
+          }"
+        >
+          Felicitări!
+        </span>
+        <span
+          :style="{
+            fontSize: isMobile ? '14px' : '16px',
+            textAlign: 'center',
+          }"
+        >
+          Tocmai ai făcut un pas important spre starea ta de bine!
+        </span>
+        <span
+          :style="{
+            fontSize: isMobile ? '14px' : '16px',
+            textAlign: 'center',
+          }"
+        >
+          Înscrierea este finalizată cu succes!
+        </span>
+      </div>
+
+      <!-- Information Section -->
+      <div
+        :style="{
+          width: isMobile ? '100%' : '628px',
+          display: 'flex',
+          gap: '24px',
+          flexDirection: 'column',
+          alignItems: 'center',
+        }"
+      >
+        <span
+          :style="{
+            fontSize: isMobile ? '14px' : '16px',
+            textAlign: 'center',
+          }"
+        >
+          Urmează să primeșți un e-mail cu informații foarte importante despre
+          Somatic Reset și te rugăm să îl parcurgi cu atenție ca să nu ratezi
+          ceea ce ți-am pregătit!
+        </span>
+        <span
+          :style="{
+            fontSize: isMobile ? '14px' : '16px',
+            textAlign: 'center',
+          }"
+        >
+          Pregătește-te să descoperi informații, tehnici și exerciții care vor
+          aduce o stare de bine și liniște profundă în interiorul tău!
+        </span>
+      </div>
+
+      <!-- CTA Button -->
+      <CustomButton href="/dashboard">Mergi către Dashboard</CustomButton>
+    </div>
+  </AppLayout>
+</template>
+
+<script setup lang="ts">
+import { useBreakpoints } from '@vueuse/core';
+import { UserRoles } from '@/@types/enums/user-role.enum';
+import AppLayout from '@/layouts/AppLayout.vue';
+import PageHelmet from '@/components/global/PageHelmet.vue';
+import CustomButton from '@/components/global/Button/button.vue';
+
+const breakpoints = useBreakpoints({ mobile: 769 });
+const isMobile = breakpoints.smaller('mobile');
+</script>
+```
+
+**API Request/Response:**
+- No direct API calls
+- Static success confirmation page
+
+**Dependencies:**
+
+**Current (React + Next.js):**
+- React 18.2.0
+- react-responsive (useMediaQuery)
+- Custom components (AppLayout, PageHelmet, CustomButton)
+
+**Target (Vue 3 + Nuxt 3):**
+- Vue 3.4+
+- @vueuse/core (useBreakpoints)
+- Same custom components (ported to Vue)
+
+**Authorization:**
+- Requires authentication (UserRoles.CUSTOMER)
+
+**Notes:**
+
+1. **Static Content:** All text is hardcoded in Romanian.
+
+2. **Inline Styles:** All styling is done with inline styles instead of CSS classes.
+
+3. **Responsive Breakpoint:** Uses 769px breakpoint for mobile detection.
+
+4. **Success Card:** Green background (#e1f4d3) with dark green text (#263f1b).
+
+5. **Dashboard Redirect:** Button redirects to /dashboard route.
+
+**Recommendations:**
+
+1. **Extract Styles to CSS:**
+```scss
+.enrollment-success-container {
+  color: #222222;
+  margin-bottom: 32px;
+  padding: 40px 30px;
+  display: flex;
+  gap: 40px;
+  flex-direction: column;
+  align-items: center;
+
+  @media (max-width: 769px) {
+    padding-top: 120px;
+  }
+}
+
+.success-card {
+  background-color: #e1f4d3;
+  width: 628px;
+  border-radius: 16px;
+  padding: 32px 24px;
+  // ... etc
+}
+```
+
+2. **I18n for Text:** Move all Romanian text to translation files.
+
+3. **Dynamic Content:** Consider passing subscription details (plan name, price) as URL params or from store to personalize the message.
+
+4. **Analytics Tracking:** Add conversion tracking event for successful enrollment.
+
+================================================================================
+SUMMARY: SUBSCRIPTIONS MODULE MIGRATION
+================================================================================
+
+**Module Overview:**
+The Subscriptions Module manages the display and selection of subscription plans, including standard plans (annual, 3-month, 1-month), campaign plans with timer/counter functionality, and free tier subscriptions.
+
+**Total Tasks Documented:** 9 tasks
+1. Subscriptions Page (abonamente.tsx) - Landing page with LP mode
+2. SubscriptionsContainer - Main orchestrator with dual data sources
+3. SubscriptionItems - Router component for different form types
+4. PersonalizedStandardSubItem - Custom card for annual/3-month/1-month
+5. CampaignSubItem - Campaign card with countdown timer and counter
+6. PersonalizedCampaignSubItem - Monthly campaign special card
+7. StandardSubItem - Generic subscription card with active check
+8. FreeSubItem - Free tier subscription card
+9. SubscriptionEnrollment - Success confirmation page
+
+**Key Features:**
+
+1. **Dual Data Sources:**
+   - Standard subscription types from `/v1/subscription-types/active`
+   - Campaign subscriptions from `/v1/campaigns` (authenticated users only)
+
+2. **Special Subscription Handling:**
+   - Hardcoded IDs: 2 (1-month), 14 (annual), 15 (3-month), 16 (campaign)
+   - Custom rendering for special plans with PersonalizedStandardSubItem
+   - OTP subscription IDs: 50, 51, 52 (special event packages)
+
+3. **Campaign Functionality:**
+   - Countdown timer (days, hours, minutes, seconds)
+   - Acquisition counter (remaining slots)
+   - Submit button disabled when maxAcquisitions === 0
+   - Expandable benefits sections
+
+4. **Selection Flow:**
+   - Authenticated: redirect to `/subscription/{id}` checkout
+   - Non-authenticated: save selection in Redux/Pinia → redirect to signup
+   - Facebook Pixel tracking: addToCart event on selection
+
+5. **Text Processing:**
+   - Custom markup: `**bold**`, `~italic~`
+   - Regex replacement to HTML tags
+   - XSS risk with dangerouslySetInnerHTML / v-html
+
+6. **Responsive Design:**
+   - Mobile breakpoint: 769px
+   - Column reordering on mobile
+   - Height adjustments for mobile vs desktop
+
+**Technical Patterns:**
+
+**React → Vue Migration Patterns:**
+- `useState` → `ref()`
+- `useEffect` → `onMounted()`, `watch()`, `onUnmounted()`
+- `useSelector` → `storeToRefs(useSubscriptionStore())`
+- `useDispatch` → Pinia store actions
+- `useMediaQuery` → `useBreakpoints` from @vueuse/core
+- `dangerouslySetInnerHTML` → `v-html` (same XSS risk)
+- `setInterval` cleanup in useEffect → `onUnmounted(() => clearInterval())`
+- Redux actions → Pinia store methods
+
+**Security Issues Identified:**
+
+1. **XSS Risk:** `dangerouslySetInnerHTML` / `v-html` used without sanitization
+   - **Solution:** Use DOMPurify library to sanitize HTML before rendering
+
+2. **Hardcoded Subscription IDs:** IDs 2, 14, 15, 16 hardcoded in multiple places
+   - **Solution:** Move to config file or environment variables
+
+3. **DOM Manipulation:** `document.getElementById().remove()` not Vue-friendly
+   - **Solution:** Use `v-if` with reactive state instead
+
+**API Endpoints:**
+
+1. `GET /v1/subscription-types/active` - Fetch active subscription types
+2. `GET /v1/campaigns` - Fetch campaigns (authenticated users)
+3. `GET /v1/subscriptions/active/standard` - Fetch active standard subscription
+4. `POST /v1/subscriptions` - Create free subscription
+
+**Dependencies:**
+
+**Current (React + Next.js):**
+- React 18.2.0
+- Redux Toolkit (useSelector, useDispatch)
+- Next Router (useRouter)
+- react-responsive (useMediaQuery)
+- Ant Design 5.24.2
+- Next Image
+- dayjs
+- uuid (v4)
+- Axios
+- Facebook Pixel library
+
+**Target (Vue 3 + Nuxt 3):**
+- Vue 3.4+ (ref, computed, onMounted, onUnmounted, h)
+- Pinia (storeToRefs, stores)
+- Vue Router 4.x (useRouter)
+- @vueuse/core (useBreakpoints)
+- Ant Design Vue 4.x
+- Nuxt Image (or native img)
+- dayjs (same)
+- Axios (same)
+- Facebook Pixel plugin (Nuxt plugin)
+
+**Recommendations for Migration:**
+
+1. **Security:**
+   - Install and use DOMPurify for HTML sanitization
+   - Replace DOM manipulation with Vue reactive patterns
+   - Validate all user input before rendering
+
+2. **Architecture:**
+   - Create Pinia stores for user and subscription management
+   - Create composables for text formatting, countdown timer
+   - Create Nuxt plugin for Facebook Pixel (client-side only)
+   - Move hardcoded IDs to config file
+
+3. **Data Management:**
+   - Create benefits composable for loading JSON data
+   - Create countdown timer composable for reusability
+   - Use TypeScript interfaces for all data types
+
+4. **Internationalization:**
+   - Move all Romanian text to i18n translation files
+   - Support multiple languages if needed in future
+
+5. **Performance:**
+   - Use Nuxt Image for optimized image loading
+   - Implement code splitting for large components (CampaignSubItem)
+   - Use computed values for expensive calculations
+
+6. **Code Quality:**
+   - Extract inline styles to CSS modules
+   - Split large components into smaller sub-components
+   - Add error handling for all API calls
+   - Add loading states for async operations
+
+**Migration Priority:** HIGH
+- Core functionality for revenue generation
+- Complex state management with dual data sources
+- Multiple component dependencies
+- Campaign timer functionality critical for marketing
+
+**Estimated Migration Time:** 5-7 days
+- Day 1: Create Pinia stores, composables, and plugins
+- Day 2: Migrate SubscriptionsContainer and SubscriptionItems
+- Day 3: Migrate PersonalizedStandardSubItem and StandardSubItem
+- Day 4: Migrate CampaignSubItem (complex component)
+- Day 5: Migrate PersonalizedCampaignSubItem, FreeSubItem, and SubscriptionEnrollment
+- Day 6-7: Testing, bug fixes, and security hardening
+
+**Files to Create:**
+
+1. `pages/abonamente.vue` - Main subscriptions page
+2. `pages/subscription-enrollment.vue` - Success confirmation page
+3. `components/pages/subscriptions/SubscriptionsContainer.vue`
+4. `components/pages/subscriptions/SubscriptionItems.vue`
+5. `components/pages/subscriptions/PersonalizedStandardSubItem.vue`
+6. `components/pages/subscriptions/CampaignSubItem.vue`
+7. `components/pages/subscriptions/PersonalizedCampaignSubItem.vue`
+8. `components/pages/subscriptions/StandardSubItem.vue`
+9. `components/pages/subscriptions/FreeSubItem.vue`
+10. `stores/subscription.ts` - Pinia store
+11. `stores/user.ts` - Pinia store
+12. `composables/useTextFormatting.ts` - Text processing composable
+13. `composables/useCountdownTimer.ts` - Timer composable
+14. `plugins/facebook-pixel.client.ts` - FB Pixel plugin
+15. `config/subscription-constants.ts` - Hardcoded IDs config
+
+**Status:** ✅ DOCUMENTATION COMPLETE
+
+================================================================================
+END OF SUBSCRIPTIONS MODULE DOCUMENTATION
+================================================================================

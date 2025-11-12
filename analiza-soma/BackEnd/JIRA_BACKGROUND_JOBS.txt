@@ -1,0 +1,499 @@
+================================================================================
+JIRA STORY: BACKGROUND JOBS (SCHEDULED CRON JOBS)
+================================================================================
+
+Story Title: Background Jobs & Scheduled Tasks
+
+Story Type: Story (Infrastructure - Scheduled Tasks)
+
+Epic: Somaway Backend Migration to .NET
+
+Story Description:
+------------------
+Acest story documentează toate background jobs și scheduled tasks folosite
+pentru automatizarea proceselor critice: generare facturi, plăți recurente,
+notificări renewal, și operații batch.
+
+Background jobs folosesc @nestjs/schedule cu cron expressions pentru scheduling.
+
+Scheduled Jobs: 5 total
+- **Active**: 2 jobs (SmartBill invoices, Recurring payments)
+- **Disabled/Commented**: 3 jobs (Renewal notifications, Bulk enroll, Expire subscriptions)
+
+Locație cod sursă:
+- SmartBill Invoice Processing: src/v1/Subscription/Service/invoice.service.ts:55-71
+- Recurring Payments: src/modules/orders/services/order-payment.service.ts:118-141
+- Renewal Notifications: src/modules/orders/services/order-payment.service.ts:243-263
+- Bulk Enroll: src/v1/Subscription/Service/subscription.service.ts:134-149
+- Expire Subscriptions: src/v1/Subscription/Service/subscription.service.ts:364-379
+
+Dependencies:
+- @nestjs/schedule (cron scheduler)
+- Timezone: Europe/Bucharest (EET/EEST)
+
+Monitoring Requirements:
+- Log execution start/end with duration
+- Count processed items (success/failed)
+- Alert on job failures
+- Track job execution history
+
+================================================================================
+ACTIVE JOB 1: SMARTBILL INVOICE PROCESSING
+================================================================================
+
+**Status**: ✅ ACTIVE
+
+**Schedule**: @Cron(CronExpression.EVERY_30_MINUTES)
+
+**Timezone**: Europe/Bucharest
+
+**Business Purpose**:
+Procesează batch-uri de facturi pending pentru generare automată în SmartBill.
+Evită overwhelm-ul API-ului SmartBill prin procesare graduală (batch 50, delay 500ms).
+
+**Detailed Documentation**: See JIRA_SMARTBILL_SERVICE.txt
+
+**Summary**:
+1. Query SmartbillInvoiceEntity where status = PENDING (limit 50)
+2. For each invoice:
+   - Get billing address
+   - Get customer details
+   - Call SmartBillService.createInvoice()
+   - If success: update status to GENERATED, save invoiceNumber
+   - If error: log and continue (retry next run)
+   - Wait 500ms before next
+3. Repeat every 30 minutes
+
+**Execution Statistics**:
+- Batch size: 50 invoices
+- Delay between invoices: 500ms
+- Max throughput: 100 invoices/hour
+- Run frequency: 48 runs/day
+
+**Dependencies**:
+- SmartBillService.createInvoice()
+- AddressesRepository.getAddress()
+- UserService.getUserById()
+- InvoicesRepository.createInvoice()
+
+**Error Handling**:
+- Continues on error (doesn't stop batch)
+- Failed invoices remain PENDING for next run
+- No retry limit (infinite retries every 30min)
+
+**Recommendations for .NET**:
+- Use Hangfire RecurringJob
+- Add max retry count (e.g., 3 attempts → mark FAILED)
+- Add dead letter queue for permanently failed invoices
+- Add admin notification for stuck invoices
+- Monitor job duration and success rate
+- Consider parallel processing (with rate limiting)
+
+================================================================================
+ACTIVE JOB 2: PROCESS RECURRING PAYMENTS
+================================================================================
+
+**Status**: ✅ ACTIVE
+
+**Schedule**: @Cron('15 08 * * *') → Daily at 8:15 AM
+
+**Timezone**: Europe/Bucharest
+
+**Business Purpose**:
+Procesează plățile recurente zilnice pentru subscriptions Librapay. Identifică
+subscriptions care necesită plată și inițiază procesul de billing automat.
+
+**Execution Flow**:
+1. Log job start: "Starting scheduled recurring payments processing"
+2. Query subscriptions due for payment (legacyService.getSubscriptionsDueForPayment())
+3. Log found count: "Found X subscriptions due for payment"
+4. For each subscription:
+   - Process recurring payment (processRecurringPaymentForSubscription)
+   - Collect result (success/failure)
+5. Aggregate results:
+   - Count successful payments
+   - Count failed payments
+   - Log errors for failed payments
+6. Log summary: "X successful, Y failed out of Z total"
+
+**Cod sursă**:
+- Service: src/modules/orders/services/order-payment.service.ts:118-141
+- Method: processScheduledRecurringPayments()
+
+**Dependencies**:
+- LegacyService.getSubscriptionsDueForPayment()
+- processRecurringPaymentForSubscription(subscription)
+  - OrderService (create new order)
+  - LibrapayService.processRecurringPayment()
+  - InvoiceService.createOrderInvoice()
+
+**Selection Criteria** (getSubscriptionsDueForPayment):
+- Subscription status: ACTIVE
+- Payment gateway: LIBRAPAY (recurring enabled)
+- Next billing date: <= today
+- Has valid payment method on file
+
+**Processing Steps** (processRecurringPaymentForSubscription):
+1. Create new Order entity (OrderType: SUBSCRIPTION_RENEWAL)
+2. Call LibrapayService.processRecurringPayment()
+   - TRTYPE = '171' (recurring payment transaction)
+   - POST to Librapay gateway
+3. If payment succeeds:
+   - Update order status to COMPLETED
+   - Create Order Payment record
+   - Generate SmartBill invoice
+   - Update subscription next_billing_date (+ 1 month)
+   - Send payment confirmation email
+4. If payment fails:
+   - Update order status to FAILED
+   - Log error with details
+   - Send payment failed notification email
+   - Mark subscription as PAYMENT_FAILED (after X failed attempts)
+
+**Error Handling**:
+- Uses Promise.allSettled (continues even if some payments fail)
+- Logs each error individually
+- Tracks success/failure counts
+- Doesn't throw exception (job completes even with failures)
+
+**Execution Statistics**:
+- Run time: 8:15 AM Bucharest time
+- Frequency: Once per day
+- Expected volume: ~10-50 subscriptions/day (varies)
+- Average execution time: 2-5 seconds per subscription
+
+**Recommendations for .NET**:
+- Use Hangfire RecurringJob with Europe/Bucharest timezone
+- Add retry logic for transient failures (Polly)
+- Send daily summary email to admin (payment report)
+- Add monitoring alerts for:
+  - Job execution failures
+  - High failure rate (>20%)
+  - Payment gateway downtime
+- Consider scheduling at night (lower risk of user-facing issues)
+- Add circuit breaker for payment gateway failures
+- Store failed payment attempts in database for analysis
+- Add automatic retry for failed payments (e.g., retry in 3 days)
+
+================================================================================
+DISABLED JOB 3: SUBSCRIPTION RENEWAL NOTIFICATIONS
+================================================================================
+
+**Status**: ⬜ DISABLED (commented out)
+
+**Schedule** (when enabled): @Cron(CronExpression.EVERY_30_SECONDS)
+
+**Timezone**: Europe/Bucharest
+
+**Business Purpose**:
+Trimite email notifications către utilizatori cu subscriptions care expiră mâine,
+pentru a-i încuraja să reînnoiască.
+
+**Why Disabled**:
+- Schedule too aggressive (EVERY_30_SECONDS likely for testing)
+- Not mentioned in production requirements
+- Possible replaced by MailerLite automated campaigns
+
+**Execution Flow** (when enabled):
+1. Log: "Starting subscription renewal notification job..."
+2. Query subscriptions ending tomorrow (legacyService.getSubscriptionsEndingTomorrow())
+3. Log: "Found X subscriptions ending tomorrow"
+4. For each subscription (parallel with Promise.allSettled):
+   - Send renewal reminder email (sendRenewalReminderEmail)
+   - Email contains: subscription details, renewal link, expiration date
+5. Aggregate results:
+   - Count successful emails
+   - Count failed emails
+   - Log errors
+6. Log summary: "X successful, Y failed out of Z total"
+
+**Cod sursă**:
+- Service: src/modules/orders/services/order-payment.service.ts:243-263
+- Method: sendSubscriptionRenewalNotifications()
+
+**Dependencies**:
+- LegacyService.getSubscriptionsEndingTomorrow()
+- sendRenewalReminderEmail(subscription)
+  - MailerService.sendMail()
+  - Template: subscription-renewal-reminder.hbs (assumed)
+
+**Selection Criteria** (getSubscriptionsEndingTomorrow):
+- Subscription.endDate = tomorrow (date comparison)
+- Subscription.status = ACTIVE or PAYMENT_ACCEPTED
+- User.emailNotifications = true (opt-in)
+
+**Email Content** (sendRenewalReminderEmail):
+- Subject: "Your Somaway subscription expires tomorrow"
+- Body: Personalized with subscription details
+- CTA: "Renew Now" button → subscription renewal page
+- Footer: Unsubscribe link
+
+**Recommendations for .NET**:
+- **Decision**: Enable or Permanently Remove?
+  - If enable: change schedule to once daily (e.g., 9 AM)
+  - If remove: use MailerLite automated campaigns instead
+- Use Hangfire RecurringJob with proper schedule
+- Add user preference check (opt-in for renewal emails)
+- Track email delivery status
+- Add A/B testing for email subject lines
+- Send 3 days before expiration (not 1 day)
+- Add "Auto-renew" option to avoid manual renewal
+
+================================================================================
+DISABLED JOB 4: BULK ENROLL IN SUMMIT
+================================================================================
+
+**Status**: ⬜ DISABLED (commented out)
+
+**Schedule** (when enabled): @Cron(CronExpression.EVERY_DAY_AT_7AM)
+
+**Timezone**: Not specified (default)
+
+**Business Purpose**:
+Bulk enrollment pentru utilizatori în "Summit" (special event subscription type ID 28).
+Probabil one-time operation sau seasonal event enrollment.
+
+**Why Disabled**:
+- Likely one-time operation (completed)
+- Or seasonal event enrollment (not currently running)
+- Subscription type 28 might be deprecated
+
+**Execution Flow** (when enabled):
+1. Set subscriptionTypeId = 28 (Summit event)
+2. Query users without subscriptions (getUsersWithoutSubscriptions())
+3. Log: "Bulk SHS enrollment started."
+4. For each user:
+   - Log: "Starting enrollment for {userId}"
+   - Create internal subscription (createInternalSubscription)
+     - User gets free access to Summit event
+     - Subscription status: PAYMENT_ACCEPTED (auto-activated)
+   - Log success/error
+5. Log completion: "Bulk SHS enrollment completed."
+
+**Cod sursă**:
+- Service: src/v1/Subscription/Service/subscription.service.ts:134-149
+- Method: bulkEnrollInSummit()
+
+**Dependencies**:
+- SubscriptionsRepository.getUsersWithoutSubscriptions()
+- createInternalSubscription(user, subscriptionTypeId)
+
+**Selection Criteria** (getUsersWithoutSubscriptions):
+- Users with NO active subscriptions
+- User.status = ACTIVE
+- User.emailVerified = true (assumed)
+
+**Recommendations for .NET**:
+- **Decision**: Permanently Remove (one-time operation)
+- If needed again: create admin endpoint instead of cron job
+  - POST /admin/bulk-enroll
+  - Requires ADMIN authentication
+  - Accepts subscription type ID as parameter
+  - Returns batch processing results
+- Consider replacing with:
+  - Manual admin UI for bulk operations
+  - One-time migration script (not recurring job)
+
+================================================================================
+DISABLED JOB 5: EXPIRE SUBSCRIPTIONS
+================================================================================
+
+**Status**: ⬜ DISABLED (commented out)
+
+**Schedule** (when enabled): Configurable via config (scheduler.expireSubscriptions)
+
+**Timezone**: Not specified (default)
+
+**Business Purpose**:
+Marchează subscriptions ca EXPIRED după ce endDate a trecut. Cleanup job pentru
+a menține consistența status-urilor.
+
+**Why Disabled**:
+- Possibly handled by application logic instead (check on user access)
+- Or replaced by database constraint/trigger
+- Or not needed if status checked dynamically
+
+**Execution Flow** (when enabled):
+1. Query expired subscriptions (getExpiredSubscriptions())
+   - WHERE endDate < NOW()
+   - AND status != EXPIRED
+2. For each subscription:
+   - Set status = EXPIRED
+   - Save to database
+3. Log count: "Expired X subscriptions"
+
+**Cod sursă**:
+- Service: src/v1/Subscription/Service/subscription.service.ts:364-379
+- Method: expireSubscriptionCronjob()
+
+**Dependencies**:
+- SubscriptionsRepository.getExpiredSubscriptions()
+
+**Selection Criteria** (getExpiredSubscriptions):
+- Subscription.endDate < NOW()
+- Subscription.status IN (ACTIVE, PAYMENT_ACCEPTED)
+
+**Side Effects**:
+- User loses access to content
+- Should trigger access revocation
+- Should send "Subscription Expired" email notification
+
+**Recommendations for .NET**:
+- **Decision**: Re-enable with improvements
+- Use Hangfire RecurringJob (daily at 2 AM)
+- Add side effects:
+  - Revoke user access (update User.hasActiveSubscription flag)
+  - Send "Subscription Expired" email with renewal CTA
+  - Log expiration event for analytics
+- Consider grace period (e.g., expire 7 days after endDate)
+- Add metrics tracking (expired subscriptions per day)
+
+================================================================================
+MIGRATION STRATEGY: BACKGROUND JOBS
+================================================================================
+
+**Technology Stack**:
+- Current: @nestjs/schedule (cron-based)
+- Target .NET: Hangfire (recurring jobs + background tasks)
+
+**Hangfire Advantages**:
+- Built-in dashboard for monitoring
+- Automatic retry with exponential backoff
+- Job persistence (survives server restarts)
+- Distributed job processing (multiple servers)
+- Cron expressions + fluent API
+
+**Migration Steps**:
+
+1. **Install Hangfire**:
+```csharp
+dotnet add package Hangfire.AspNetCore
+dotnet add package Hangfire.PostgreSql
+```
+
+2. **Configure Hangfire**:
+```csharp
+services.AddHangfire(config => config
+    .UsePostgreSqlStorage(connectionString)
+    .UseRecommendedSerializerSettings());
+
+services.AddHangfireServer(options => {
+    options.Queues = new[] { "critical", "default", "low" };
+    options.WorkerCount = 5;
+    options.ServerName = "somaway-bg-worker";
+});
+```
+
+3. **Create Job Services**:
+```csharp
+public class SmartBillInvoiceJob
+{
+    public async Task ProcessPendingInvoices()
+    {
+        // Implementation from JIRA_SMARTBILL_SERVICE.txt
+    }
+}
+
+public class RecurringPaymentJob
+{
+    public async Task ProcessScheduledPayments()
+    {
+        // Implementation from this document
+    }
+}
+```
+
+4. **Schedule Jobs**:
+```csharp
+// SmartBill invoices every 30 minutes
+RecurringJob.AddOrUpdate<SmartBillInvoiceJob>(
+    "smartbill-invoice-processing",
+    job => job.ProcessPendingInvoices(),
+    "*/30 * * * *",
+    new RecurringJobOptions {
+        TimeZone = TimeZoneInfo.FindSystemTimeZoneById("E. Europe Standard Time")
+    });
+
+// Recurring payments daily at 8:15 AM
+RecurringJob.AddOrUpdate<RecurringPaymentJob>(
+    "recurring-payment-processing",
+    job => job.ProcessScheduledPayments(),
+    "15 8 * * *",
+    new RecurringJobOptions {
+        TimeZone = TimeZoneInfo.FindSystemTimeZoneById("E. Europe Standard Time")
+    });
+
+// Expire subscriptions daily at 2 AM (re-enabled)
+RecurringJob.AddOrUpdate<SubscriptionExpirationJob>(
+    "subscription-expiration",
+    job => job.ExpireSubscriptions(),
+    "0 2 * * *",
+    new RecurringJobOptions {
+        TimeZone = TimeZoneInfo.FindSystemTimeZoneById("E. Europe Standard Time")
+    });
+```
+
+5. **Add Monitoring**:
+```csharp
+// Hangfire Dashboard
+app.UseHangfireDashboard("/admin/jobs", new DashboardOptions {
+    Authorization = new[] { new HangfireAuthorizationFilter() }
+});
+
+// Custom metrics
+public class JobMetrics
+{
+    public void TrackJobExecution(string jobName, TimeSpan duration, bool success)
+    {
+        // Log to Application Insights or custom metrics service
+    }
+}
+```
+
+6. **Error Handling**:
+```csharp
+GlobalJobFilters.Filters.Add(new AutomaticRetryAttribute {
+    Attempts = 3,
+    DelaysInSeconds = new[] { 60, 300, 900 } // 1min, 5min, 15min
+});
+```
+
+**Job Priority Queue Strategy**:
+- **Critical**: Recurring payments, invoice generation
+- **Default**: Email notifications, cleanup tasks
+- **Low**: Analytics aggregation, report generation
+
+**Monitoring Checklist**:
+- [ ] Hangfire Dashboard accessible to admins
+- [ ] Application Insights tracking for all jobs
+- [ ] Alert on job failures (>3 consecutive failures)
+- [ ] Daily job execution report
+- [ ] Metrics: job duration, success rate, throughput
+- [ ] Dead letter queue for permanently failed jobs
+
+================================================================================
+END OF BACKGROUND JOBS DOCUMENTATION
+================================================================================
+
+Summary:
+- Total Jobs: 5 (2 active, 3 disabled)
+- Active Jobs:
+  1. SmartBill Invoice Processing (every 30min)
+  2. Recurring Payments Processing (daily 8:15 AM)
+- Disabled Jobs:
+  3. Subscription Renewal Notifications (commented out)
+  4. Bulk Enroll in Summit (commented out)
+  5. Expire Subscriptions (commented out)
+
+Recommendations:
+- Re-enable: Expire Subscriptions (with improvements)
+- Evaluate: Renewal Notifications (vs MailerLite campaigns)
+- Remove: Bulk Enroll in Summit (one-time operation)
+
+.NET Stack:
+- Hangfire for job scheduling
+- Polly for retry logic
+- Application Insights for monitoring
+- PostgreSQL for job persistence
+
+Ready for JIRA import! 🎯

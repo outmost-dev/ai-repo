@@ -1,0 +1,840 @@
+================================================================================
+JIRA STORY: DATABASE ENTITIES & SCHEMA
+================================================================================
+
+Story Title: Database Entities & Entity Relationships
+
+Story Type: Story (Database Layer - Entity Framework Core Migration)
+
+Epic: Somaway Backend Migration to .NET
+
+Story Description:
+------------------
+Acest story documentează schema completă a bazei de date cu toate entities,
+relationships, și constraints pentru migrarea la Entity Framework Core 8.0.
+
+Database: PostgreSQL 17
+Current ORM: TypeORM 0.3
+Target ORM: Entity Framework Core 8.0
+
+Total Entities: 18 (from shared/Entities)
+Additional Entities: ~5 (from modules/)
+
+Locație cod sursă: server/src/shared/Entities/
+
+Key Patterns:
+- PrimaryGeneratedColumn() → auto-increment integer IDs
+- CreateDateColumn() / UpdateDateColumn() → automatic timestamps
+- ManyToOne / OneToMany / OneToOne → relationships
+- Index decorators → database indexes
+- Enum columns → PostgreSQL enums
+- Cascade deletions → onDelete: 'CASCADE'
+
+================================================================================
+CORE ENTITIES
+================================================================================
+
+--------------------------------------------------------------------------------
+ENTITY 1: Users
+--------------------------------------------------------------------------------
+
+**Table Name**: Users
+
+**Primary Key**: id (auto-increment integer)
+
+**Key Fields**:
+- fullName: varchar(50) - User's full name
+- email: varchar(80) UNIQUE - User email (login)
+- password: varchar - Argon2 hashed password (select: false)
+- phone: varchar(20) UNIQUE NULLABLE - Phone number
+- status: float - Has subscription status (0 = inactive, 1 = active)
+- stripeAccount: varchar(155) NULLABLE - Stripe Connect account ID
+- stripeCustomer: varchar(155) NULLABLE - Stripe customer ID
+- role: enum(UserRoles) - ADMIN, CLIENT, CREATOR, USER
+- gender: enum(UserGenders) NULLABLE - MALE, FEMALE, OTHER
+- birthdate: date NULLABLE - Date of birth
+- isActive: boolean - Account active flag
+- hasActiveSub: boolean - Has active subscription flag
+- firstPromoterTid: varchar NULLABLE - FirstPromoter tracking ID
+- recoveryKey: varchar NULLABLE - Password recovery token (select: false)
+- profileImage: varchar NULLABLE - Profile image URL
+- createdAt: timestamp - Account creation date
+- updatedAt: timestamp - Last update date
+
+**Relationships**:
+- OneToMany: Subscriptions (user.subscriptions)
+- OneToOne: AddressesEntity (user.address)
+- OneToMany: InvoicesEntity (user.invoices)
+- OneToMany: AnalyticsTimeEntity (user.analyticsTime)
+- OneToMany: AnalyticsEntity (user.analytics)
+- OneToMany: CampaignsEntity (user.campaigns)
+
+**Hooks**:
+- @BeforeInsert: hash password with Argon2
+
+**Indexes**:
+- email (unique)
+- phone (unique)
+
+**Business Purpose**:
+Core user authentication and profile management. Links to Stripe for payments,
+FirstPromoter for affiliate tracking, and all user-related activities.
+
+**EF Core Notes**:
+- Password and recoveryKey should be excluded from default queries (HasQueryFilter)
+- Argon2 hashing in service layer (not entity)
+- Use [Index(nameof(Email), IsUnique = true)]
+
+--------------------------------------------------------------------------------
+ENTITY 2: Subscriptions
+--------------------------------------------------------------------------------
+
+**Table Name**: Subscriptions
+
+**Primary Key**: id (auto-increment integer)
+
+**Key Fields**:
+- status: integer(SubscriptionStatuses) - PENDING, PAYMENT_PENDING, PAYMENT_ACCEPTED, PAYMENT_FAILED, CANCELLED, EXPIRED
+- form: smallint(SubscriptionForms) - FREE, STANDARD, COURSE_BASED
+- clientId: integer INDEX - Foreign key to Users
+- observations: varchar(255) NULLABLE - Admin notes
+- startDate: timestamp - Subscription start date
+- endDate: timestamp - Subscription end date
+- totalCost: float8 - Subscription price
+- paymentId: integer NULLABLE - Foreign key to Payments
+- transferId: varchar(24) NULLABLE - Bank transfer ID
+- courseId: integer NULLABLE - Foreign key to Courses (for COURSE_BASED)
+- categoryId: integer NULLABLE - Foreign key to Categories
+- invoiceId: integer NULLABLE - Foreign key to Invoices
+- subTypeId: integer - Foreign key to SubscriptionTypes
+- cancelledAt: timestamp NULLABLE - Cancellation date
+- createdAt: timestamp - Creation date
+- updatedAt: timestamp - Last update date
+
+**Relationships**:
+- ManyToOne: UserEntity (subscription.client) - CASCADE delete
+- OneToOne: PaymentsEntity (subscription.payment) - CASCADE delete
+- ManyToOne: CoursesEntity (subscription.course)
+- OneToOne: CategoriesEntity (subscription.category)
+- OneToOne: InvoicesEntity (subscription.invoice)
+- ManyToOne: SubscriptionTypesEntity (subscription.subscriptionType)
+
+**Indexes**:
+- clientId
+- status + endDate (for expiration queries)
+
+**Business Purpose**:
+Tracks user subscriptions (access control). Links to payment, invoice, and
+course/category for different subscription types. Critical for content access.
+
+**EF Core Notes**:
+- Use enums for status and form
+- Add composite index on (clientId, status, endDate)
+- Consider soft delete instead of CASCADE for audit trail
+
+--------------------------------------------------------------------------------
+ENTITY 3: SubscriptionTypes
+--------------------------------------------------------------------------------
+
+**Table Name**: SubscriptionTypes
+
+**Primary Key**: id (auto-increment integer)
+
+**Key Fields**:
+- title: varchar(255) - Type title (e.g., "Abonament Standard")
+- productName: varchar(255) - Product name for MailerLite
+- price: float8 - Price in RON
+- duration: smallint - Duration in days
+- stripePriceId: varchar NULLABLE - Stripe price ID for recurring
+- status: boolean - Active/inactive flag
+- mailerLiteGroup: varchar NULLABLE - MailerLite group name
+- form: integer(SubscriptionForms) - FREE, STANDARD, COURSE_BASED
+- description: text NULLABLE - Type description
+- createdAt: timestamp
+- updatedAt: timestamp
+
+**Relationships**:
+- OneToMany: Subscriptions (type.subscriptions)
+
+**Business Purpose**:
+Defines subscription plans (pricing, duration, features). Used for checkout
+flow and Stripe integration.
+
+**EF Core Notes**:
+- Add index on status (for active types query)
+- Validate price > 0 for non-FREE subscriptions
+
+--------------------------------------------------------------------------------
+ENTITY 4: Payments
+--------------------------------------------------------------------------------
+
+**Table Name**: Payments (legacy table)
+
+**Primary Key**: id (auto-increment integer)
+
+**Key Fields**:
+- amount: float8 - Payment amount
+- status: varchar(StripePaymentStatus) - requires_payment_method, succeeded, etc.
+- intentSecret: varchar - Stripe PaymentIntent client_secret
+- stripePaymentId: varchar - Stripe PaymentIntent ID
+- stripeSubscriptionId: varchar NULLABLE - Stripe Subscription ID
+- subscriptionId: integer - Foreign key to Subscriptions
+- userId: integer - Foreign key to Users
+- createdAt: timestamp
+- updatedAt: timestamp
+
+**Relationships**:
+- OneToOne: Subscriptions (payment.subscription)
+
+**Business Purpose**:
+Legacy payment tracking table. Being replaced by Order → Payment → StripePayment
+entity chain. Still used for backward compatibility.
+
+**EF Core Notes**:
+- Consider marking as legacy/deprecated
+- New payments should use PaymentEntity + StripePaymentEntity
+
+--------------------------------------------------------------------------------
+ENTITY 5: Order
+--------------------------------------------------------------------------------
+
+**Table Name**: Order
+
+**Primary Key**: orderId (auto-increment integer)
+
+**Key Fields**:
+- userId: integer - Foreign key to Users
+- orderType: enum(OrderType) - SUBSCRIPTION, SUBSCRIPTION_RENEWAL, ONE_TIME
+- totalAmount: decimal(10,2) - Order total
+- currency: varchar(3) - Currency code (RON)
+- status: enum(OrderStatus) - PENDING, COMPLETED, FAILED, CANCELLED
+- completedAt: timestamp NULLABLE - Completion date
+- createdAt: timestamp
+- updatedAt: timestamp
+
+**Relationships**:
+- OneToMany: OrderItem (order.items)
+- OneToMany: PaymentEntity (order.payments)
+
+**Business Purpose**:
+New order management system. Replaces legacy Payments table. Supports multiple
+order types and line items.
+
+**EF Core Notes**:
+- Use decimal for totalAmount (not float)
+- Add index on (userId, status)
+
+--------------------------------------------------------------------------------
+ENTITY 6: OrderItem
+--------------------------------------------------------------------------------
+
+**Table Name**: OrderItem
+
+**Primary Key**: orderItemId (auto-increment integer)
+
+**Key Fields**:
+- orderId: integer - Foreign key to Order
+- itemType: varchar - "subscription", "course", etc.
+- quantity: integer - Item quantity
+- unitPrice: decimal(10,2) - Price per unit
+- totalPrice: decimal(10,2) - Line total
+- subscriptionId: integer NULLABLE - Foreign key to Subscriptions
+- courseId: integer NULLABLE - Foreign key to Courses
+- createdAt: timestamp
+- updatedAt: timestamp
+
+**Relationships**:
+- ManyToOne: Order (orderItem.order)
+- ManyToOne: Subscriptions (orderItem.subscription)
+- ManyToOne: Courses (orderItem.course)
+
+**Business Purpose**:
+Order line items. Allows multiple items per order (future expansion).
+
+**EF Core Notes**:
+- Use decimal for prices
+- Add check constraint: totalPrice = unitPrice * quantity
+
+--------------------------------------------------------------------------------
+ENTITY 7: PaymentEntity (new payment table)
+--------------------------------------------------------------------------------
+
+**Table Name**: Payment
+
+**Primary Key**: paymentId (auto-increment integer)
+
+**Key Fields**:
+- orderId: integer - Foreign key to Order
+- amount: decimal(10,2) - Payment amount
+- currency: varchar(3) - Currency code
+- status: enum(PaymentStatus) - PENDING, COMPLETED, FAILED
+- paymentMethod: enum(PaymentMethod) - CARD, BANK_TRANSFER
+- createdAt: timestamp
+- updatedAt: timestamp
+
+**Relationships**:
+- ManyToOne: Order (payment.order)
+- OneToOne: StripePaymentEntity (payment.stripePayment)
+
+**Business Purpose**:
+New payment tracking table. Part of Order → Payment → StripePayment chain.
+
+**EF Core Notes**:
+- Use decimal for amount
+- Add index on (orderId, status)
+
+--------------------------------------------------------------------------------
+ENTITY 8: StripePaymentEntity
+--------------------------------------------------------------------------------
+
+**Table Name**: StripePayment
+
+**Primary Key**: stripePaymentId (auto-increment integer)
+
+**Key Fields**:
+- paymentId: integer - Foreign key to PaymentEntity
+- status: varchar - Stripe PaymentIntent status
+- paymentIntentId: varchar - Stripe PaymentIntent ID
+- clientSecret: varchar - Stripe client_secret
+- stripeSubscriptionId: varchar NULLABLE - Stripe Subscription ID
+- createdAt: timestamp
+- updatedAt: timestamp
+
+**Relationships**:
+- OneToOne: PaymentEntity (stripePayment.payment)
+
+**Business Purpose**:
+Stripe-specific payment details. Separates gateway-specific data from generic
+payment records.
+
+**EF Core Notes**:
+- Add index on paymentIntentId (unique)
+- Add index on stripeSubscriptionId
+
+--------------------------------------------------------------------------------
+ENTITY 9: SmartbillInvoiceEntity
+--------------------------------------------------------------------------------
+
+**Table Name**: SmartbillInvoice
+
+**Primary Key**: invoiceId (auto-increment integer)
+
+**Key Fields**:
+- orderId: integer - Foreign key to Order
+- amount: decimal(10,2) - Invoice amount
+- currency: varchar(3) - Currency code
+- invoiceNumber: varchar NULLABLE - SmartBill invoice number (e.g., "BC12345")
+- status: enum(SmartbillInvoiceStatus) - PENDING, GENERATED, FAILED
+- createdAt: timestamp
+- updatedAt: timestamp
+
+**Relationships**:
+- ManyToOne: Order (smartbillInvoice.order)
+
+**Business Purpose**:
+Tracks SmartBill invoice generation queue. Processed by background job every
+30 minutes.
+
+**EF Core Notes**:
+- Add index on (status, createdAt) for job queries
+- Use decimal for amount
+
+--------------------------------------------------------------------------------
+ENTITY 10: Invoices
+--------------------------------------------------------------------------------
+
+**Table Name**: Invoices
+
+**Primary Key**: id (auto-increment integer)
+
+**Key Fields**:
+- subscriptionId: integer - Foreign key to Subscriptions
+- customerId: integer - Foreign key to Users
+- paymentValue: float8 - Invoice amount (in bani/cents)
+- seriesName: varchar NULLABLE - Invoice series (e.g., "BC")
+- externalId: varchar NULLABLE - SmartBill invoice ID
+- status: enum(InvoiceStatuses) - PENDING, INVOICE_GENERATED, FAILED
+- issueDate: date NULLABLE - Invoice issue date
+- createdAt: timestamp
+- updatedAt: timestamp
+
+**Relationships**:
+- ManyToOne: Subscriptions (invoice.subscription)
+- ManyToOne: Users (invoice.customer)
+
+**Business Purpose**:
+Legacy invoice tracking. Being replaced by SmartbillInvoiceEntity.
+
+**EF Core Notes**:
+- Use decimal for paymentValue
+- Add index on (customerId, issueDate)
+
+--------------------------------------------------------------------------------
+ENTITY 11: Addresses
+--------------------------------------------------------------------------------
+
+**Table Name**: Addresses
+
+**Primary Key**: id (auto-increment integer)
+
+**Key Fields**:
+- customerId: integer - Foreign key to Users (OneToOne)
+- customerName: varchar - Billing name
+- cif: varchar NULLABLE - Company VAT number (for SmartBill)
+- streetAddress: varchar - Street address
+- city: varchar - City
+- county: varchar - County/State
+- country: varchar - Country code
+- postalCode: varchar NULLABLE - Postal code
+- createdAt: timestamp
+- updatedAt: timestamp
+
+**Relationships**:
+- OneToOne: Users (address.customer)
+
+**Business Purpose**:
+Billing address for invoice generation (SmartBill requirement).
+
+**EF Core Notes**:
+- Add unique index on customerId
+- Validate required fields for SmartBill
+
+--------------------------------------------------------------------------------
+ENTITY 12: Courses
+--------------------------------------------------------------------------------
+
+**Table Name**: Courses
+
+**Primary Key**: id (auto-increment integer)
+
+**Key Fields**:
+- title: varchar(255) - Course title
+- description: text - Course description
+- vimeoVideoUrl: varchar NULLABLE - Vimeo video URI
+- courseImage: varchar NULLABLE - Course thumbnail URL
+- ratingNumber: float NULLABLE - Average rating
+- ratingCount: integer - Number of ratings
+- authorId: integer - Foreign key to Users (course creator)
+- categoryId: integer NULLABLE - Foreign key to Categories
+- isActive: boolean - Published flag
+- isTrending: boolean - Trending flag
+- createdAt: timestamp
+- updatedAt: timestamp
+
+**Relationships**:
+- ManyToOne: Users (course.author)
+- ManyToOne: Categories (course.category)
+- OneToMany: Lessons (course.lessons)
+- OneToMany: Subscriptions (course.subscriptions) - for COURSE_BASED
+
+**Business Purpose**:
+Main content entity. Courses contain lessons (videos) and are linked to
+subscriptions for access control.
+
+**EF Core Notes**:
+- Add index on (isActive, isTrending)
+- Add index on categoryId
+- Use decimal for ratingNumber
+
+--------------------------------------------------------------------------------
+ENTITY 13: Lessons
+--------------------------------------------------------------------------------
+
+**Table Name**: Lessons
+
+**Primary Key**: id (auto-increment integer)
+
+**Key Fields**:
+- title: varchar(255) - Lesson title
+- description: text - Lesson description
+- vimeoVideoUrl: varchar NULLABLE - Vimeo video URI
+- displayOrder: integer - Lesson order within course
+- courseId: integer - Foreign key to Courses
+- upvotes: integer DEFAULT 0 - Upvote count
+- downvotes: integer DEFAULT 0 - Downvote count
+- isActive: boolean - Published flag
+- createdAt: timestamp
+- updatedAt: timestamp
+
+**Relationships**:
+- ManyToOne: Courses (lesson.course)
+
+**Business Purpose**:
+Individual lessons within courses. Contains video URLs and voting system.
+
+**EF Core Notes**:
+- Add index on (courseId, displayOrder)
+- Add index on (courseId, isActive)
+
+--------------------------------------------------------------------------------
+ENTITY 14: Categories
+--------------------------------------------------------------------------------
+
+**Table Name**: Categories
+
+**Primary Key**: id (auto-increment integer)
+
+**Key Fields**:
+- title: varchar(255) - Category title
+- description: text NULLABLE - Category description
+- categoryImage: varchar NULLABLE - Category image URL
+- ancestors: integer[] - Array of parent category IDs (hierarchical)
+- createdAt: timestamp
+- updatedAt: timestamp
+
+**Relationships**:
+- OneToMany: Courses (category.courses)
+- OneToMany: Subscriptions (category.subscriptions)
+
+**Business Purpose**:
+Hierarchical category system for courses. Supports nested categories via
+ancestors array.
+
+**EF Core Notes**:
+- ancestors stored as integer[] (PostgreSQL array)
+- EF Core: use string (comma-separated) or separate CategoryHierarchy table
+- Add index on ancestors (GIN index in PostgreSQL)
+
+--------------------------------------------------------------------------------
+ENTITY 15: Shortlists
+--------------------------------------------------------------------------------
+
+**Table Name**: Shortlists
+
+**Primary Key**: id (auto-increment integer)
+
+**Key Fields**:
+- title: varchar(255) - Shortlist name
+- userId: integer - Foreign key to Users
+- recipients: integer[] - Array of Course IDs
+- lessonRecipients: integer[] - Array of Lesson IDs
+- isActive: boolean - Active shortlist flag (only one active per user)
+- createdAt: timestamp
+- updatedAt: timestamp
+
+**Relationships**:
+- ManyToOne: Users (shortlist.user)
+
+**Business Purpose**:
+User wishlist/favorites. Can contain courses and/or lessons.
+
+**EF Core Notes**:
+- recipients/lessonRecipients as integer[] (PostgreSQL array)
+- EF Core: use many-to-many join tables instead
+- Add unique index on (userId, isActive) WHERE isActive = true
+
+--------------------------------------------------------------------------------
+ENTITY 16: Analytics
+--------------------------------------------------------------------------------
+
+**Table Name**: Analytics
+
+**Primary Key**: id (auto-increment integer)
+
+**Key Fields**:
+- clientId: integer - Foreign key to Users
+- courseId: integer NULLABLE - Foreign key to Courses
+- lessonId: integer NULLABLE - Foreign key to Lessons
+- type: enum(AnalyticsTypes) - NO_ANALYTICS, TIME_SPENT, VIEW_COURSE, VIEW_LESSON, VIEW_LIVE_SESSION
+- createdAt: timestamp
+
+**Relationships**:
+- ManyToOne: Users (analytics.client)
+
+**Business Purpose**:
+Discrete analytics events (views, clicks). For cumulative metrics, see
+AnalyticsTime.
+
+**EF Core Notes**:
+- Add index on (clientId, type, createdAt)
+- Consider time-series database for high volume
+
+--------------------------------------------------------------------------------
+ENTITY 17: AnalyticsTime
+--------------------------------------------------------------------------------
+
+**Table Name**: AnalyticsTime
+
+**Primary Key**: id (auto-increment integer)
+
+**Key Fields**:
+- clientId: integer - Foreign key to Users (OneToOne)
+- totalCourseTime: float - Total seconds spent on courses
+- createdAt: timestamp
+- updatedAt: timestamp
+
+**Relationships**:
+- OneToOne: Users (analyticsTime.client)
+
+**Business Purpose**:
+Cumulative time tracking. Single record per user, updated incrementally.
+
+**EF Core Notes**:
+- Add unique index on clientId
+- Use decimal for totalCourseTime (precise time tracking)
+
+--------------------------------------------------------------------------------
+ENTITY 18: Campaigns
+--------------------------------------------------------------------------------
+
+**Table Name**: Campaigns
+
+**Primary Key**: id (auto-increment integer)
+
+**Key Fields**:
+- title: varchar(255) - Campaign title
+- value: float - Campaign value/budget
+- clientId: integer NULLABLE - Foreign key to Users (creator)
+- endDate: date NULLABLE - Campaign end date
+- subTypeId: integer - Related subscription type
+- recipients: text NULLABLE - CSV of user IDs
+- createdAt: timestamp
+- updatedAt: timestamp
+
+**Relationships**:
+- ManyToOne: Users (campaign.client)
+- ManyToOne: SubscriptionTypes (campaign.subscriptionType)
+
+**Business Purpose**:
+Marketing campaigns with MailerLite integration. Recipients receive emails
+and are added to MailerLite groups.
+
+**EF Core Notes**:
+- recipients as CSV string (consider many-to-many table)
+- Add index on (clientId, endDate)
+
+================================================================================
+LEGACY/DEPRECATED ENTITIES
+================================================================================
+
+The following entities are likely legacy or deprecated:
+
+- **SubscriptionCancellation**: Cancellation tracking (replaced by Subscriptions.cancelledAt)
+- **OrderItemLink**: Order item relationships (unclear purpose)
+- **OldPaymentsTable**: Legacy payment table (replaced by PaymentEntity)
+
+**Recommendation**: Audit usage before migration. May be safe to exclude from
+.NET migration if no active references.
+
+================================================================================
+ENTITY RELATIONSHIP DIAGRAM (ERD)
+================================================================================
+
+```
+Users (1) ──< (M) Subscriptions (M) ──> (1) SubscriptionTypes
+  │                    │
+  │                    ├──> (1) Courses (M) ──> (1) Categories
+  │                    │          │
+  │                    │          └──< (M) Lessons
+  │                    │
+  │                    ├──> (1) Payments (legacy)
+  │                    │
+  │                    └──> (1) Invoices
+  │
+  ├──> (1) Addresses (billing)
+  │
+  ├──< (M) Order
+  │          │
+  │          ├──< (M) OrderItem
+  │          │          │
+  │          │          └──> (1) Subscriptions
+  │          │
+  │          ├──< (M) PaymentEntity
+  │          │          │
+  │          │          └──> (1) StripePaymentEntity
+  │          │
+  │          └──> (1) SmartbillInvoiceEntity
+  │
+  ├──< (M) Analytics (discrete events)
+  │
+  ├──> (1) AnalyticsTime (cumulative time)
+  │
+  ├──< (M) Campaigns
+  │
+  └──< (M) Shortlists
+```
+
+================================================================================
+DATABASE MIGRATION STRATEGY (TypeORM → EF Core)
+================================================================================
+
+**Phase 1: Entity Model Creation**
+
+1. Create EF Core entities:
+```csharp
+public class User
+{
+    public int Id { get; set; }
+    public string FullName { get; set; }
+    public string Email { get; set; }
+    public string PasswordHash { get; set; }
+    public string Phone { get; set; }
+    public decimal Status { get; set; }
+    public string StripeCustomer { get; set; }
+    public UserRole Role { get; set; }
+    public bool IsActive { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+
+    // Navigation properties
+    public virtual ICollection<Subscription> Subscriptions { get; set; }
+    public virtual Address Address { get; set; }
+    public virtual ICollection<Invoice> Invoices { get; set; }
+}
+```
+
+2. Configure entity mappings:
+```csharp
+public class UserConfiguration : IEntityTypeConfiguration<User>
+{
+    public void Configure(EntityTypeBuilder<User> builder)
+    {
+        builder.ToTable("Users");
+        builder.HasKey(u => u.Id);
+        builder.Property(u => u.Email).HasMaxLength(80).IsRequired();
+        builder.HasIndex(u => u.Email).IsUnique();
+        builder.Property(u => u.PasswordHash).HasColumnName("password");
+        builder.Ignore(u => u.PasswordHash); // Exclude from queries
+    }
+}
+```
+
+**Phase 2: Database Connection**
+
+```csharp
+services.AddDbContext<SomawayDbContext>(options =>
+    options.UseNpgsql(connectionString,
+        npgsqlOptions => npgsqlOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery))
+);
+```
+
+**Phase 3: Migration Generation**
+
+1. Add-Migration Initial -Context SomawayDbContext
+2. Review generated migration
+3. Apply: Update-Database
+
+**Phase 4: Data Validation**
+
+1. Compare row counts: SELECT COUNT(*) FROM Users
+2. Validate relationships: foreign key constraints
+3. Test queries: GetUserWithSubscriptions()
+
+**Key Differences TypeORM vs EF Core**:
+
+| Feature | TypeORM | EF Core |
+|---------|---------|---------|
+| Auto-timestamps | @CreateDateColumn() | OnModelCreating: HasDefaultValueSql("NOW()") |
+| Enums | @Column({ type: 'enum' }) | HasConversion<string>() or PostgreSQL enum |
+| Arrays | integer[] | Split to junction table or use Npgsql array support |
+| Cascade Delete | onDelete: 'CASCADE' | OnDelete(DeleteBehavior.Cascade) |
+| Indexes | @Index() | HasIndex().IsUnique() |
+| Password Hashing | @BeforeInsert hook | Service layer (not entity) |
+
+**PostgreSQL-Specific Features**:
+
+1. **Array Columns**: Use Npgsql EF Core provider
+```csharp
+builder.Property(c => c.Ancestors)
+    .HasColumnType("integer[]");
+```
+
+2. **Enums**: Map to PostgreSQL enums
+```csharp
+builder.HasPostgresEnum<UserRole>();
+```
+
+3. **Full-Text Search**: Add GIN indexes
+```csharp
+builder.HasIndex(c => c.Title)
+    .HasMethod("GIN")
+    .IsTsVectorExpressionIndex("english");
+```
+
+================================================================================
+DATA SEEDING REQUIREMENTS
+================================================================================
+
+**Required Seed Data**:
+
+1. **SubscriptionTypes**: At least 3 types (FREE, STANDARD, PREMIUM)
+2. **Categories**: Root categories for course organization
+3. **Admin User**: Initial admin account for system access
+4. **Users**: Test users for development
+
+**Seed Data Script** (EF Core):
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<SubscriptionType>().HasData(
+        new SubscriptionType { Id = 1, Title = "Free Trial", Price = 0, Duration = 7, Form = SubscriptionForms.FREE },
+        new SubscriptionType { Id = 2, Title = "Standard", Price = 99, Duration = 30, Form = SubscriptionForms.STANDARD },
+        new SubscriptionType { Id = 3, Title = "Premium", Price = 249, Duration = 90, Form = SubscriptionForms.STANDARD }
+    );
+}
+```
+
+================================================================================
+INDEXES & PERFORMANCE OPTIMIZATION
+================================================================================
+
+**Critical Indexes for Performance**:
+
+1. **Users**:
+   - (email) UNIQUE
+   - (phone) UNIQUE WHERE phone IS NOT NULL
+   - (status, isActive)
+
+2. **Subscriptions**:
+   - (clientId, status, endDate)
+   - (status, endDate) for expiration queries
+   - (subTypeId)
+
+3. **Courses**:
+   - (isActive, isTrending)
+   - (categoryId, isActive)
+   - (authorId)
+
+4. **Lessons**:
+   - (courseId, displayOrder)
+   - (courseId, isActive)
+
+5. **Orders**:
+   - (userId, status)
+   - (status, createdAt)
+
+6. **Analytics**:
+   - (clientId, type, createdAt)
+
+**Query Optimization Recommendations**:
+
+1. Use eager loading for frequently accessed relationships
+2. Add covering indexes for common query patterns
+3. Implement query result caching (Redis)
+4. Use pagination for large result sets
+5. Consider read replicas for analytics queries
+
+================================================================================
+END OF DATABASE ENTITIES DOCUMENTATION
+================================================================================
+
+Summary:
+- Total Entities: 18 core entities
+- Database: PostgreSQL 17
+- Current ORM: TypeORM 0.3
+- Target ORM: Entity Framework Core 8.0
+- Key Patterns: Auto-timestamps, enums, arrays, cascade deletes
+
+Critical Relationships:
+- Users → Subscriptions → SubscriptionTypes
+- Order → OrderItem → PaymentEntity → StripePaymentEntity
+- Courses → Lessons → Categories
+- Users → Addresses (billing for SmartBill)
+
+Migration Priorities:
+1. Core entities: Users, Subscriptions, SubscriptionTypes
+2. Payment chain: Order, OrderItem, PaymentEntity, StripePaymentEntity
+3. Content: Courses, Lessons, Categories
+4. Supporting: Addresses, Invoices, Analytics
+
+Ready for .NET migration! 🎯

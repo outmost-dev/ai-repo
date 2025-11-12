@@ -1,0 +1,5298 @@
+================================================================================
+JIRA STORY: COURSES MODULE - WEB CLIENT MIGRATION
+================================================================================
+
+Project: WEB (Somaway Web Client Migration to Nuxt 3)
+Story Type: Module Migration
+Priority: High
+Module: Courses Management
+
+================================================================================
+STORY DESCRIPTION
+================================================================================
+
+Modulul Courses gestionează afișarea și vizualizarea cursurilor și lecțiilor în aplicația web client.
+
+Acest modul include funcționalități complexe pentru:
+- Navigare dinamică pe bază de slug-uri (SEO-friendly URLs)
+- Vizualizare detalii curs cu lista de lecții
+- Player video pentru lecții (Vimeo embed + ReactPlayer fallback)
+- Sistem de filtrare avansat (categorii, tag-uri, practici, favorite)
+- Tracking analytics pentru vizualizări și timp petrecut
+- Management shortlist/favorite pentru cursuri și lecții
+- Control acces bazat pe abonament activ
+- Paginare cu "View More" pentru liste extinse
+- Marcare completare lecții vizualizate
+
+Locație cod sursă (Next.js):
+- Pages: web/src/pages/curs/
+- Components: web/src/components/pages/course/, web/src/components/pages/courses/, web/src/components/pages/lessons/
+
+Tasks documentate: 11
+Componente principale: CourseDetail, LessonDetail, MaterialsWrapper, MaterialsList, CourseItem, LessonItem
+
+Tech Stack Transition:
+- Next.js Pages Router → Nuxt 3 Pages Directory
+- React 18 → Vue 3 Composition API
+- Redux Toolkit → Pinia
+- ReactPlayer → vue3-video-play / @videojs-player/vue
+- React hooks → Vue Composables
+
+Dependencies:
+- API endpoints: GET /v1/courses, GET /v1/lessons
+- Redux stores: analytics, shortlist, user
+- Shared components: AppLayout, PageHelmet, CustomButton, Image
+- Third-party: ReactPlayer, @u-wave/react-vimeo, Ant Design
+
+Notes:
+- Sistemul de rutare folosește slug-uri pentru cursuri și ID-uri pentru lecții
+- Access control: prezența slug-ului indică acces activ la curs
+- Analytics tracking cu delay de 1 secundă pentru a evita false-positive
+- Time spent tracking cu interval updates și cleanup pe beforeunload
+- Material types: COURSE vs LESSON (unified handling în liste)
+- Video embed: Vimeo HTML embed (preferred) sau ReactPlayer fallback
+- SECURITY ISSUE: dangerouslySetInnerHTML pentru video embed
+- Hardcoded courseId=11 în pagina de upload admin
+
+================================================================================
+TASK 1: COURSE DETAIL PAGE - DYNAMIC ROUTING
+================================================================================
+
+Title: Course Detail Page - Dynamic Routing by Slug
+
+Priority: High
+Complexity: Medium
+Estimated Time: 4h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+Pagina de detalii curs afișează informațiile complete despre un curs specific, accesată prin URL-ul SEO-friendly `/curs/{slug}`.
+
+Funcționalități:
+1. Rutare dinamică bazată pe slug din URL
+2. Fetch date curs de pe server folosind slug-ul
+3. Verificare existență curs (404 dacă nu există)
+4. Restricție acces: doar utilizatori autentificați (CUSTOMER role)
+5. Renderizare componenta CourseDetail cu datele cursuluii
+6. SEO optimization: titlu dinamic în page helmet
+
+Flow:
+1. Utilizatorul accesează /curs/introducere-in-yoga (exemplu slug)
+2. Router detectează parametrul dinamic [courseSlug]
+3. Se face request la API: GET /v1/courses/slug/introducere-in-yoga
+4. Dacă cursul există → render CourseDetail component
+5. Dacă cursul nu există → redirect la NotFoundPage
+6. Page helmet setează titlul: "{Course Title} | Somaway"
+
+Business Rules:
+- Acces restricționat: doar utilizatori autentificați (CUSTOMER role)
+- Slug-ul este case-sensitive și URL encoded
+- 404 page pentru cursuri inexistente
+- Loading state până la fetch complet
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/pages/curs/[courseSlug]/index.tsx
+
+```typescript
+import { useRouter } from 'next/router';
+import { useEffect, useState } from 'react';
+import type { NextPage } from 'next';
+
+import AppLayout from '@/components/layouts/AppLayout';
+import PageHelmet from '@/components/shared/PageHelmet';
+import CourseDetail from '@/components/pages/course/CourseDetail';
+import NotFoundPage from '@/pages/404';
+
+import { fetchCourse } from '@/api/course';
+import { UserRoles } from '@/utils/constants';
+import type { CourseEntity } from '@/types/course';
+
+const CoursePage: NextPage = (): JSX.Element => {
+  const router = useRouter();
+  const [course, setCourse] = useState<CourseEntity | null>(null);
+
+  const handleDataFetching = async (courseSlug: string): Promise<void> => {
+    await fetchCourse(courseSlug.toString(), "slug").then(async (res) => {
+      if (res?.data) {
+        setCourse(res.data);
+      }
+    });
+  };
+
+  useEffect(() => {
+    const fetchData = async () => {
+      if (router?.isReady) {
+        const { courseSlug } = router.query;
+        if (courseSlug) {
+          await handleDataFetching(courseSlug.toString());
+        }
+      }
+    };
+    fetchData();
+  }, [router?.isReady, router.query]);
+
+  if (!course) {
+    return <NotFoundPage />;
+  }
+
+  return (
+    <AppLayout authority={UserRoles.CUSTOMER}>
+      <PageHelmet title={`${course?.title || 'Curs'} | Somaway`} />
+      <CourseDetail course={course} />
+    </AppLayout>
+  );
+};
+
+export default CoursePage;
+```
+
+API Call:
+```typescript
+// web/src/api/course.ts
+export const fetchCourse = async (
+  identifier: string,
+  type: 'id' | 'slug'
+): Promise<AxiosResponse> => {
+  return await axios.get(`${API_URL}/v1/courses/${type}/${identifier}`, {
+    headers: getAuthHeaders(),
+  });
+};
+```
+
+Key Patterns:
+- Next.js dynamic routing: [courseSlug] folder structure
+- useRouter for accessing URL parameters
+- router.isReady check to prevent premature fetching
+- useState for local course state
+- Conditional rendering: NotFoundPage if no course
+- AppLayout wrapper with CUSTOMER role guard
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+Location: web/pages/curs/[courseSlug]/index.vue
+
+```vue
+<template>
+  <AppLayout :authority="UserRoles.CUSTOMER">
+    <template v-if="course">
+      <Head>
+        <Title>{{ course.title || 'Curs' }} | Somaway</Title>
+      </Head>
+      <CourseDetail :course="course" />
+    </template>
+    <NotFoundPage v-else />
+  </AppLayout>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
+import { fetchCourse } from '@/api/course'
+import { UserRoles } from '@/utils/constants'
+import type { CourseEntity } from '@/types/course'
+
+const route = useRoute()
+const course = ref<CourseEntity | null>(null)
+
+const handleDataFetching = async (courseSlug: string): Promise<void> => {
+  try {
+    const res = await fetchCourse(courseSlug, 'slug')
+    if (res?.data) {
+      course.value = res.data
+    }
+  } catch (error) {
+    console.error('Error fetching course:', error)
+    course.value = null
+  }
+}
+
+onMounted(async () => {
+  const courseSlug = route.params.courseSlug as string
+  if (courseSlug) {
+    await handleDataFetching(courseSlug)
+  }
+})
+</script>
+```
+
+API Composable:
+```typescript
+// web/composables/useCourse.ts
+export const useCourse = () => {
+  const fetchCourseBySlug = async (slug: string): Promise<CourseEntity | null> => {
+    try {
+      const response = await $fetch(`/v1/courses/slug/${slug}`, {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      })
+      return response.data
+    } catch (error) {
+      console.error('Failed to fetch course:', error)
+      return null
+    }
+  }
+
+  return {
+    fetchCourseBySlug
+  }
+}
+```
+
+Nuxt 3 Patterns:
+- File-based routing: [courseSlug]/index.vue
+- useRoute() composable for accessing params
+- ref() for reactive course state
+- onMounted() lifecycle hook
+- <Head> component for SEO (built-in)
+- Template v-if for conditional rendering
+- Composition API with <script setup>
+
+--------------------------------------------------------------------------------
+API REQUEST/RESPONSE
+--------------------------------------------------------------------------------
+
+Request:
+GET /v1/courses/slug/{slug}
+Headers: Authorization: Bearer {accessToken}
+
+Example:
+GET /v1/courses/slug/introducere-in-yoga
+
+Response Success (200):
+```json
+{
+  "data": {
+    "id": 15,
+    "title": "Introducere în Yoga",
+    "slug": "introducere-in-yoga",
+    "description": "Un curs complet pentru începători în yoga...",
+    "imageUrl": "https://somaway.fra1.cdn.digitaloceanspaces.com/courses/yoga-intro.jpg",
+    "authorName": "Maria Popescu",
+    "authorId": 42,
+    "rating": 4.8,
+    "isPractice": false,
+    "displayOrder": 5,
+    "createdAt": "2024-01-15T10:00:00Z",
+    "updatedAt": "2024-11-01T14:30:00Z",
+    "lessons": [
+      {
+        "id": 120,
+        "title": "Introducere - Ce este Yoga?",
+        "description": "Prima lecție explorează fundamentele yoga...",
+        "videoUrl": "https://vimeo.com/123456789",
+        "imageUrl": "https://somaway.fra1.cdn.digitaloceanspaces.com/lessons/lesson-120.jpg",
+        "displayOrder": 1,
+        "courseId": 15
+      },
+      {
+        "id": 121,
+        "title": "Poziții de bază",
+        "description": "Învățăm primele poziții fundamentale...",
+        "videoUrl": "https://vimeo.com/123456790",
+        "imageUrl": "https://somaway.fra1.cdn.digitaloceanspaces.com/lessons/lesson-121.jpg",
+        "displayOrder": 2,
+        "courseId": 15
+      }
+    ]
+  }
+}
+```
+
+Response Error (404):
+```json
+{
+  "statusCode": 404,
+  "message": "Course not found",
+  "error": "Not Found"
+}
+```
+
+Response Error (401):
+```json
+{
+  "statusCode": 401,
+  "message": "Unauthorized",
+  "error": "Unauthorized"
+}
+```
+
+--------------------------------------------------------------------------------
+DEPENDENCIES
+--------------------------------------------------------------------------------
+
+Current (React/Next.js):
+- next/router (useRouter)
+- react (useState, useEffect)
+- @/components/layouts/AppLayout
+- @/components/shared/PageHelmet
+- @/components/pages/course/CourseDetail
+- @/pages/404 (NotFoundPage)
+- @/api/course (fetchCourse)
+- @/utils/constants (UserRoles)
+- @/types/course (CourseEntity)
+
+Target (Vue/Nuxt 3):
+- vue-router (useRoute)
+- vue (ref, onMounted)
+- @/components/layouts/AppLayout.vue
+- Nuxt 3 <Head> component (built-in)
+- @/components/pages/course/CourseDetail.vue
+- @/pages/404.vue (NotFoundPage)
+- @/composables/useCourse
+- @/utils/constants (UserRoles)
+- @/types/course (CourseEntity)
+
+Shared Services:
+- API: GET /v1/courses/slug/{slug}
+- Auth headers from token store
+
+--------------------------------------------------------------------------------
+AUTHORIZATION
+--------------------------------------------------------------------------------
+
+Required Role: CUSTOMER (authenticated users only)
+Authentication: JWT Bearer token in Authorization header
+Access Control: AppLayout component enforces role check
+
+Unauthorized Behavior:
+- Redirect to /signin if not authenticated
+- 401 response if token invalid/expired
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+1. **SEO-Friendly URLs**: Slug-based routing pentru SEO optimization
+2. **404 Handling**: NotFoundPage pentru cursuri inexistente (nu error boundary)
+3. **Loading State**: Implicit prin course === null check
+4. **Router Ready Check**: Next.js necesită router.isReady, Nuxt 3 nu
+5. **Slug Encoding**: Frontend trimite slug as-is, backend face decoding
+6. **Lessons Included**: API response include array de lecții (nested data)
+7. **Type Safety**: TypeScript interfaces pentru CourseEntity
+
+Security:
+- CUSTOMER role guard la nivel de layout
+- JWT token validation pe backend
+- Slug validation pe backend (prevent injection)
+
+Performance:
+- Single API call pentru curs + lecții (no N+1 problem)
+- Client-side rendering pentru detalii (no SSR needed)
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+1. **Add Loading Skeleton**: Show skeleton UI while fetching (nu doar blank page)
+2. **Add Error Boundary**: Catch și display error messages (nu doar 404)
+3. **Implement SSR**: Nuxt 3 useAsyncData pentru SEO și performance
+4. **Add Breadcrumbs**: Navigation trail: Home > Cursuri > {Course Title}
+5. **Cache Course Data**: Cache cu Pinia pentru reduce API calls
+6. **Add Share Functionality**: Social sharing buttons pentru cursuri
+7. **Optimize Images**: Lazy loading și responsive images (Nuxt Image)
+8. **Add Structured Data**: JSON-LD schema pentru SEO (Course schema.org)
+
+Migration Notes:
+- Verifică că toate slug-urile din DB sunt URL-safe
+- Testează edge cases: sluguri cu caractere speciale, diacritice
+- Implementează redirects pentru URLs vechi dacă slug-urile se schimbă
+
+
+================================================================================
+TASK 2: LESSON DETAIL PAGE - VIDEO PLAYER
+================================================================================
+
+Title: Lesson Detail Page - Video Player & Time Tracking
+
+Priority: High
+Complexity: High
+Estimated Time: 8h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+Pagina de vizualizare lecție afișează video player-ul și permite urmărirea progresului lecției.
+
+Funcționalități:
+1. Rutare dinamică: /curs/{courseSlug}/{lessonId}
+2. Fetch date lecție de pe server folosind lessonId
+3. Video playback: Vimeo embed HTML (preferred) sau ReactPlayer fallback
+4. Analytics tracking: marcarea lecției ca vizualizată după 1 secundă
+5. Time spent tracking: interval-based cu salvare la fiecare 60 secunde
+6. Cleanup la page exit: salvare timp rămas pe beforeunload event
+7. Restricție acces: doar utilizatori autentificați (CUSTOMER role)
+8. Afișare mesaj simplu dacă lecția nu există
+
+Flow:
+1. Utilizatorul accesează /curs/introducere-in-yoga/120
+2. Router extrage courseSlug și lessonId
+3. Se face request la API: GET /v1/lessons/120
+4. Se fetch-uiește video embed HTML de la Vimeo
+5. După 1 secundă → analytics: VIEW_LESSON
+6. La fiecare 60s → updateTimeSpent cu timpul petrecut
+7. La exit (beforeunload) → salvare timp final
+8. Cleanup: clear interval, remove event listener
+
+Business Rules:
+- Acces restricționat: doar utilizatori autentificați
+- Delay 1 secundă pentru VIEW_LESSON (evită false-positive la navigate)
+- Time tracking: 60 secunde interval pentru reduce API calls
+- BeforeUnload cleanup: asigură salvare date la închidere tab
+- Fallback video player: ReactPlayer dacă Vimeo embed fail
+- Placeholder image dacă lipsește videoUrl
+
+Security:
+- **ISSUE**: dangerouslySetInnerHTML pentru Vimeo embed (XSS risk)
+- JWT token validation pentru acces lecție
+- Time tracking doar pentru utilizatori autentificați
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/pages/curs/[courseSlug]/[lessonId]/index.tsx
+
+```typescript
+import { useRouter } from 'next/router';
+import { useEffect, useState } from 'react';
+import type { NextPage } from 'next';
+
+import AppLayout from '@/components/layouts/AppLayout';
+import LessonDetail from '@/components/pages/course/LessonDetail';
+
+import { fetchLessonByLessonId } from '@/api/lesson';
+import { UserRoles } from '@/utils/constants';
+import type { LessonEntity } from '@/types/lesson';
+
+const LessonPage: NextPage = (): JSX.Element => {
+  const router = useRouter();
+  const [lesson, setLesson] = useState<LessonEntity | null>(null);
+
+  const handleDataFetching = async (lessonId: string): Promise<void> => {
+    await fetchLessonByLessonId(lessonId).then(async (res) => {
+      if (res?.data) {
+        setLesson(res.data);
+      }
+    });
+  };
+
+  useEffect(() => {
+    const { lessonId } = router.query;
+    if (lessonId && lessonId.length > 0) {
+      handleDataFetching(lessonId.toString());
+    }
+  }, [router.query]);
+
+  return (
+    <AppLayout authority={UserRoles.CUSTOMER}>
+      {lesson === null ? (
+        <div>Lectia nu a fost gasita</div>
+      ) : (
+        <LessonDetail lesson={lesson!} />
+      )}
+    </AppLayout>
+  );
+};
+
+export default LessonPage;
+```
+
+LessonDetail Component: web/src/components/pages/course/LessonDetail.tsx
+
+```typescript
+import React, { useEffect, useState } from 'react';
+import { useSelector } from 'react-redux';
+import ReactPlayer from 'react-player';
+import Image from 'next/image';
+
+import { useAnalytics } from '@/hooks/useAnalytics';
+import { getVideoEmbedHtml } from '@/api/vimeo';
+import { VIEW_LESSON, TIME_FREQUENCY_UPDATE, NOT_INITIALIZED } from '@/utils/constants';
+import type { LessonEntity } from '@/types/lesson';
+
+import './LessonDetail.scss';
+
+const LessonDetail: React.FC<{ lesson: LessonEntity }> = ({ lesson }) => {
+  const { setAnalytics, updateTimeSpent } = useAnalytics();
+  const authUser = useSelector((state: any) => state.user);
+  const cachedToken = useSelector((state: any) => state.token);
+  const [embedHtml, setEmbedHtml] = useState<string>('');
+
+  let sessionStartTime = Date.now();
+
+  const memorizeTimeSpent = () => {
+    const timeSpent = Date.now() - sessionStartTime;
+    updateTimeSpent(sessionStartTime, lesson.id);
+    sessionStartTime = Date.now();
+  };
+
+  // Fetch Vimeo embed HTML
+  useEffect(() => {
+    const fetchVideoData = async () => {
+      if (lesson.videoUrl) {
+        const videoEmbed = await getVideoEmbedHtml(lesson.videoUrl);
+        setEmbedHtml(videoEmbed);
+      }
+    };
+    fetchVideoData();
+  }, [lesson.videoUrl]);
+
+  // Mark lesson as viewed after 1 second
+  useEffect(() => {
+    setTimeout(() => {
+      setAnalytics(VIEW_LESSON, lesson);
+    }, 1000);
+  }, []);
+
+  // Time spent tracking with interval
+  useEffect(() => {
+    let newIntervalId: NodeJS.Timeout | null = null;
+
+    if (authUser?.id && cachedToken?.atx !== NOT_INITIALIZED) {
+      newIntervalId = setInterval(() => {
+        memorizeTimeSpent();
+      }, TIME_FREQUENCY_UPDATE); // 60000ms = 60 seconds
+
+      window.addEventListener('beforeunload', memorizeTimeSpent);
+    }
+
+    return () => {
+      if (authUser?.id && newIntervalId) {
+        memorizeTimeSpent(); // Save remaining time
+        clearInterval(newIntervalId);
+        window.removeEventListener('beforeunload', memorizeTimeSpent);
+      }
+    };
+  }, [authUser?.id, cachedToken?.atx]);
+
+  return (
+    <div className="lesson-wrapper">
+      <div className="player-wrapper">
+        {lesson.videoUrl ? (
+          embedHtml ? (
+            <div
+              className="vimeo-embed"
+              dangerouslySetInnerHTML={{ __html: embedHtml }}
+            />
+          ) : (
+            <ReactPlayer
+              url={lesson.videoUrl}
+              controls
+              width="100%"
+              height="100%"
+              config={{
+                vimeo: {
+                  playerOptions: {
+                    title: false,
+                    byline: false,
+                    portrait: false,
+                  }
+                }
+              }}
+            />
+          )
+        ) : (
+          <Image
+            src="/icons/placeholder.png"
+            alt="No video available"
+            width={800}
+            height={450}
+          />
+        )}
+      </div>
+
+      <div className="lesson-content">
+        <h1>{lesson.title}</h1>
+        <p>{lesson.description}</p>
+      </div>
+    </div>
+  );
+};
+
+export default LessonDetail;
+```
+
+API Calls:
+```typescript
+// web/src/api/lesson.ts
+export const fetchLessonByLessonId = async (
+  lessonId: string
+): Promise<AxiosResponse> => {
+  return await axios.get(`${API_URL}/v1/lessons/${lessonId}`, {
+    headers: getAuthHeaders(),
+  });
+};
+
+// web/src/api/vimeo.ts
+export const getVideoEmbedHtml = async (videoUrl: string): Promise<string> => {
+  try {
+    const response = await axios.get(
+      `https://vimeo.com/api/oembed.json?url=${encodeURIComponent(videoUrl)}`
+    );
+    return response.data.html;
+  } catch (error) {
+    console.error('Failed to fetch Vimeo embed:', error);
+    return '';
+  }
+};
+```
+
+Analytics Hook:
+```typescript
+// web/src/hooks/useAnalytics.ts
+export const useAnalytics = () => {
+  const dispatch = useDispatch();
+
+  const setAnalytics = (type: string, item: any) => {
+    dispatch(addAnalytics({ type, value: item.id }));
+
+    // API call to save analytics
+    axios.post(`${API_URL}/v1/analytics`, {
+      type,
+      value: item.id.toString()
+    }, {
+      headers: getAuthHeaders()
+    });
+  };
+
+  const updateTimeSpent = (startTime: number, lessonId: number) => {
+    const timeSpent = Math.floor((Date.now() - startTime) / 1000); // seconds
+
+    axios.post(`${API_URL}/v1/analytics/time`, {
+      lessonId,
+      timeSpent
+    }, {
+      headers: getAuthHeaders()
+    });
+  };
+
+  return { setAnalytics, updateTimeSpent };
+};
+```
+
+Key Patterns:
+- Nested dynamic routing: [courseSlug]/[lessonId]
+- Dual video player: Vimeo embed (primary) + ReactPlayer (fallback)
+- dangerouslySetInnerHTML for Vimeo embed HTML (SECURITY ISSUE)
+- setTimeout 1s delay pentru analytics
+- setInterval 60s pentru time tracking
+- beforeunload event pentru cleanup
+- sessionStartTime tracking cu let variable
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+Location: web/pages/curs/[courseSlug]/[lessonId]/index.vue
+
+```vue
+<template>
+  <AppLayout :authority="UserRoles.CUSTOMER">
+    <div v-if="lesson" class="lesson-wrapper">
+      <div class="player-wrapper">
+        <!-- Vimeo Embed (Preferred) -->
+        <div
+          v-if="embedHtml"
+          class="vimeo-embed"
+          v-html="embedHtml"
+        />
+
+        <!-- Vue Video Player Fallback -->
+        <VideoPlayer
+          v-else-if="lesson.videoUrl"
+          :src="lesson.videoUrl"
+          :options="videoOptions"
+          @mounted="onPlayerMounted"
+        />
+
+        <!-- Placeholder -->
+        <NuxtImg
+          v-else
+          src="/icons/placeholder.png"
+          alt="No video available"
+          width="800"
+          height="450"
+        />
+      </div>
+
+      <div class="lesson-content">
+        <h1>{{ lesson.title }}</h1>
+        <p>{{ lesson.description }}</p>
+      </div>
+    </div>
+
+    <div v-else>
+      Lecția nu a fost găsită
+    </div>
+  </AppLayout>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { useRoute } from 'vue-router'
+import { useAnalyticsStore } from '@/stores/analytics'
+import { useUserStore } from '@/stores/user'
+import { fetchLessonById, getVideoEmbedHtml } from '@/api/lesson'
+import { UserRoles, VIEW_LESSON, TIME_FREQUENCY_UPDATE } from '@/utils/constants'
+import type { LessonEntity } from '@/types/lesson'
+
+const route = useRoute()
+const analyticsStore = useAnalyticsStore()
+const userStore = useUserStore()
+
+const lesson = ref<LessonEntity | null>(null)
+const embedHtml = ref<string>('')
+let sessionStartTime = Date.now()
+let intervalId: ReturnType<typeof setInterval> | null = null
+
+const videoOptions = {
+  controls: true,
+  responsive: true,
+  fluid: true,
+  vimeo: {
+    title: false,
+    byline: false,
+    portrait: false,
+  }
+}
+
+const memorizeTimeSpent = async () => {
+  if (lesson.value && userStore.isAuthenticated) {
+    const timeSpent = Math.floor((Date.now() - sessionStartTime) / 1000)
+    await analyticsStore.updateTimeSpent(lesson.value.id, timeSpent)
+    sessionStartTime = Date.now()
+  }
+}
+
+const handleDataFetching = async (lessonId: string) => {
+  try {
+    const res = await fetchLessonById(lessonId)
+    if (res?.data) {
+      lesson.value = res.data
+
+      // Fetch Vimeo embed HTML if video URL exists
+      if (res.data.videoUrl) {
+        embedHtml.value = await getVideoEmbedHtml(res.data.videoUrl)
+      }
+    }
+  } catch (error) {
+    console.error('Error fetching lesson:', error)
+    lesson.value = null
+  }
+}
+
+const setupAnalytics = () => {
+  if (!lesson.value) return
+
+  // Mark as viewed after 1 second
+  setTimeout(() => {
+    analyticsStore.setAnalytics(VIEW_LESSON, lesson.value!)
+  }, 1000)
+
+  // Time tracking interval (every 60 seconds)
+  if (userStore.isAuthenticated) {
+    intervalId = setInterval(() => {
+      memorizeTimeSpent()
+    }, TIME_FREQUENCY_UPDATE)
+
+    // Cleanup on page exit
+    window.addEventListener('beforeunload', memorizeTimeSpent)
+  }
+}
+
+const cleanup = () => {
+  if (intervalId) {
+    memorizeTimeSpent() // Save remaining time
+    clearInterval(intervalId)
+    window.removeEventListener('beforeunload', memorizeTimeSpent)
+  }
+}
+
+onMounted(async () => {
+  const lessonId = route.params.lessonId as string
+  if (lessonId) {
+    await handleDataFetching(lessonId)
+    setupAnalytics()
+  }
+})
+
+onBeforeUnmount(() => {
+  cleanup()
+})
+</script>
+
+<style scoped lang="scss">
+.lesson-wrapper {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+
+  .player-wrapper {
+    position: relative;
+    padding-bottom: 56.25%; /* 16:9 aspect ratio */
+    height: 0;
+    overflow: hidden;
+
+    :deep(iframe),
+    :deep(video) {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  .lesson-content {
+    margin-top: 2rem;
+
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 1rem;
+    }
+
+    p {
+      font-size: 1rem;
+      line-height: 1.6;
+      color: #666;
+    }
+  }
+}
+</style>
+```
+
+Analytics Store (Pinia):
+```typescript
+// web/stores/analytics.ts
+import { defineStore } from 'pinia'
+
+export const useAnalyticsStore = defineStore('analytics', {
+  state: () => ({
+    viewedLessons: [] as number[],
+    viewedCourses: [] as number[],
+  }),
+
+  actions: {
+    async setAnalytics(type: string, item: any) {
+      const { $api } = useNuxtApp()
+
+      try {
+        await $api('/v1/analytics', {
+          method: 'POST',
+          body: {
+            type,
+            value: item.id.toString()
+          }
+        })
+
+        // Update local state
+        if (type === 'VIEW_LESSON') {
+          this.viewedLessons.push(item.id)
+        } else if (type === 'VIEW_COURSE') {
+          this.viewedCourses.push(item.id)
+        }
+      } catch (error) {
+        console.error('Failed to save analytics:', error)
+      }
+    },
+
+    async updateTimeSpent(lessonId: number, timeSpent: number) {
+      const { $api } = useNuxtApp()
+
+      try {
+        await $api('/v1/analytics/time', {
+          method: 'POST',
+          body: {
+            lessonId,
+            timeSpent
+          }
+        })
+      } catch (error) {
+        console.error('Failed to update time spent:', error)
+      }
+    }
+  },
+
+  persist: {
+    storage: persistedState.localStorage,
+    paths: ['viewedLessons', 'viewedCourses']
+  }
+})
+```
+
+API Composable:
+```typescript
+// web/composables/useLesson.ts
+export const useLesson = () => {
+  const fetchLessonById = async (lessonId: string) => {
+    const { $api } = useNuxtApp()
+    return await $api(`/v1/lessons/${lessonId}`, {
+      method: 'GET'
+    })
+  }
+
+  const getVideoEmbedHtml = async (videoUrl: string): Promise<string> => {
+    try {
+      const response = await $fetch(
+        `https://vimeo.com/api/oembed.json?url=${encodeURIComponent(videoUrl)}`
+      )
+      return response.html || ''
+    } catch (error) {
+      console.error('Failed to fetch Vimeo embed:', error)
+      return ''
+    }
+  }
+
+  return {
+    fetchLessonById,
+    getVideoEmbedHtml
+  }
+}
+```
+
+Vue 3 Patterns:
+- v-html pentru Vimeo embed (STILL SECURITY ISSUE - needs sanitization)
+- vue3-video-play sau @videojs-player/vue pentru video player
+- Pinia store pentru analytics
+- onBeforeUnmount pentru cleanup
+- let variable pentru sessionStartTime (closure)
+- window.addEventListener cu cleanup
+- NuxtImg pentru optimized images
+
+--------------------------------------------------------------------------------
+API REQUEST/RESPONSE
+--------------------------------------------------------------------------------
+
+Request 1: Get Lesson
+GET /v1/lessons/{lessonId}
+Headers: Authorization: Bearer {accessToken}
+
+Example:
+GET /v1/lessons/120
+
+Response Success (200):
+```json
+{
+  "data": {
+    "id": 120,
+    "title": "Introducere - Ce este Yoga?",
+    "description": "Prima lecție explorează fundamentele yoga și beneficiile practice pentru corp și minte.",
+    "videoUrl": "https://vimeo.com/123456789",
+    "imageUrl": "https://somaway.fra1.cdn.digitaloceanspaces.com/lessons/lesson-120.jpg",
+    "displayOrder": 1,
+    "courseId": 15,
+    "course": {
+      "id": 15,
+      "title": "Introducere în Yoga",
+      "slug": "introducere-in-yoga",
+      "authorName": "Maria Popescu"
+    }
+  }
+}
+```
+
+Request 2: Save Analytics (View Lesson)
+POST /v1/analytics
+Headers: Authorization: Bearer {accessToken}
+Body:
+```json
+{
+  "type": "VIEW_LESSON",
+  "value": "120"
+}
+```
+
+Response Success (201):
+```json
+{
+  "data": {
+    "id": 5432,
+    "userId": 78,
+    "type": "VIEW_LESSON",
+    "value": "120",
+    "createdAt": "2024-11-03T10:15:30Z"
+  }
+}
+```
+
+Request 3: Update Time Spent
+POST /v1/analytics/time
+Headers: Authorization: Bearer {accessToken}
+Body:
+```json
+{
+  "lessonId": 120,
+  "timeSpent": 120
+}
+```
+
+Response Success (201):
+```json
+{
+  "data": {
+    "id": 892,
+    "userId": 78,
+    "lessonId": 120,
+    "timeSpent": 120,
+    "createdAt": "2024-11-03T10:16:30Z",
+    "updatedAt": "2024-11-03T10:16:30Z"
+  }
+}
+```
+
+Request 4: Vimeo oEmbed
+GET https://vimeo.com/api/oembed.json?url={videoUrl}
+
+Example:
+GET https://vimeo.com/api/oembed.json?url=https%3A%2F%2Fvimeo.com%2F123456789
+
+Response Success (200):
+```json
+{
+  "type": "video",
+  "version": "1.0",
+  "provider_name": "Vimeo",
+  "provider_url": "https://vimeo.com/",
+  "title": "Introducere - Ce este Yoga?",
+  "author_name": "Somaway",
+  "author_url": "https://vimeo.com/somaway",
+  "is_plus": "1",
+  "html": "<iframe src=\"https://player.vimeo.com/video/123456789?h=abc123&amp;title=0&amp;byline=0&amp;portrait=0\" width=\"640\" height=\"360\" frameborder=\"0\" allow=\"autoplay; fullscreen; picture-in-picture\" allowfullscreen></iframe>",
+  "width": 640,
+  "height": 360,
+  "duration": 1234,
+  "thumbnail_url": "https://i.vimeocdn.com/video/123456789_640.jpg",
+  "thumbnail_width": 640,
+  "thumbnail_height": 360
+}
+```
+
+--------------------------------------------------------------------------------
+DEPENDENCIES
+--------------------------------------------------------------------------------
+
+Current (React/Next.js):
+- next/router (useRouter)
+- react (useState, useEffect)
+- react-redux (useSelector, useDispatch)
+- react-player (ReactPlayer)
+- next/image (Image)
+- @/hooks/useAnalytics
+- @/api/lesson (fetchLessonByLessonId)
+- @/api/vimeo (getVideoEmbedHtml)
+- @/components/layouts/AppLayout
+- @/components/pages/course/LessonDetail
+- @/utils/constants (VIEW_LESSON, TIME_FREQUENCY_UPDATE, NOT_INITIALIZED)
+- @/types/lesson (LessonEntity)
+
+Target (Vue/Nuxt 3):
+- vue-router (useRoute)
+- vue (ref, onMounted, onBeforeUnmount)
+- pinia (useAnalyticsStore, useUserStore)
+- vue3-video-play OR @videojs-player/vue
+- nuxt/image (NuxtImg)
+- @/composables/useLesson
+- @/stores/analytics
+- @/stores/user
+- @/components/layouts/AppLayout.vue
+- @/utils/constants (VIEW_LESSON, TIME_FREQUENCY_UPDATE)
+- @/types/lesson (LessonEntity)
+
+Third-Party APIs:
+- Vimeo oEmbed API (https://vimeo.com/api/oembed.json)
+
+Shared Services:
+- API: GET /v1/lessons/{id}
+- API: POST /v1/analytics
+- API: POST /v1/analytics/time
+
+--------------------------------------------------------------------------------
+AUTHORIZATION
+--------------------------------------------------------------------------------
+
+Required Role: CUSTOMER (authenticated users only)
+Authentication: JWT Bearer token in Authorization header
+Access Control: AppLayout component enforces role check
+
+Unauthorized Behavior:
+- Redirect to /signin if not authenticated
+- 401 response if token invalid/expired
+- Time tracking disabled for non-authenticated users
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+1. **Video Player Strategy**:
+   - Primary: Vimeo oEmbed HTML (rich player cu features)
+   - Fallback: ReactPlayer/VideoPlayer (dacă oEmbed fail)
+   - Last resort: Placeholder image (no video available)
+
+2. **Analytics Delay**: 1 secundă delay pentru VIEW_LESSON evită false-positive când utilizatorul doar navighează rapid
+
+3. **Time Tracking Interval**: 60 secunde (TIME_FREQUENCY_UPDATE constant) pentru reduce API calls
+
+4. **BeforeUnload Pattern**:
+   - Salvează timpul rămas când utilizatorul închide tab-ul
+   - Important: funcționează doar cu synchronous API calls (use Navigator.sendBeacon în producție)
+
+5. **Session Start Time**:
+   - let variable (nu const) pentru a putea fi resetată după fiecare update
+   - Closure pattern pentru a menține valoarea între interval calls
+
+6. **Authentication Check**:
+   - cachedToken.atx !== NOT_INITIALIZED pattern (specific app-ului)
+   - Time tracking activat doar dacă utilizatorul autentificat
+
+7. **Error Handling**:
+   - Simple message "Lecția nu a fost găsită" (no proper error component)
+   - Console.error pentru debugging
+
+Security Issues:
+8. **CRITICAL - XSS Risk**:
+   - dangerouslySetInnerHTML / v-html pentru Vimeo embed HTML
+   - Recommendation: Sanitize HTML cu DOMPurify înainte de render
+   - Alternative: Use iframe direct cu URL parsing (no HTML injection)
+
+9. **CORS**: Vimeo oEmbed API poate avea CORS restrictions (use backend proxy)
+
+Performance:
+10. **Video Loading**: Lazy loading pentru video player
+11. **Embed Fetch**: Extra API call la Vimeo (poate fi cached)
+12. **Analytics Batching**: Consider batching analytics calls pentru reduce overhead
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+1. **Sanitize Video Embed HTML**:
+   ```typescript
+   import DOMPurify from 'dompurify'
+   const sanitizedHtml = DOMPurify.sanitize(embedHtml)
+   ```
+
+2. **Use sendBeacon for BeforeUnload**:
+   ```typescript
+   window.addEventListener('beforeunload', () => {
+     navigator.sendBeacon('/v1/analytics/time', JSON.stringify({
+       lessonId: lesson.value.id,
+       timeSpent: Math.floor((Date.now() - sessionStartTime) / 1000)
+     }))
+   })
+   ```
+
+3. **Add Error Boundary**: Proper error component cu retry functionality
+
+4. **Add Loading State**: Skeleton UI pentru video player loading
+
+5. **Optimize Vimeo Embed**:
+   - Cache embed HTML in localStorage/sessionStorage
+   - Proxy Vimeo API prin backend pentru avoid CORS
+
+6. **Add Video Player Controls**:
+   - Play/Pause tracking
+   - Progress tracking (25%, 50%, 75%, 100%)
+   - Playback speed tracking
+
+7. **Implement Video Resume**:
+   - Save playback position
+   - Resume from last position on return
+
+8. **Add Keyboard Shortcuts**: Space pentru play/pause, Arrow keys pentru seek
+
+9. **Add Picture-in-Picture**: Browser API pentru PiP mode
+
+10. **Better Error Messages**:
+    - "Video indisponibil temporar"
+    - "Verifică conexiunea la internet"
+    - Retry button
+
+11. **Add Related Lessons**: Sidebar cu next/previous lesson navigation
+
+12. **Implement Completion Badge**: Visual indicator când lecția completată 100%
+
+Migration Notes:
+- Testează Vimeo embed în ambele browsere (Chrome, Firefox, Safari)
+- Verifică performance cu video HD (bandwidth considerations)
+- Implementează fallback pentru browsers fără video support
+
+
+================================================================================
+TASK 3: COURSEDETAIL COMPONENT - COURSE INFORMATION DISPLAY
+================================================================================
+
+Title: CourseDetail Component - Course Info, Analytics & Shortlist
+
+Priority: High
+Complexity: Medium
+Estimated Time: 5h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+Componenta CourseDetail afișează informațiile complete despre un curs: imagine, titlu, autor, și lista de lecții.
+
+Funcționalități:
+1. Afișare imagine curs (responsive, optimizată)
+2. Titlu și autor curs cu iconițe
+3. Buton "Start" → navigare la prima lecție din curs
+4. Toggle shortlist/favorite (star filled/outlined)
+5. Analytics tracking: VIEW_COURSE cu delay 1 secundă
+6. Lista lecții afișată prin LessonsWrapper component
+7. Fallback imagine default dacă imageUrl lipsește
+
+Flow:
+1. Componenta primește obiect `course` ca prop
+2. useEffect → setTimeout 1s → setAnalytics(VIEW_COURSE)
+3. Check dacă course.lessons.length > 0
+4. Afișare buton Start cu link la /curs/{slug}/{firstLessonId}
+5. Buton shortlist toggle: star filled (in shortlist) / star outlined (nu e în shortlist)
+6. Click pe star → toggleCourseToShortlist(courseId)
+7. Afișare LessonsWrapper sub informații curs
+
+Business Rules:
+- Analytics tracking după 1 secundă (evită false-positive)
+- Buton Start visible doar dacă există lecții
+- Shortlist toggle disponibil întotdeauna (chiar fără lecții)
+- Prima lecție = course.lessons[0] (sortare pe displayOrder pe backend)
+- Default image: DEFAULT_COURSE_IMG constant
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/components/pages/course/CourseDetail.tsx
+
+```typescript
+import React, { useEffect } from 'react';
+import { Row, Col, Typography } from 'antd';
+import { UserOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
+import Image from 'next/image';
+
+import CustomButton from '@/components/shared/CustomButton';
+import LessonsWrapper from '@/components/pages/lessons/LessonsWrapper';
+
+import { useAnalytics } from '@/hooks/useAnalytics';
+import { useShortlist } from '@/hooks/useShortlist';
+import { VIEW_COURSE, PATHS, DEFAULT_COURSE_IMG } from '@/utils/constants';
+import type { CourseEntity } from '@/types/course';
+
+import './CourseDetail.scss';
+
+const { Title, Paragraph } = Typography;
+
+interface CourseDetailProps {
+  course: CourseEntity;
+}
+
+const CourseDetail: React.FC<CourseDetailProps> = ({ course }) => {
+  const { setAnalytics } = useAnalytics();
+  const { toggleCourseToShortlist, isCourseInShortlist } = useShortlist();
+
+  const imageSrc = course?.imageUrl || DEFAULT_COURSE_IMG;
+  const isInShortListState = isCourseInShortlist(course.id);
+
+  useEffect(() => {
+    // Mark course as viewed after 1 second
+    setTimeout(() => {
+      setAnalytics(VIEW_COURSE, course);
+    }, 1000);
+  }, []);
+
+  const handleShortlistToggle = () => {
+    toggleCourseToShortlist(course.id);
+  };
+
+  const getFirstLessonUrl = (): string => {
+    if (course?.lessons?.length > 0) {
+      return `${PATHS.COURSE}/${course.slug}/${course.lessons[0].id}`;
+    }
+    return '';
+  };
+
+  return (
+    <div className="courseDetail-wrapper">
+      <Row className="courseDetail-innerContent" gutter={[32, 32]}>
+        <Col xs={24} md={12}>
+          <div className="courseDetail-image">
+            <Image
+              src={imageSrc}
+              alt={course?.title || 'Course'}
+              width={600}
+              height={600}
+              layout="responsive"
+              objectFit="cover"
+              priority
+            />
+          </div>
+        </Col>
+
+        <Col xs={24} md={12}>
+          <div className="courseDetail-info">
+            <Title level={1}>{course?.title}</Title>
+
+            <Paragraph className="courseDetail-author">
+              <UserOutlined /> {course?.authorName}
+            </Paragraph>
+
+            <Paragraph className="courseDetail-description">
+              {course?.description}
+            </Paragraph>
+
+            {course?.rating && (
+              <Paragraph className="courseDetail-rating">
+                Rating: {course.rating.toFixed(1)} / 5.0
+              </Paragraph>
+            )}
+
+            {Boolean(course?.lessons?.length) && (
+              <div className="courseDetail-actions">
+                <CustomButton
+                  type="primary"
+                  size="large"
+                  href={getFirstLessonUrl()}
+                >
+                  Start
+                </CustomButton>
+
+                <CustomButton
+                  type="default"
+                  size="large"
+                  icon={isInShortListState ? <StarFilled /> : <StarOutlined />}
+                  onClick={handleShortlistToggle}
+                >
+                  {isInShortListState ? 'În favorite' : 'Adaugă la favorite'}
+                </CustomButton>
+              </div>
+            )}
+          </div>
+        </Col>
+      </Row>
+
+      {Boolean(course?.lessons?.length) && (
+        <LessonsWrapper course={course} />
+      )}
+    </div>
+  );
+};
+
+export default CourseDetail;
+```
+
+Hooks:
+```typescript
+// web/src/hooks/useShortlist.ts
+import { useDispatch, useSelector } from 'react-redux';
+import { addCourseToShortlist, removeCourseFromShortlist } from '@/store/shortlistSlice';
+import { saveCourseToShortlist, removeCourseFromShortlistAPI } from '@/api/shortlist';
+
+export const useShortlist = () => {
+  const dispatch = useDispatch();
+  const shortlist = useSelector((state: any) => state.shortlist);
+
+  const isCourseInShortlist = (courseId: number): boolean => {
+    return shortlist.courses.some((id: number) => id === courseId);
+  };
+
+  const toggleCourseToShortlist = async (courseId: number) => {
+    const isInShortlist = isCourseInShortlist(courseId);
+
+    if (isInShortlist) {
+      dispatch(removeCourseFromShortlist(courseId));
+      await removeCourseFromShortlistAPI(courseId);
+    } else {
+      dispatch(addCourseToShortlist(courseId));
+      await saveCourseToShortlist(courseId);
+    }
+  };
+
+  return {
+    isCourseInShortlist,
+    toggleCourseToShortlist,
+  };
+};
+```
+
+Styles (SCSS):
+```scss
+// web/src/components/pages/course/CourseDetail.scss
+.courseDetail-wrapper {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+
+  .courseDetail-innerContent {
+    margin-bottom: 3rem;
+  }
+
+  .courseDetail-image {
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  }
+
+  .courseDetail-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+
+    h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-bottom: 0;
+    }
+
+    .courseDetail-author {
+      font-size: 1.1rem;
+      color: #666;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .courseDetail-description {
+      font-size: 1rem;
+      line-height: 1.6;
+      color: #333;
+    }
+
+    .courseDetail-rating {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #f5a623;
+    }
+
+    .courseDetail-actions {
+      display: flex;
+      gap: 1rem;
+      margin-top: 1.5rem;
+
+      button {
+        flex: 1;
+        max-width: 200px;
+      }
+    }
+  }
+}
+
+@media (max-width: 768px) {
+  .courseDetail-wrapper {
+    padding: 1rem;
+
+    .courseDetail-info {
+      h1 {
+        font-size: 1.8rem;
+      }
+
+      .courseDetail-actions {
+        flex-direction: column;
+
+        button {
+          max-width: 100%;
+        }
+      }
+    }
+  }
+}
+```
+
+Key Patterns:
+- Props interface cu TypeScript
+- useEffect pentru analytics cu setTimeout
+- Custom hooks: useAnalytics, useShortlist
+- Ant Design Grid: Row/Col cu responsive breakpoints
+- Next Image: optimized images cu layout="responsive"
+- Conditional rendering: Boolean(course?.lessons?.length)
+- Optional chaining: course?.imageUrl || DEFAULT_COURSE_IMG
+- SCSS modules pentru styling
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+Location: web/components/pages/course/CourseDetail.vue
+
+```vue
+<template>
+  <div class="courseDetail-wrapper">
+    <a-row :gutter="[32, 32]" class="courseDetail-innerContent">
+      <a-col :xs="24" :md="12">
+        <div class="courseDetail-image">
+          <NuxtImg
+            :src="imageSrc"
+            :alt="course?.title || 'Course'"
+            width="600"
+            height="600"
+            format="webp"
+            loading="lazy"
+            fit="cover"
+          />
+        </div>
+      </a-col>
+
+      <a-col :xs="24" :md="12">
+        <div class="courseDetail-info">
+          <a-typography-title :level="1">
+            {{ course?.title }}
+          </a-typography-title>
+
+          <a-typography-paragraph class="courseDetail-author">
+            <UserOutlined />
+            {{ course?.authorName }}
+          </a-typography-paragraph>
+
+          <a-typography-paragraph class="courseDetail-description">
+            {{ course?.description }}
+          </a-typography-paragraph>
+
+          <a-typography-paragraph
+            v-if="course?.rating"
+            class="courseDetail-rating"
+          >
+            Rating: {{ course.rating.toFixed(1) }} / 5.0
+          </a-typography-paragraph>
+
+          <div v-if="hasLessons" class="courseDetail-actions">
+            <CustomButton
+              type="primary"
+              size="large"
+              :href="firstLessonUrl"
+            >
+              Start
+            </CustomButton>
+
+            <CustomButton
+              type="default"
+              size="large"
+              @click="handleShortlistToggle"
+            >
+              <template #icon>
+                <StarFilled v-if="isInShortlist" />
+                <StarOutlined v-else />
+              </template>
+              {{ isInShortlist ? 'În favorite' : 'Adaugă la favorite' }}
+            </CustomButton>
+          </div>
+        </div>
+      </a-col>
+    </a-row>
+
+    <LessonsWrapper v-if="hasLessons" :course="course" />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { UserOutlined, StarFilled, StarOutlined } from '@ant-design/icons-vue'
+import { useAnalyticsStore } from '@/stores/analytics'
+import { useShortlistStore } from '@/stores/shortlist'
+import { VIEW_COURSE, PATHS, DEFAULT_COURSE_IMG } from '@/utils/constants'
+import type { CourseEntity } from '@/types/course'
+
+interface Props {
+  course: CourseEntity
+}
+
+const props = defineProps<Props>()
+
+const analyticsStore = useAnalyticsStore()
+const shortlistStore = useShortlistStore()
+
+const imageSrc = computed(() => props.course?.imageUrl || DEFAULT_COURSE_IMG)
+const hasLessons = computed(() => Boolean(props.course?.lessons?.length))
+const isInShortlist = computed(() => shortlistStore.isCourseInShortlist(props.course.id))
+
+const firstLessonUrl = computed(() => {
+  if (hasLessons.value) {
+    return `${PATHS.COURSE}/${props.course.slug}/${props.course.lessons[0].id}`
+  }
+  return ''
+})
+
+const handleShortlistToggle = () => {
+  shortlistStore.toggleCourseToShortlist(props.course.id)
+}
+
+onMounted(() => {
+  // Mark course as viewed after 1 second
+  setTimeout(() => {
+    analyticsStore.setAnalytics(VIEW_COURSE, props.course)
+  }, 1000)
+})
+</script>
+
+<style scoped lang="scss">
+.courseDetail-wrapper {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+
+  .courseDetail-innerContent {
+    margin-bottom: 3rem;
+  }
+
+  .courseDetail-image {
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+
+    img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+  }
+
+  .courseDetail-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+
+    :deep(.ant-typography) {
+      &.ant-typography-title {
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin-bottom: 0;
+      }
+    }
+
+    .courseDetail-author {
+      font-size: 1.1rem;
+      color: #666;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .courseDetail-description {
+      font-size: 1rem;
+      line-height: 1.6;
+      color: #333;
+    }
+
+    .courseDetail-rating {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #f5a623;
+    }
+
+    .courseDetail-actions {
+      display: flex;
+      gap: 1rem;
+      margin-top: 1.5rem;
+
+      :deep(button) {
+        flex: 1;
+        max-width: 200px;
+      }
+    }
+  }
+}
+
+@media (max-width: 768px) {
+  .courseDetail-wrapper {
+    padding: 1rem;
+
+    .courseDetail-info {
+      :deep(.ant-typography-title) {
+        font-size: 1.8rem;
+      }
+
+      .courseDetail-actions {
+        flex-direction: column;
+
+        :deep(button) {
+          max-width: 100%;
+        }
+      }
+    }
+  }
+}
+</style>
+```
+
+Shortlist Store (Pinia):
+```typescript
+// web/stores/shortlist.ts
+import { defineStore } from 'pinia'
+
+export const useShortlistStore = defineStore('shortlist', {
+  state: () => ({
+    courses: [] as number[],
+    lessons: [] as number[],
+  }),
+
+  getters: {
+    isCourseInShortlist: (state) => {
+      return (courseId: number): boolean => {
+        return state.courses.includes(courseId)
+      }
+    },
+
+    isLessonInShortlist: (state) => {
+      return (lessonId: number): boolean => {
+        return state.lessons.includes(lessonId)
+      }
+    },
+  },
+
+  actions: {
+    async toggleCourseToShortlist(courseId: number) {
+      const { $api } = useNuxtApp()
+      const isInShortlist = this.isCourseInShortlist(courseId)
+
+      try {
+        if (isInShortlist) {
+          await $api('/v1/shortlist/course', {
+            method: 'DELETE',
+            body: { courseId }
+          })
+          this.courses = this.courses.filter(id => id !== courseId)
+        } else {
+          await $api('/v1/shortlist/course', {
+            method: 'POST',
+            body: { courseId }
+          })
+          this.courses.push(courseId)
+        }
+      } catch (error) {
+        console.error('Failed to toggle course shortlist:', error)
+      }
+    },
+
+    async fetchShortlist() {
+      const { $api } = useNuxtApp()
+
+      try {
+        const response = await $api('/v1/shortlist')
+        this.courses = response.data.courses || []
+        this.lessons = response.data.lessons || []
+      } catch (error) {
+        console.error('Failed to fetch shortlist:', error)
+      }
+    }
+  },
+
+  persist: {
+    storage: persistedState.localStorage,
+    paths: ['courses', 'lessons']
+  }
+})
+```
+
+Vue 3 Patterns:
+- defineProps<Props>() cu TypeScript
+- computed() pentru derived state
+- Pinia stores cu getters și actions
+- Ant Design Vue components (a-row, a-col, a-typography)
+- NuxtImg pentru optimized images
+- Template slots pentru icons
+- :deep() pentru styling nested components
+- onMounted pentru lifecycle
+
+--------------------------------------------------------------------------------
+API REQUEST/RESPONSE
+--------------------------------------------------------------------------------
+
+Request 1: Save Course to Shortlist
+POST /v1/shortlist/course
+Headers: Authorization: Bearer {accessToken}
+Body:
+```json
+{
+  "courseId": 15
+}
+```
+
+Response Success (201):
+```json
+{
+  "data": {
+    "id": 234,
+    "userId": 78,
+    "courseId": 15,
+    "createdAt": "2024-11-03T10:20:00Z"
+  }
+}
+```
+
+Request 2: Remove Course from Shortlist
+DELETE /v1/shortlist/course
+Headers: Authorization: Bearer {accessToken}
+Body:
+```json
+{
+  "courseId": 15
+}
+```
+
+Response Success (200):
+```json
+{
+  "message": "Course removed from shortlist"
+}
+```
+
+Request 3: Get User Shortlist
+GET /v1/shortlist
+Headers: Authorization: Bearer {accessToken}
+
+Response Success (200):
+```json
+{
+  "data": {
+    "courses": [15, 23, 47],
+    "lessons": [120, 156, 189, 201]
+  }
+}
+```
+
+--------------------------------------------------------------------------------
+DEPENDENCIES
+--------------------------------------------------------------------------------
+
+Current (React/Next.js):
+- react (useEffect)
+- react-redux (useDispatch, useSelector)
+- antd (Row, Col, Typography)
+- @ant-design/icons (UserOutlined, StarFilled, StarOutlined)
+- next/image (Image)
+- @/hooks/useAnalytics
+- @/hooks/useShortlist
+- @/components/shared/CustomButton
+- @/components/pages/lessons/LessonsWrapper
+- @/utils/constants (VIEW_COURSE, PATHS, DEFAULT_COURSE_IMG)
+- @/types/course (CourseEntity)
+
+Target (Vue/Nuxt 3):
+- vue (computed, onMounted)
+- pinia (useAnalyticsStore, useShortlistStore)
+- ant-design-vue (Row, Col, Typography)
+- @ant-design/icons-vue (UserOutlined, StarFilled, StarOutlined)
+- nuxt/image (NuxtImg)
+- @/stores/analytics
+- @/stores/shortlist
+- @/components/shared/CustomButton.vue
+- @/components/pages/lessons/LessonsWrapper.vue
+- @/utils/constants (VIEW_COURSE, PATHS, DEFAULT_COURSE_IMG)
+- @/types/course (CourseEntity)
+
+Shared Services:
+- API: POST /v1/shortlist/course
+- API: DELETE /v1/shortlist/course
+- API: GET /v1/shortlist
+- API: POST /v1/analytics
+
+--------------------------------------------------------------------------------
+AUTHORIZATION
+--------------------------------------------------------------------------------
+
+Required Role: CUSTOMER (authenticated users only)
+Authentication: JWT Bearer token in Authorization header
+Access Control: Parent page (CoursePage) enforces CUSTOMER role
+
+Shortlist Operations:
+- Add/Remove: Requires authentication
+- Local state updates immediate (optimistic UI)
+- API calls asynchronous (error handling needed)
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+1. **Analytics Delay**: 1 secundă pentru evita false-positive când user doar navighează
+
+2. **Shortlist Toggle**:
+   - Optimistic UI update (local state first, API call after)
+   - Error handling: rollback local state if API fails
+   - Persistent state: Redux Persist / Pinia persist
+
+3. **First Lesson URL**:
+   - Assumes lessons array sorted by displayOrder
+   - Backend responsabilitate pentru sorting
+   - Frontend folosește lessons[0] direct
+
+4. **Image Optimization**:
+   - Next Image: automatic optimization, lazy loading, responsive
+   - NuxtImg: similar features cu format="webp"
+   - Default image fallback dacă imageUrl lipsește
+
+5. **Responsive Design**:
+   - Desktop: 2 columns (image + info)
+   - Mobile: 1 column stacked
+   - Ant Design breakpoints: xs, md
+
+6. **Rating Display**:
+   - toFixed(1) pentru 1 decimal
+   - Conditional rendering dacă rating exists
+
+7. **Button States**:
+   - Start button: visible doar cu lecții
+   - Shortlist toggle: visible întotdeauna
+   - Icon changes: StarFilled vs StarOutlined
+
+Performance:
+8. **Image Loading**: Priority pentru course image (above fold)
+9. **Analytics Batching**: Consider batching pentru reduce API calls
+10. **Shortlist Sync**: Fetch shortlist on app init (reduce redundant calls)
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+1. **Add Loading States**: Spinner pentru shortlist toggle operations
+
+2. **Add Error Handling**:
+   - Toast notifications pentru shortlist errors
+   - Rollback optimistic updates on failure
+
+3. **Implement Analytics Batching**:
+   ```typescript
+   const batchAnalytics = []
+   setTimeout(() => {
+     if (batchAnalytics.length > 0) {
+       api.post('/v1/analytics/batch', batchAnalytics)
+     }
+   }, 5000)
+   ```
+
+4. **Add Course Progress**:
+   - Show completion percentage
+   - Visual progress bar
+   - "Continue watching" vs "Start"
+
+5. **Add Social Sharing**: Share buttons pentru Facebook, Twitter, LinkedIn
+
+6. **Implement Course Preview**:
+   - Trailer video în modal
+   - Sample lesson preview pentru non-subscribers
+
+7. **Add Related Courses**: Sidebar cu similar courses (recommendation engine)
+
+8. **Better Rating Display**:
+   - Star icons (not just number)
+   - Number of reviews
+   - Link to reviews section
+
+9. **Add Tags/Categories**:
+   - Visual tags pentru course topics
+   - Clickable pentru filter similar courses
+
+10. **Implement Breadcrumbs**:
+    - Home > Cursuri > {Category} > {Course Title}
+    - Better navigation UX
+
+11. **Add Course Stats**:
+    - Number of lessons
+    - Total duration
+    - Difficulty level
+    - Last updated date
+
+12. **Optimize Shortlist**:
+    - Debounce rapid toggle clicks
+    - Keyboard shortcut (Ctrl+S)
+    - Bulk operations support
+
+Migration Notes:
+- Testează analytics tracking în development vs production
+- Verifică shortlist persistence cross-browser (localStorage limitations)
+- Performance test cu cursuri cu multe lecții (100+)
+
+
+================================================================================
+TASK 4: MATERIALS WRAPPER - FILTERING & DATA MANAGEMENT
+================================================================================
+
+Title: MaterialsWrapper Component - Advanced Filtering Logic
+
+Priority: High
+Complexity: Very High
+Estimated Time: 10h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+MaterialsWrapper este componenta centrală pentru managementul listelor de cursuri și lecții, oferind funcționalități avansate de filtrare și paginare.
+
+Acest component orchestrează:
+1. **Dual Material Types**: Afișare unificată cursuri + lecții în aceeași listă
+2. **Complex Filtering**: Category filter, practice filter, tag filters, favorites filter
+3. **Smart API Switching**: Fetch lessons sau courses bazat pe filtri activi
+4. **Pagination**: Offset-based cu "View More" functionality
+5. **Profile Sync**: Detect subscription changes și refresh data
+6. **Categories Management**: Fetch și cache categorii + tag-uri
+7. **Favorites Integration**: Unlimited results pentru favorites view
+
+Logica de filtrare:
+```
+IF favorites selected:
+  → Fetch all items (limit = 0), no pagination
+ELSE IF tags selected (AND practice filter = 0):
+  → Fetch LESSONS filtered by tags + category
+ELSE:
+  → Fetch COURSES filtered by category + practice + tags
+```
+
+Flow principal:
+1. Mount → fetch categories (COURSES + TAGS types, isOnFilter=true)
+2. Apply filters → determine API endpoint (lessons vs courses)
+3. Fetch data cu offset + limit (PAGE_SIZE = 12)
+4. "View More" → increment offset, append results
+5. Filter change → reset offset, fetch new data
+6. Profile update → refetch pentru reflect subscription changes
+
+Business Rules:
+- Favorites (categoryFilter = favCategory.id) → show ALL items, no limit
+- Tags + no practice → fetch LESSONS endpoint
+- No tags OR practice selected → fetch COURSES endpoint
+- Category filter applies to both endpoints
+- Pagination disabled pentru favorites
+- Profile version check → refetch on subscription change
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/components/pages/courses/MaterialsWrapper.tsx
+
+```typescript
+import React, { useEffect, useState, useRef } from 'react';
+import { useSelector } from 'react-redux';
+import type { AxiosResponse } from 'axios';
+
+import SimpleFilters from '@/components/pages/courses/SimpleFilters';
+import MaterialsList from '@/components/pages/courses/MaterialsList';
+
+import { fetchCategoriesList } from '@/api/categories';
+import { fetchAllCourses } from '@/api/course';
+import { fetchAllLessons } from '@/api/lesson';
+import { CategoriesTypes, LOADING, PAGE_SIZE } from '@/utils/constants';
+import type { CourseEntity } from '@/types/course';
+import type { LessonEntity } from '@/types/lesson';
+import type { CategoryResponseData } from '@/types/category';
+
+import './MaterialsWrapper.scss';
+
+interface MaterialsWrapperProps {
+  filterType?: 'courses' | 'lessons' | 'all';
+}
+
+interface FiltersType {
+  categoryFilter: number;
+  practiceFilter: number;
+}
+
+const favCategory = { id: -1, name: 'Favorite' };
+
+const MaterialsWrapper: React.FC<MaterialsWrapperProps> = ({
+  filterType = 'all'
+}) => {
+  const profileVersion = useSelector((state: any) => state.user.profileVersion);
+  const isInitialMount = useRef(true);
+
+  const [filters, setFilters] = useState<FiltersType>({
+    categoryFilter: 0,
+    practiceFilter: 0,
+  });
+  const [tagFilterIds, setTagFilterId] = useState<number[]>([]);
+  const [materialsList, setMaterialsList] = useState<(CourseEntity | LessonEntity)[]>([]);
+  const [categoryFilter, setCategoriesList] = useState<CategoryResponseData[]>([]);
+  const [offsetValue, setOffsetValue] = useState<number>(0);
+  const [canLoadMore, setCanLoadMore] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<string>(LOADING.ALL);
+
+  const handleDataFetching = async (): Promise<void> => {
+    let limit = PAGE_SIZE; // 12 items per page
+
+    // Fetch categories on first mount
+    if (isInitialMount.current) {
+      await fetchCategoriesList({
+        type: [CategoriesTypes.COURSES, CategoriesTypes.TAGS],
+        isOnFilter: true,
+      }).then(async (res: AxiosResponse) => {
+        setCategoriesList(res?.data?.categories || []);
+      });
+      isInitialMount.current = false;
+    }
+
+    // Show all items for favorites (no pagination)
+    if (filters.categoryFilter === favCategory.id) {
+      limit = 0;
+    }
+
+    // Determine API endpoint based on filters
+    const shouldFetchLessons = !Boolean(filters.practiceFilter) && Boolean(tagFilterIds?.length);
+
+    try {
+      if (shouldFetchLessons) {
+        // Fetch LESSONS when tags selected and no practice filter
+        await fetchAllLessons(
+          offsetValue,
+          undefined,
+          tagFilterIds,
+          filters.categoryFilter,
+          limit
+        ).then(async (lessonRes: AxiosResponse) => {
+          const lessonsData = lessonRes.data?.lessons || [];
+
+          if (offsetValue === 0) {
+            setMaterialsList(lessonsData);
+          } else {
+            setMaterialsList((prev) => [...prev, ...lessonsData]);
+          }
+
+          setCanLoadMore(lessonsData.length === PAGE_SIZE);
+          setIsLoading(LOADING.NONE);
+        });
+      } else {
+        // Fetch COURSES otherwise
+        await fetchAllCourses(
+          offsetValue,
+          undefined,
+          tagFilterIds,
+          filters.categoryFilter,
+          filters.practiceFilter,
+          limit
+        ).then(async (courseRes: AxiosResponse) => {
+          const coursesData = courseRes.data?.courses || [];
+
+          if (offsetValue === 0) {
+            setMaterialsList(coursesData);
+          } else {
+            setMaterialsList((prev) => [...prev, ...coursesData]);
+          }
+
+          setCanLoadMore(coursesData.length === PAGE_SIZE);
+          setIsLoading(LOADING.NONE);
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching materials:', error);
+      setIsLoading(LOADING.NONE);
+      setCanLoadMore(false);
+    }
+  };
+
+  const updateFilters = (newFilters: Partial<FiltersType>) => {
+    setFilters((prev) => ({ ...prev, ...newFilters }));
+    setOffsetValue(0); // Reset pagination
+    setIsLoading(LOADING.ALL);
+  };
+
+  const updateTagFilters = (tags: number[]) => {
+    setTagFilterId(tags);
+    setOffsetValue(0); // Reset pagination
+    setIsLoading(LOADING.ALL);
+  };
+
+  // Fetch data on mount and filter/offset changes
+  useEffect(() => {
+    handleDataFetching();
+  }, [offsetValue, filters, tagFilterIds]);
+
+  // Refetch on profile version change (subscription update)
+  useEffect(() => {
+    if (!isInitialMount.current) {
+      setOffsetValue(0);
+      setIsLoading(LOADING.ALL);
+      handleDataFetching();
+    }
+  }, [profileVersion]);
+
+  return (
+    <div className="container materialsWrapper">
+      <SimpleFilters
+        filters={filters}
+        tagFilters={tagFilterIds}
+        categories={categoryFilter}
+        updateFilters={updateFilters}
+        updateTagFilters={updateTagFilters}
+      />
+
+      <MaterialsList
+        materialsList={materialsList}
+        offsetValue={offsetValue}
+        canLoadMore={canLoadMore}
+        isLoading={isLoading}
+        setIsLoading={setIsLoading}
+        setOffsetValue={setOffsetValue}
+      />
+    </div>
+  );
+};
+
+export default MaterialsWrapper;
+```
+
+API Functions:
+```typescript
+// web/src/api/course.ts
+export const fetchAllCourses = async (
+  offset: number = 0,
+  search?: string,
+  tagFilterIds?: number[],
+  categoryFilter?: number,
+  practiceFilter?: number,
+  limit?: number
+): Promise<AxiosResponse> => {
+  const params = new URLSearchParams();
+
+  if (offset) params.append('offset', offset.toString());
+  if (search) params.append('search', search);
+  if (limit !== undefined) params.append('limit', limit.toString());
+  if (categoryFilter) params.append('categoryId', categoryFilter.toString());
+  if (practiceFilter) params.append('isPractice', practiceFilter.toString());
+  if (tagFilterIds?.length) {
+    tagFilterIds.forEach(id => params.append('tagIds[]', id.toString()));
+  }
+
+  return await axios.get(`${API_URL}/v1/courses?${params.toString()}`, {
+    headers: getAuthHeaders(),
+  });
+};
+
+// web/src/api/lesson.ts
+export const fetchAllLessons = async (
+  offset: number = 0,
+  search?: string,
+  tagFilterIds?: number[],
+  categoryFilter?: number,
+  limit?: number
+): Promise<AxiosResponse> => {
+  const params = new URLSearchParams();
+
+  if (offset) params.append('offset', offset.toString());
+  if (search) params.append('search', search);
+  if (limit !== undefined) params.append('limit', limit.toString());
+  if (categoryFilter) params.append('categoryId', categoryFilter.toString());
+  if (tagFilterIds?.length) {
+    tagFilterIds.forEach(id => params.append('tagIds[]', id.toString()));
+  }
+
+  return await axios.get(`${API_URL}/v1/lessons?${params.toString()}`, {
+    headers: getAuthHeaders(),
+  });
+};
+
+// web/src/api/categories.ts
+export const fetchCategoriesList = async (params: {
+  type?: string[];
+  isOnFilter?: boolean;
+}): Promise<AxiosResponse> => {
+  const queryParams = new URLSearchParams();
+
+  if (params.type) {
+    params.type.forEach(t => queryParams.append('type[]', t));
+  }
+  if (params.isOnFilter) {
+    queryParams.append('isOnFilter', 'true');
+  }
+
+  return await axios.get(`${API_URL}/v1/categories?${queryParams.toString()}`, {
+    headers: getAuthHeaders(),
+  });
+};
+```
+
+Constants:
+```typescript
+// web/src/utils/constants.ts
+export const PAGE_SIZE = 12;
+
+export const LOADING = {
+  ALL: 'all',
+  MORE: 'more',
+  NONE: 'none',
+};
+
+export const CategoriesTypes = {
+  COURSES: 'COURSES',
+  TAGS: 'TAGS',
+  LESSONS: 'LESSONS',
+};
+```
+
+Key Patterns:
+- useRef pentru tracking initial mount
+- Complex state management cu multiple useState
+- Conditional API switching bazat pe filtri
+- URLSearchParams pentru query string building
+- Pagination: offset + limit pattern
+- Profile version tracking pentru subscription changes
+- Reset offset on filter change
+- Append vs replace logic pentru paginare
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+Location: web/components/pages/courses/MaterialsWrapper.vue
+
+```vue
+<template>
+  <div class="container materialsWrapper">
+    <SimpleFilters
+      :filters="filters"
+      :tag-filters="tagFilterIds"
+      :categories="categoriesList"
+      @update:filters="updateFilters"
+      @update:tag-filters="updateTagFilters"
+    />
+
+    <MaterialsList
+      :materials-list="materialsList"
+      :offset-value="offsetValue"
+      :can-load-more="canLoadMore"
+      :is-loading="isLoading"
+      @update:offset="handleOffsetUpdate"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, watch, onMounted, computed } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useUserStore } from '@/stores/user'
+import { useCategoriesStore } from '@/stores/categories'
+import { fetchAllCourses } from '@/api/course'
+import { fetchAllLessons } from '@/api/lesson'
+import { CategoriesTypes, LOADING, PAGE_SIZE } from '@/utils/constants'
+import type { CourseEntity } from '@/types/course'
+import type { LessonEntity } from '@/types/lesson'
+import type { FiltersType } from '@/types/filters'
+
+interface Props {
+  filterType?: 'courses' | 'lessons' | 'all'
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  filterType: 'all'
+})
+
+const userStore = useUserStore()
+const categoriesStore = useCategoriesStore()
+const { profileVersion } = storeToRefs(userStore)
+
+const favCategory = { id: -1, name: 'Favorite' }
+
+const filters = ref<FiltersType>({
+  categoryFilter: 0,
+  practiceFilter: 0,
+})
+const tagFilterIds = ref<number[]>([])
+const materialsList = ref<(CourseEntity | LessonEntity)[]>([])
+const categoriesList = ref<CategoryResponseData[]>([])
+const offsetValue = ref<number>(0)
+const canLoadMore = ref<boolean>(false)
+const isLoading = ref<string>(LOADING.ALL)
+const isInitialMount = ref<boolean>(true)
+
+const shouldFetchLessons = computed(() => {
+  return !filters.value.practiceFilter && tagFilterIds.value.length > 0
+})
+
+const handleDataFetching = async (): Promise<void> => {
+  let limit = PAGE_SIZE // 12 items per page
+
+  try {
+    // Fetch categories on first mount
+    if (isInitialMount.value) {
+      await categoriesStore.fetchCategories({
+        type: [CategoriesTypes.COURSES, CategoriesTypes.TAGS],
+        isOnFilter: true,
+      })
+      categoriesList.value = categoriesStore.categories
+      isInitialMount.value = false
+    }
+
+    // Show all items for favorites (no pagination)
+    if (filters.value.categoryFilter === favCategory.id) {
+      limit = 0
+    }
+
+    // Determine API endpoint based on filters
+    if (shouldFetchLessons.value) {
+      // Fetch LESSONS when tags selected and no practice filter
+      const response = await fetchAllLessons({
+        offset: offsetValue.value,
+        tagFilterIds: tagFilterIds.value,
+        categoryFilter: filters.value.categoryFilter,
+        limit,
+      })
+
+      const lessonsData = response.data?.lessons || []
+
+      if (offsetValue.value === 0) {
+        materialsList.value = lessonsData
+      } else {
+        materialsList.value = [...materialsList.value, ...lessonsData]
+      }
+
+      canLoadMore.value = lessonsData.length === PAGE_SIZE
+    } else {
+      // Fetch COURSES otherwise
+      const response = await fetchAllCourses({
+        offset: offsetValue.value,
+        tagFilterIds: tagFilterIds.value,
+        categoryFilter: filters.value.categoryFilter,
+        practiceFilter: filters.value.practiceFilter,
+        limit,
+      })
+
+      const coursesData = response.data?.courses || []
+
+      if (offsetValue.value === 0) {
+        materialsList.value = coursesData
+      } else {
+        materialsList.value = [...materialsList.value, ...coursesData]
+      }
+
+      canLoadMore.value = coursesData.length === PAGE_SIZE
+    }
+
+    isLoading.value = LOADING.NONE
+  } catch (error) {
+    console.error('Error fetching materials:', error)
+    isLoading.value = LOADING.NONE
+    canLoadMore.value = false
+  }
+}
+
+const updateFilters = (newFilters: Partial<FiltersType>) => {
+  filters.value = { ...filters.value, ...newFilters }
+  offsetValue.value = 0 // Reset pagination
+  isLoading.value = LOADING.ALL
+}
+
+const updateTagFilters = (tags: number[]) => {
+  tagFilterIds.value = tags
+  offsetValue.value = 0 // Reset pagination
+  isLoading.value = LOADING.ALL
+}
+
+const handleOffsetUpdate = (newOffset: number) => {
+  offsetValue.value = newOffset
+  isLoading.value = LOADING.MORE
+}
+
+// Watch for filter/offset changes
+watch([offsetValue, filters, tagFilterIds], () => {
+  handleDataFetching()
+}, { deep: true })
+
+// Watch for profile version changes (subscription updates)
+watch(profileVersion, () => {
+  if (!isInitialMount.value) {
+    offsetValue.value = 0
+    isLoading.value = LOADING.ALL
+    handleDataFetching()
+  }
+})
+
+onMounted(() => {
+  handleDataFetching()
+})
+</script>
+
+<style scoped lang="scss">
+.materialsWrapper {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+</style>
+```
+
+API Composables:
+```typescript
+// web/composables/useCourses.ts
+export const useCourses = () => {
+  const { $api } = useNuxtApp()
+
+  const fetchAllCourses = async (params: {
+    offset?: number
+    search?: string
+    tagFilterIds?: number[]
+    categoryFilter?: number
+    practiceFilter?: number
+    limit?: number
+  }) => {
+    const queryParams = new URLSearchParams()
+
+    if (params.offset) queryParams.append('offset', params.offset.toString())
+    if (params.search) queryParams.append('search', params.search)
+    if (params.limit !== undefined) queryParams.append('limit', params.limit.toString())
+    if (params.categoryFilter) queryParams.append('categoryId', params.categoryFilter.toString())
+    if (params.practiceFilter) queryParams.append('isPractice', params.practiceFilter.toString())
+    if (params.tagFilterIds?.length) {
+      params.tagFilterIds.forEach(id => queryParams.append('tagIds[]', id.toString()))
+    }
+
+    return await $api(`/v1/courses?${queryParams.toString()}`, {
+      method: 'GET'
+    })
+  }
+
+  return {
+    fetchAllCourses
+  }
+}
+
+// web/composables/useLessons.ts
+export const useLessons = () => {
+  const { $api } = useNuxtApp()
+
+  const fetchAllLessons = async (params: {
+    offset?: number
+    search?: string
+    tagFilterIds?: number[]
+    categoryFilter?: number
+    limit?: number
+  }) => {
+    const queryParams = new URLSearchParams()
+
+    if (params.offset) queryParams.append('offset', params.offset.toString())
+    if (params.search) queryParams.append('search', params.search)
+    if (params.limit !== undefined) queryParams.append('limit', params.limit.toString())
+    if (params.categoryFilter) queryParams.append('categoryId', params.categoryFilter.toString())
+    if (params.tagFilterIds?.length) {
+      params.tagFilterIds.forEach(id => queryParams.append('tagIds[]', id.toString()))
+    }
+
+    return await $api(`/v1/lessons?${queryParams.toString()}`, {
+      method: 'GET'
+    })
+  }
+
+  return {
+    fetchAllLessons
+  }
+}
+```
+
+Categories Store (Pinia):
+```typescript
+// web/stores/categories.ts
+import { defineStore } from 'pinia'
+
+export const useCategoriesStore = defineStore('categories', {
+  state: () => ({
+    categories: [] as CategoryResponseData[],
+    tags: [] as CategoryResponseData[],
+  }),
+
+  actions: {
+    async fetchCategories(params: {
+      type?: string[]
+      isOnFilter?: boolean
+    }) {
+      const { $api } = useNuxtApp()
+      const queryParams = new URLSearchParams()
+
+      if (params.type) {
+        params.type.forEach(t => queryParams.append('type[]', t))
+      }
+      if (params.isOnFilter) {
+        queryParams.append('isOnFilter', 'true')
+      }
+
+      try {
+        const response = await $api(`/v1/categories?${queryParams.toString()}`, {
+          method: 'GET'
+        })
+
+        this.categories = response.data?.categories || []
+
+        // Separate tags from categories
+        this.tags = this.categories.filter(cat => cat.type === 'TAGS')
+      } catch (error) {
+        console.error('Failed to fetch categories:', error)
+      }
+    }
+  },
+
+  persist: {
+    storage: persistedState.localStorage,
+    paths: ['categories', 'tags']
+  }
+})
+```
+
+Vue 3 Patterns:
+- defineProps cu withDefaults
+- storeToRefs pentru reactive Pinia refs
+- watch cu deep: true pentru nested objects
+- computed pentru derived logic
+- Event emitters cu @update pattern
+- Composables pentru API calls
+- Pinia store pentru categories cache
+
+--------------------------------------------------------------------------------
+API REQUEST/RESPONSE
+--------------------------------------------------------------------------------
+
+Request 1: Get Courses with Filters
+GET /v1/courses?offset=0&limit=12&categoryId=3&isPractice=1&tagIds[]=5&tagIds[]=8
+Headers: Authorization: Bearer {accessToken}
+
+Response Success (200):
+```json
+{
+  "data": {
+    "courses": [
+      {
+        "id": 15,
+        "title": "Introducere în Yoga",
+        "slug": "introducere-in-yoga",
+        "description": "Un curs complet pentru începători...",
+        "imageUrl": "https://somaway.fra1.cdn.digitaloceanspaces.com/courses/yoga-intro.jpg",
+        "authorName": "Maria Popescu",
+        "rating": 4.8,
+        "isPractice": true,
+        "displayOrder": 5,
+        "materialType": "COURSE",
+        "lessons": [...]
+      }
+    ],
+    "total": 45,
+    "hasMore": true
+  }
+}
+```
+
+Request 2: Get Lessons with Tag Filters
+GET /v1/lessons?offset=12&limit=12&categoryId=2&tagIds[]=10
+Headers: Authorization: Bearer {accessToken}
+
+Response Success (200):
+```json
+{
+  "data": {
+    "lessons": [
+      {
+        "id": 120,
+        "title": "Introducere - Ce este Yoga?",
+        "description": "Prima lecție...",
+        "videoUrl": "https://vimeo.com/123456789",
+        "imageUrl": "https://somaway.fra1.cdn.digitaloceanspaces.com/lessons/lesson-120.jpg",
+        "displayOrder": 1,
+        "courseId": 15,
+        "materialType": "LESSON",
+        "course": {
+          "id": 15,
+          "title": "Introducere în Yoga",
+          "slug": "introducere-in-yoga"
+        }
+      }
+    ],
+    "total": 28,
+    "hasMore": true
+  }
+}
+```
+
+Request 3: Get Categories for Filters
+GET /v1/categories?type[]=COURSES&type[]=TAGS&isOnFilter=true
+Headers: Authorization: Bearer {accessToken}
+
+Response Success (200):
+```json
+{
+  "data": {
+    "categories": [
+      {
+        "id": 1,
+        "name": "Yoga",
+        "type": "COURSES",
+        "isOnFilter": true
+      },
+      {
+        "id": 2,
+        "name": "Meditație",
+        "type": "COURSES",
+        "isOnFilter": true
+      },
+      {
+        "id": 10,
+        "name": "Începători",
+        "type": "TAGS",
+        "isOnFilter": true
+      }
+    ]
+  }
+}
+```
+
+--------------------------------------------------------------------------------
+DEPENDENCIES
+--------------------------------------------------------------------------------
+
+Current (React/Next.js):
+- react (useEffect, useState, useRef)
+- react-redux (useSelector)
+- axios (AxiosResponse)
+- @/components/pages/courses/SimpleFilters
+- @/components/pages/courses/MaterialsList
+- @/api/categories (fetchCategoriesList)
+- @/api/course (fetchAllCourses)
+- @/api/lesson (fetchAllLessons)
+- @/utils/constants (CategoriesTypes, LOADING, PAGE_SIZE)
+- @/types/course (CourseEntity)
+- @/types/lesson (LessonEntity)
+- @/types/category (CategoryResponseData)
+
+Target (Vue/Nuxt 3):
+- vue (ref, watch, onMounted, computed)
+- pinia (storeToRefs, useUserStore, useCategoriesStore)
+- @/components/pages/courses/SimpleFilters.vue
+- @/components/pages/courses/MaterialsList.vue
+- @/composables/useCourses (fetchAllCourses)
+- @/composables/useLessons (fetchAllLessons)
+- @/stores/user (profileVersion tracking)
+- @/stores/categories (categories cache)
+- @/utils/constants (CategoriesTypes, LOADING, PAGE_SIZE)
+- @/types/course (CourseEntity)
+- @/types/lesson (LessonEntity)
+- @/types/filters (FiltersType)
+
+Shared Services:
+- API: GET /v1/courses
+- API: GET /v1/lessons
+- API: GET /v1/categories
+
+--------------------------------------------------------------------------------
+AUTHORIZATION
+--------------------------------------------------------------------------------
+
+Required Role: CUSTOMER (authenticated users for full access)
+Public Access: Some endpoints may allow public preview
+Authentication: JWT Bearer token in Authorization header
+
+Access Control:
+- Authenticated users see full courses list with access
+- Non-authenticated users may see limited preview
+- Slug presence in response indicates user access
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+1. **Complex Filtering Logic**:
+   - Favorites filter → limit=0, fetch all items
+   - Tags selected + no practice → fetch LESSONS endpoint
+   - Otherwise → fetch COURSES endpoint
+   - Category filter applies to both endpoints
+
+2. **API Switching Logic**:
+   ```
+   shouldFetchLessons = !practiceFilter AND tagFilterIds.length > 0
+   ```
+
+3. **Profile Version Tracking**:
+   - User subscription changes increment profileVersion
+   - Watch profileVersion → refetch data to reflect new access
+   - Important pentru show/hide content based on subscription
+
+4. **Pagination Pattern**:
+   - offset=0 → replace full list
+   - offset>0 → append to existing list
+   - canLoadMore = (results.length === PAGE_SIZE)
+
+5. **Initial Mount Pattern**:
+   - useRef(true) pentru track first render
+   - Fetch categories only on first mount
+   - Avoid refetch categories on every filter change
+
+6. **State Reset**:
+   - Filter change → reset offset to 0
+   - Filter change → set loading state to ALL
+   - Ensures fresh data fetch from beginning
+
+7. **Material Type Unified**:
+   - Both courses and lessons have materialType property
+   - Used by MaterialsList pentru correct rendering
+   - Backend adds this property to each item
+
+Performance:
+8. **Categories Caching**: Fetch once, cache in Pinia store
+9. **Debounce Filters**: Consider debouncing rapid filter changes
+10. **Virtual Scrolling**: For very long lists (100+ items)
+
+Security:
+11. **Query Parameter Validation**: Backend validates all params
+12. **Rate Limiting**: Applied to search/filter endpoints
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+1. **Add Search Functionality**:
+   - Text search input in SimpleFilters
+   - Debounced search (500ms delay)
+   - Clear search button
+
+2. **Implement URL Query Params**:
+   - Sync filters to URL: ?category=3&practice=1&tags=5,8
+   - Enable sharing filtered results
+   - Browser back/forward navigation
+
+3. **Add Filter Presets**:
+   - "Most Popular"
+   - "Recently Added"
+   - "Top Rated"
+   - "Continue Watching"
+
+4. **Optimize API Calls**:
+   - Debounce filter changes (avoid API spam)
+   - Cache results per filter combination
+   - Implement request cancellation
+
+5. **Add Loading Skeletons**:
+   - Show skeletons during LOADING.ALL
+   - Show spinner during LOADING.MORE
+   - Better UX than blank screen
+
+6. **Implement Infinite Scroll**:
+   - Alternative to "View More" button
+   - Auto-load on scroll near bottom
+   - IntersectionObserver API
+
+7. **Add Filter Count Badges**:
+   - Show number of items per category
+   - Update counts when filters change
+   - "Yoga (23)" instead of just "Yoga"
+
+8. **Implement Advanced Sorting**:
+   - Sort by: Date Added, Title, Rating, Popularity
+   - Ascending/Descending toggle
+   - Remember user preference
+
+9. **Add Empty States**:
+   - Custom message când no results
+   - Suggest removing filters
+   - Show related content
+
+10. **Implement Filter Persistence**:
+    - Remember last used filters in localStorage
+    - Clear filters button
+    - Reset to defaults option
+
+Migration Notes:
+- Test filtering logic cu toate combinațiile de filtri
+- Verify pagination works correctly cu append logic
+- Test profile version sync cu subscription changes
+- Performance test cu 1000+ items în listă
+
+
+================================================================================
+TASK 5: MATERIALS LIST - UNIFIED RENDERING
+================================================================================
+
+Title: MaterialsList Component - Courses & Lessons Unified Display
+
+Priority: High
+Complexity: Medium
+Estimated Time: 4h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+MaterialsList este componenta care renderizează lista unificată de cursuri și lecții, cu suport pentru paginare și loading states.
+
+Funcționalități:
+1. **Unified Rendering**: Display courses și lessons în aceeași listă
+2. **Type Discrimination**: Diferențiere între COURSE și LESSON material types
+3. **Loading States**: Skeleton UI pentru initial load, spinner pentru "View More"
+4. **Pagination**: "View More" button cu increment offset
+5. **Empty State**: Mesaj când nu există rezultate
+6. **Responsive Grid**: Ant Design List cu responsive columns
+
+Flow:
+1. Primește materialsList array de la MaterialsWrapper
+2. Verifică loading state: ALL → skeletons, MORE → spinner, NONE → content
+3. Iterează prin materialsList
+4. Pentru fiecare item: check materialType
+5. Dacă LESSON → render LessonItem component
+6. Dacă COURSE → render CourseItem component
+7. La final: render "View More" button dacă canLoadMore=true
+8. Click "View More" → setOffsetValue(offset + PAGE_SIZE)
+
+Business Rules:
+- Skeleton count: 12 items (PAGE_SIZE)
+- "View More" visible doar când canLoadMore=true
+- Empty state când materialsList.length === 0 AND loading=NONE
+- Type-safe rendering cu TypeScript type guards
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/components/pages/courses/MaterialsList.tsx
+
+```typescript
+import React from 'react';
+import { List, Row, Col, Typography, Skeleton } from 'antd';
+
+import CourseItem from '@/components/pages/courses/CourseItem';
+import LessonItem from '@/components/pages/courses/LessonItem';
+import ViewMore from '@/components/shared/ViewMore';
+
+import { LOADING, PAGE_SIZE, materialTypes } from '@/utils/constants';
+import type { CourseEntity } from '@/types/course';
+import type { LessonEntity } from '@/types/lesson';
+
+import './MaterialsList.scss';
+
+const { Paragraph } = Typography;
+
+interface MaterialsListProps {
+  materialsList: (CourseEntity | LessonEntity)[];
+  offsetValue: number;
+  canLoadMore: boolean;
+  isLoading: string;
+  setIsLoading: (state: string) => void;
+  setOffsetValue: (offset: number) => void;
+}
+
+// Skeleton loader for initial loading
+const coursesSkeletons = Array.from({ length: PAGE_SIZE }, (_, index) => (
+  <Col key={`skeleton-${index}`} xs={24} sm={12} md={8} lg={6}>
+    <Skeleton.Image style={{ width: '100%', height: 250 }} active />
+    <Skeleton active paragraph={{ rows: 3 }} />
+  </Col>
+));
+
+const MaterialsList: React.FC<MaterialsListProps> = ({
+  materialsList,
+  offsetValue,
+  canLoadMore,
+  isLoading,
+  setIsLoading,
+  setOffsetValue,
+}) => {
+  const handleFetchMore = (): void => {
+    setIsLoading(LOADING.MORE);
+    setOffsetValue(offsetValue + PAGE_SIZE);
+  };
+
+  // Show skeletons during initial load
+  if (isLoading === LOADING.ALL) {
+    return (
+      <Row gutter={[16, 24]} className="materials-list">
+        {coursesSkeletons}
+      </Row>
+    );
+  }
+
+  // Show empty state
+  if (materialsList?.length === 0) {
+    return (
+      <Row className="materials-list empty">
+        <Col span={24}>
+          <Paragraph className="empty-message">
+            Nu există cursuri sau lecții disponibile pentru filtrele selectate.
+          </Paragraph>
+          <Paragraph className="empty-suggestion">
+            Încearcă să elimini unele filtre sau explorează alte categorii.
+          </Paragraph>
+        </Col>
+      </Row>
+    );
+  }
+
+  return (
+    <div className="materials-list-wrapper">
+      <List<CourseEntity | LessonEntity>
+        grid={{
+          gutter: 16,
+          xs: 1,
+          sm: 2,
+          md: 3,
+          lg: 4,
+        }}
+        dataSource={materialsList}
+        renderItem={(item) => (
+          <List.Item>
+            {item.materialType === materialTypes.LESSON ? (
+              <LessonItem lesson={item as LessonEntity} />
+            ) : (
+              <CourseItem course={item as CourseEntity} />
+            )}
+          </List.Item>
+        )}
+        loadMore={
+          canLoadMore ? (
+            <ViewMore
+              loading={isLoading === LOADING.MORE}
+              handleFetchMore={handleFetchMore}
+            />
+          ) : null
+        }
+      />
+    </div>
+  );
+};
+
+export default MaterialsList;
+```
+
+ViewMore Component:
+```typescript
+// web/src/components/shared/ViewMore.tsx
+import React from 'react';
+import { Button, Spin } from 'antd';
+import { LoadingOutlined } from '@ant-design/icons';
+
+interface ViewMoreProps {
+  loading: boolean;
+  handleFetchMore: () => void;
+  canLoadMore?: boolean;
+}
+
+const ViewMore: React.FC<ViewMoreProps> = ({
+  loading,
+  handleFetchMore,
+  canLoadMore = true,
+}) => {
+  if (!canLoadMore) return null;
+
+  return (
+    <div className="view-more-wrapper">
+      {loading ? (
+        <Spin indicator={<LoadingOutlined spin />} />
+      ) : (
+        <Button type="primary" size="large" onClick={handleFetchMore}>
+          Încarcă mai multe
+        </Button>
+      )}
+    </div>
+  );
+};
+
+export default ViewMore;
+```
+
+Constants:
+```typescript
+// web/src/utils/constants.ts
+export const materialTypes = {
+  LESSON: 'LESSON',
+  COURSE: 'COURSE',
+};
+```
+
+Styles:
+```scss
+// web/src/components/pages/courses/MaterialsList.scss
+.materials-list-wrapper {
+  margin-top: 2rem;
+
+  .ant-list-grid .ant-list-item {
+    margin-bottom: 24px;
+  }
+
+  .empty {
+    text-align: center;
+    padding: 4rem 2rem;
+
+    .empty-message {
+      font-size: 1.2rem;
+      color: #666;
+      margin-bottom: 1rem;
+    }
+
+    .empty-suggestion {
+      font-size: 1rem;
+      color: #999;
+    }
+  }
+}
+
+.view-more-wrapper {
+  text-align: center;
+  padding: 2rem 0;
+
+  button {
+    min-width: 200px;
+  }
+}
+```
+
+Key Patterns:
+- Ant Design List với grid layout
+- Type discrimination: materialType property
+- Skeleton array generation: Array.from()
+- Conditional rendering: loading states + empty state
+- Type assertions: item as CourseEntity | LessonEntity
+- LoadMore pattern cu ViewMore component
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+Location: web/components/pages/courses/MaterialsList.vue
+
+```vue
+<template>
+  <div class="materials-list-wrapper">
+    <!-- Loading Skeletons -->
+    <a-row v-if="isLoading === LOADING.ALL" :gutter="[16, 24]" class="materials-list">
+      <a-col
+        v-for="n in PAGE_SIZE"
+        :key="`skeleton-${n}`"
+        :xs="24"
+        :sm="12"
+        :md="8"
+        :lg="6"
+      >
+        <a-skeleton-image style="width: 100%; height: 250px" :active="true" />
+        <a-skeleton :active="true" :paragraph="{ rows: 3 }" />
+      </a-col>
+    </a-row>
+
+    <!-- Empty State -->
+    <a-row v-else-if="materialsList.length === 0" class="materials-list empty">
+      <a-col :span="24">
+        <a-typography-paragraph class="empty-message">
+          Nu există cursuri sau lecții disponibile pentru filtrele selectate.
+        </a-typography-paragraph>
+        <a-typography-paragraph class="empty-suggestion">
+          Încearcă să elimini unele filtre sau explorează alte categorii.
+        </a-typography-paragraph>
+      </a-col>
+    </a-row>
+
+    <!-- Materials List -->
+    <a-list
+      v-else
+      :grid="{ gutter: 16, xs: 1, sm: 2, md: 3, lg: 4 }"
+      :data-source="materialsList"
+    >
+      <template #renderItem="{ item }">
+        <a-list-item>
+          <LessonItem
+            v-if="item.materialType === materialTypes.LESSON"
+            :lesson="item as LessonEntity"
+          />
+          <CourseItem
+            v-else
+            :course="item as CourseEntity"
+          />
+        </a-list-item>
+      </template>
+
+      <template #loadMore>
+        <ViewMore
+          v-if="canLoadMore"
+          :loading="isLoading === LOADING.MORE"
+          @fetch-more="handleFetchMore"
+        />
+      </template>
+    </a-list>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { LOADING, PAGE_SIZE, materialTypes } from '@/utils/constants'
+import type { CourseEntity } from '@/types/course'
+import type { LessonEntity } from '@/types/lesson'
+
+interface Props {
+  materialsList: (CourseEntity | LessonEntity)[]
+  offsetValue: number
+  canLoadMore: boolean
+  isLoading: string
+}
+
+const props = defineProps<Props>()
+const emit = defineEmits<{
+  'update:offset': [offset: number]
+}>()
+
+const handleFetchMore = () => {
+  emit('update:offset', props.offsetValue + PAGE_SIZE)
+}
+</script>
+
+<style scoped lang="scss">
+.materials-list-wrapper {
+  margin-top: 2rem;
+
+  :deep(.ant-list-grid .ant-list-item) {
+    margin-bottom: 24px;
+  }
+
+  .empty {
+    text-align: center;
+    padding: 4rem 2rem;
+
+    .empty-message {
+      font-size: 1.2rem;
+      color: #666;
+      margin-bottom: 1rem;
+    }
+
+    .empty-suggestion {
+      font-size: 1rem;
+      color: #999;
+    }
+  }
+}
+</style>
+```
+
+ViewMore Component:
+```vue
+<!-- web/components/shared/ViewMore.vue -->
+<template>
+  <div class="view-more-wrapper">
+    <a-spin v-if="loading">
+      <template #indicator>
+        <LoadingOutlined spin />
+      </template>
+    </a-spin>
+
+    <a-button
+      v-else
+      type="primary"
+      size="large"
+      @click="emit('fetch-more')"
+    >
+      Încarcă mai multe
+    </a-button>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { LoadingOutlined } from '@ant-design/icons-vue'
+
+interface Props {
+  loading: boolean
+}
+
+defineProps<Props>()
+const emit = defineEmits<{
+  'fetchMore': []
+}>()
+</script>
+
+<style scoped lang="scss">
+.view-more-wrapper {
+  text-align: center;
+  padding: 2rem 0;
+
+  button {
+    min-width: 200px;
+  }
+}
+</style>
+```
+
+Vue 3 Patterns:
+- v-for pentru skeleton generation
+- v-if/v-else-if/v-else pentru conditional rendering
+- Template slots (#renderItem, #loadMore)
+- Type assertions în template
+- defineEmits cu TypeScript types
+- Scoped styles cu :deep() pentru nested components
+
+--------------------------------------------------------------------------------
+API REQUEST/RESPONSE
+--------------------------------------------------------------------------------
+
+No direct API calls (data passed from parent MaterialsWrapper)
+
+Data Structure Expected:
+```typescript
+materialsList: Array<{
+  id: number
+  title: string
+  materialType: 'COURSE' | 'LESSON'
+  ...CourseEntity | LessonEntity properties
+}>
+```
+
+--------------------------------------------------------------------------------
+DEPENDENCIES
+--------------------------------------------------------------------------------
+
+Current (React/Next.js):
+- react
+- antd (List, Row, Col, Typography, Skeleton)
+- @/components/pages/courses/CourseItem
+- @/components/pages/courses/LessonItem
+- @/components/shared/ViewMore
+- @/utils/constants (LOADING, PAGE_SIZE, materialTypes)
+- @/types/course (CourseEntity)
+- @/types/lesson (LessonEntity)
+
+Target (Vue/Nuxt 3):
+- vue
+- ant-design-vue (List, Row, Col, Typography, Skeleton)
+- @ant-design/icons-vue (LoadingOutlined)
+- @/components/pages/courses/CourseItem.vue
+- @/components/pages/courses/LessonItem.vue
+- @/components/shared/ViewMore.vue
+- @/utils/constants (LOADING, PAGE_SIZE, materialTypes)
+- @/types/course (CourseEntity)
+- @/types/lesson (LessonEntity)
+
+--------------------------------------------------------------------------------
+AUTHORIZATION
+--------------------------------------------------------------------------------
+
+No authorization logic (handled by parent and child components)
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+1. **Type Discrimination**: materialType property determines which component to render
+
+2. **Skeleton Count**: PAGE_SIZE (12) skeletons for consistent loading experience
+
+3. **Grid Responsiveness**:
+   - xs (mobile): 1 column
+   - sm (tablet): 2 columns
+   - md (desktop): 3 columns
+   - lg (large desktop): 4 columns
+
+4. **Loading States**:
+   - LOADING.ALL → show skeletons, hide list
+   - LOADING.MORE → show spinner in ViewMore
+   - LOADING.NONE → show content
+
+5. **Empty State**:
+   - Helpful message
+   - Suggestion to modify filters
+   - Centered layout
+
+6. **Pagination Logic**:
+   - ViewMore component emits event to parent
+   - Parent updates offset
+   - Parent refetches data
+   - New data appended to list
+
+Performance:
+7. **Virtual Scrolling**: Consider pentru very long lists (react-window / vue-virtual-scroller)
+8. **Image Lazy Loading**: Handled by child components (CourseItem, LessonItem)
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+1. **Add Grid/List Toggle**:
+   - Switch between grid and list view
+   - Persist preference in localStorage
+
+2. **Add Sort Controls**:
+   - Dropdown above list
+   - Sort by: Name, Date, Rating
+
+3. **Implement Skeleton Matching**:
+   - Different skeleton for course vs lesson
+   - More realistic loading experience
+
+4. **Add Animation**:
+   - Fade-in animation pentru new items
+   - Smooth transition când data loads
+
+5. **Implement Intersection Observer**:
+   - Auto-load more când user scrolls near bottom
+   - Alternative to manual "View More" button
+
+6. **Better Empty State**:
+   - Illustration/icon
+   - "Clear all filters" button
+   - Suggested courses section
+
+Migration Notes:
+- Test grid responsiveness pe toate device sizes
+- Verify type discrimination funcționează correct
+- Test pagination cu multiple loads
+
+
+================================================================================
+TASK 6: COURSEITEM CARD - COURSE CARD DISPLAY
+================================================================================
+
+Title: CourseItem Component - Course Card in Materials List
+
+Priority: High
+Complexity: Medium
+Estimated Time: 4h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+CourseItem este card-ul individual pentru un curs în lista de materiale, afișând informații esențiale și acțiuni disponibile.
+
+Funcționalități:
+1. **Course Image**: Responsive image cu lazy loading și skeleton
+2. **Course Info**: Title, author, description (truncated)
+3. **Access Control**: Diferențiere între acces activ vs abonament necesar
+4. **Navigation**: Link către curs (dacă acces) sau abonamente (fără acces)
+5. **Shortlist Toggle**: Star icon pentru add/remove favorites
+6. **Practice Flag**: Buton text diferit pentru practici vs cursuri
+7. **No Access Disclaimer**: Warning message pentru utilizatori fără abonament
+
+Flow:
+1. Primește obiect `course` ca prop
+2. Check access: Boolean(course.slug) → has access
+3. Dacă access → link la /curs/{slug}
+4. Dacă no access → link la /abonamente + disclaimer visible
+5. Description truncated la 148 caractere
+6. Star toggle: check isCourseInShortlist(courseId)
+7. Click star → toggleCourseToShortlist(courseId)
+
+Business Rules:
+- Slug presence = user has active subscription pentru acest curs
+- No slug = user needs to subscribe
+- Description truncation: 148 chars + "..."
+- isPractice flag: "Vezi practicile" vs "Vezi cursul"
+- No access disclaimer visible only când !hasAccess
+- Safe URL encoding pentru slug (encodeURIComponent)
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/components/pages/courses/CourseItem.tsx
+
+```typescript
+import React from 'react';
+import Link from 'next/link';
+import Image from 'next/image';
+import { Typography, Skeleton } from 'antd';
+import { UserOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
+
+import CustomButton from '@/components/shared/CustomButton';
+
+import { useShortlist } from '@/hooks/useShortlist';
+import { PATHS, DEFAULT_COURSE_IMG } from '@/utils/constants';
+import type { CourseEntity } from '@/types/course';
+
+import './CourseItem.scss';
+
+const { Paragraph } = Typography;
+
+interface CourseItemProps {
+  course: CourseEntity;
+}
+
+const CourseItem: React.FC<CourseItemProps> = ({ course }) => {
+  const { toggleCourseToShortlist, isCourseInShortlist } = useShortlist();
+
+  const hasAccessToMaterial = Boolean(course?.slug);
+  const safeSlug = hasAccessToMaterial && encodeURIComponent(course.slug);
+  const courseLink = hasAccessToMaterial
+    ? `${PATHS.COURSE}/${safeSlug}`
+    : PATHS.SUBSCRIPTIONS;
+
+  const imageSrc = course?.imageUrl || DEFAULT_COURSE_IMG;
+  const isInShortlist = isCourseInShortlist(course.id);
+
+  const handleShortlistToggle = (e: React.MouseEvent) => {
+    e.preventDefault(); // Prevent link navigation
+    e.stopPropagation();
+    toggleCourseToShortlist(course.id);
+  };
+
+  return (
+    <li className={`ant-list-item course-item ${!hasAccessToMaterial && 'no-access'}`}>
+      <div className="course-card">
+        <Link href={courseLink}>
+          <a className="course-image-link">
+            <Image
+              src={imageSrc}
+              alt={course?.title || 'Course'}
+              width={350}
+              height={200}
+              objectFit="cover"
+              placeholder={<Skeleton.Avatar size={350} shape="square" />}
+              loading="lazy"
+            />
+          </a>
+        </Link>
+
+        <div className="material-content">
+          <Link href={courseLink}>
+            <a><h3>{course?.title}</h3></a>
+          </Link>
+
+          <Paragraph className="course-author">
+            <UserOutlined /> {course?.authorName}
+          </Paragraph>
+
+          <Paragraph className="course-description">
+            {course?.description?.substring(0, 148)}
+            {course?.description?.length > 148 && '...'}
+          </Paragraph>
+
+          {!hasAccessToMaterial && (
+            <Paragraph className="no-access-disclaimer">
+              *Pentru a avea acces la această resursă este necesar un abonament activ Somaway
+            </Paragraph>
+          )}
+        </div>
+
+        <div className="card-actions">
+          {hasAccessToMaterial ? (
+            <CustomButton type="primary" href={courseLink}>
+              {course.isPractice ? 'Vezi practicile' : 'Vezi cursul'}
+            </CustomButton>
+          ) : (
+            <CustomButton type="primary" href={PATHS.SUBSCRIPTIONS}>
+              Abonează-te!
+            </CustomButton>
+          )}
+
+          <CustomButton
+            type="default"
+            icon={isInShortlist ? <StarFilled /> : <StarOutlined />}
+            onClick={handleShortlistToggle}
+            className="shortlist-btn"
+          >
+            {isInShortlist ? '' : ''}
+          </CustomButton>
+        </div>
+      </div>
+    </li>
+  );
+};
+
+export default CourseItem;
+```
+
+Styles:
+```scss
+// web/src/components/pages/courses/CourseItem.scss
+.course-item {
+  list-style: none;
+
+  &.no-access {
+    opacity: 0.8;
+
+    .course-card {
+      border: 2px dashed #ccc;
+    }
+  }
+
+  .course-card {
+    border: 1px solid #f0f0f0;
+    border-radius: 8px;
+    overflow: hidden;
+    transition: all 0.3s ease;
+    background: white;
+
+    &:hover {
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      transform: translateY(-4px);
+    }
+
+    .course-image-link {
+      display: block;
+      position: relative;
+      width: 100%;
+      height: 200px;
+      overflow: hidden;
+
+      img {
+        transition: transform 0.3s ease;
+      }
+
+      &:hover img {
+        transform: scale(1.05);
+      }
+    }
+
+    .material-content {
+      padding: 1rem;
+
+      h3 {
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        color: #333;
+        cursor: pointer;
+
+        &:hover {
+          color: #1890ff;
+        }
+      }
+
+      .course-author {
+        font-size: 0.9rem;
+        color: #666;
+        margin-bottom: 0.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .course-description {
+        font-size: 0.9rem;
+        color: #666;
+        line-height: 1.5;
+        margin-bottom: 0.5rem;
+      }
+
+      .no-access-disclaimer {
+        font-size: 0.8rem;
+        color: #ff4d4f;
+        font-style: italic;
+        margin-top: 0.5rem;
+      }
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 0.5rem;
+      padding: 1rem;
+      border-top: 1px solid #f0f0f0;
+
+      button {
+        flex: 1;
+
+        &.shortlist-btn {
+          flex: 0 0 auto;
+          min-width: 40px;
+        }
+      }
+    }
+  }
+}
+```
+
+Key Patterns:
+- Access control cu Boolean(slug) check
+- URL encoding pentru safe navigation
+- Description truncation cu substring()
+- Event handlers cu preventDefault/stopPropagation
+- Conditional class names: no-access
+- isPractice flag pentru button text
+- Image placeholder cu Skeleton
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+Location: web/components/pages/courses/CourseItem.vue
+
+```vue
+<template>
+  <li :class="['course-item', { 'no-access': !hasAccessToMaterial }]">
+    <div class="course-card">
+      <NuxtLink :to="courseLink" class="course-image-link">
+        <NuxtImg
+          :src="imageSrc"
+          :alt="course?.title || 'Course'"
+          width="350"
+          height="200"
+          format="webp"
+          loading="lazy"
+          fit="cover"
+        />
+      </NuxtLink>
+
+      <div class="material-content">
+        <NuxtLink :to="courseLink">
+          <h3>{{ course?.title }}</h3>
+        </NuxtLink>
+
+        <a-typography-paragraph class="course-author">
+          <UserOutlined />
+          {{ course?.authorName }}
+        </a-typography-paragraph>
+
+        <a-typography-paragraph class="course-description">
+          {{ truncatedDescription }}
+        </a-typography-paragraph>
+
+        <a-typography-paragraph
+          v-if="!hasAccessToMaterial"
+          class="no-access-disclaimer"
+        >
+          *Pentru a avea acces la această resursă este necesar un abonament activ Somaway
+        </a-typography-paragraph>
+      </div>
+
+      <div class="card-actions">
+        <CustomButton
+          v-if="hasAccessToMaterial"
+          type="primary"
+          :href="courseLink"
+        >
+          {{ course.isPractice ? 'Vezi practicile' : 'Vezi cursul' }}
+        </CustomButton>
+
+        <CustomButton
+          v-else
+          type="primary"
+          :href="PATHS.SUBSCRIPTIONS"
+        >
+          Abonează-te!
+        </CustomButton>
+
+        <CustomButton
+          type="default"
+          class="shortlist-btn"
+          @click.prevent.stop="handleShortlistToggle"
+        >
+          <template #icon>
+            <StarFilled v-if="isInShortlist" />
+            <StarOutlined v-else />
+          </template>
+        </CustomButton>
+      </div>
+    </div>
+  </li>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { UserOutlined, StarFilled, StarOutlined } from '@ant-design/icons-vue'
+import { useShortlistStore } from '@/stores/shortlist'
+import { PATHS, DEFAULT_COURSE_IMG } from '@/utils/constants'
+import type { CourseEntity } from '@/types/course'
+
+interface Props {
+  course: CourseEntity
+}
+
+const props = defineProps<Props>()
+const shortlistStore = useShortlistStore()
+
+const hasAccessToMaterial = computed(() => Boolean(props.course?.slug))
+
+const courseLink = computed(() => {
+  if (hasAccessToMaterial.value) {
+    const safeSlug = encodeURIComponent(props.course.slug)
+    return `${PATHS.COURSE}/${safeSlug}`
+  }
+  return PATHS.SUBSCRIPTIONS
+})
+
+const imageSrc = computed(() => props.course?.imageUrl || DEFAULT_COURSE_IMG)
+
+const isInShortlist = computed(() =>
+  shortlistStore.isCourseInShortlist(props.course.id)
+)
+
+const truncatedDescription = computed(() => {
+  const desc = props.course?.description || ''
+  return desc.length > 148 ? `${desc.substring(0, 148)}...` : desc
+})
+
+const handleShortlistToggle = () => {
+  shortlistStore.toggleCourseToShortlist(props.course.id)
+}
+</script>
+
+<style scoped lang="scss">
+.course-item {
+  list-style: none;
+
+  &.no-access {
+    opacity: 0.8;
+
+    .course-card {
+      border: 2px dashed #ccc;
+    }
+  }
+
+  .course-card {
+    border: 1px solid #f0f0f0;
+    border-radius: 8px;
+    overflow: hidden;
+    transition: all 0.3s ease;
+    background: white;
+
+    &:hover {
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      transform: translateY(-4px);
+    }
+
+    .course-image-link {
+      display: block;
+      position: relative;
+      width: 100%;
+      height: 200px;
+      overflow: hidden;
+
+      img {
+        transition: transform 0.3s ease;
+      }
+
+      &:hover img {
+        transform: scale(1.05);
+      }
+    }
+
+    .material-content {
+      padding: 1rem;
+
+      h3 {
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        color: #333;
+        cursor: pointer;
+        transition: color 0.2s ease;
+
+        &:hover {
+          color: #1890ff;
+        }
+      }
+
+      .course-author {
+        font-size: 0.9rem;
+        color: #666;
+        margin-bottom: 0.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .course-description {
+        font-size: 0.9rem;
+        color: #666;
+        line-height: 1.5;
+        margin-bottom: 0.5rem;
+      }
+
+      .no-access-disclaimer {
+        font-size: 0.8rem;
+        color: #ff4d4f;
+        font-style: italic;
+        margin-top: 0.5rem;
+      }
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 0.5rem;
+      padding: 1rem;
+      border-top: 1px solid #f0f0f0;
+
+      :deep(button) {
+        flex: 1;
+
+        &.shortlist-btn {
+          flex: 0 0 auto;
+          min-width: 40px;
+        }
+      }
+    }
+  }
+}
+</style>
+```
+
+Vue 3 Patterns:
+- computed() pentru all derived values
+- @click.prevent.stop pentru event modifiers
+- NuxtLink pentru navigation
+- NuxtImg pentru optimized images
+- Template slots pentru icons
+- Reactive class binding cu object syntax
+- Pinia store pentru shortlist management
+
+--------------------------------------------------------------------------------
+API REQUEST/RESPONSE
+--------------------------------------------------------------------------------
+
+No direct API calls (shortlist handled by store)
+
+--------------------------------------------------------------------------------
+DEPENDENCIES
+--------------------------------------------------------------------------------
+
+Current (React/Next.js):
+- react
+- next/link (Link)
+- next/image (Image)
+- antd (Typography, Skeleton)
+- @ant-design/icons (UserOutlined, StarFilled, StarOutlined)
+- @/hooks/useShortlist
+- @/components/shared/CustomButton
+- @/utils/constants (PATHS, DEFAULT_COURSE_IMG)
+- @/types/course (CourseEntity)
+
+Target (Vue/Nuxt 3):
+- vue (computed)
+- nuxt/link (NuxtLink)
+- nuxt/image (NuxtImg)
+- ant-design-vue (Typography)
+- @ant-design/icons-vue (UserOutlined, StarFilled, StarOutlined)
+- @/stores/shortlist
+- @/components/shared/CustomButton.vue
+- @/utils/constants (PATHS, DEFAULT_COURSE_IMG)
+- @/types/course (CourseEntity)
+
+--------------------------------------------------------------------------------
+AUTHORIZATION
+--------------------------------------------------------------------------------
+
+Access Control:
+- Slug presence indicates active subscription
+- No slug → redirect to subscriptions page
+- Shortlist toggle requires authentication
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+1. **Access Determination**: Boolean(course.slug) = has access
+2. **URL Safety**: encodeURIComponent pentru slugs cu caractere speciale
+3. **Description Truncation**: 148 characters cu "..." append
+4. **isPractice Flag**: Different CTA text pentru practice courses
+5. **No Access Visual**: Dashed border + disclaimer message
+6. **Event Handling**: prevent + stop pentru shortlist toggle (avoid navigation)
+7. **Image Optimization**: Lazy loading + WebP format
+8. **Hover Effects**: Scale image + lift card on hover
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+1. **Add Course Stats**: Lesson count, duration, completion %
+2. **Add Rating Display**: Star rating + review count
+3. **Add Progress Bar**: Visual progress pentru started courses
+4. **Implement Card Skeleton**: Matching skeleton în MaterialsList
+5. **Add Tooltip**: Show full description on hover
+6. **Add Tags/Badges**: Category tags, "New", "Popular" badges
+
+Migration Notes:
+- Test access control cu different user subscription states
+- Verify URL encoding pentru slugs cu diacritice
+- Test shortlist toggle cu rapid clicks (debounce?)
+
+
+================================================================================
+TASK 7: LESSONITEM CARD (MATERIALS LIST) - LESSON CARD DISPLAY
+================================================================================
+
+Title: LessonItem Component - Lesson Card in Materials List
+
+Priority: High
+Complexity: Medium
+Estimated Time: 4h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+LessonItem (materials list version) este card-ul pentru lecții în lista generală de materiale, similar cu CourseItem dar cu date specifice lecțiilor.
+
+Funcționalități:
+1. **Lesson Image**: Responsive image cu lazy loading
+2. **Lesson Info**: Title, author (from parent course), description
+3. **Course Context**: Afișează numele cursului părinte
+4. **Access Control**: Moștenit de la curs (course.slug presence)
+5. **Navigation**: Link către lecție sau abonamente
+6. **Shortlist Toggle**: Star icon pentru lessons favorites
+7. **Practice Flag**: Text buton diferit pentru practici
+
+Flow:
+1. Primește obiect `lesson` ca prop (include nested course data)
+2. Check access: Boolean(lesson.course.slug)
+3. Build URL: /curs/{courseSlug}/{lessonId}
+4. Description truncated la 148 chars
+5. Star toggle pentru lesson shortlist
+6. Author preluat din lesson.course.authorName
+
+Business Rules:
+- Access moștenit din parent course
+- lesson.course include: slug, title, authorName, isPractice
+- URL structure: /curs/{slug}/{lessonId}
+- Description truncation: 148 chars
+- Shortlist separate pentru lessons (nu courses)
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/components/pages/courses/LessonItem.tsx (materials list version)
+
+```typescript
+import React from 'react';
+import Link from 'next/link';
+import Image from 'next/image';
+import { Typography } from 'antd';
+import { UserOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
+
+import CustomButton from '@/components/shared/CustomButton';
+
+import { useShortlist } from '@/hooks/useShortlist';
+import { PATHS, DEFAULT_LESSON_IMG } from '@/utils/constants';
+import type { LessonEntity } from '@/types/lesson';
+
+import './LessonItem.scss';
+
+const { Paragraph } = Typography;
+
+interface LessonItemProps {
+  lesson: LessonEntity;
+}
+
+const LessonItem: React.FC<LessonItemProps> = ({ lesson }) => {
+  const { toggleLessonToShortlist, isLessonInShortlist } = useShortlist();
+
+  const hasAccessToMaterial = Boolean(lesson?.course?.slug);
+  const safeSlug = hasAccessToMaterial && encodeURIComponent(lesson.course.slug);
+  const lessonLink = hasAccessToMaterial
+    ? `${PATHS.COURSE}/${safeSlug}/${lesson.id}`
+    : PATHS.SUBSCRIPTIONS;
+
+  const imageSrc = lesson?.imageUrl || DEFAULT_LESSON_IMG;
+  const isInShortlist = isLessonInShortlist(lesson.id);
+
+  const handleShortlistToggle = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleLessonToShortlist(lesson.id);
+  };
+
+  return (
+    <li className={`ant-list-item lesson-item ${!hasAccessToMaterial && 'no-access'}`}>
+      <div className="lesson-card">
+        <Link href={lessonLink}>
+          <a className="lesson-image-link">
+            <Image
+              src={imageSrc}
+              alt={lesson?.title || 'Lesson'}
+              width={350}
+              height={200}
+              objectFit="cover"
+              loading="lazy"
+            />
+          </a>
+        </Link>
+
+        <div className="material-content">
+          <Link href={lessonLink}>
+            <a><h3>{lesson?.title}</h3></a>
+          </Link>
+
+          <Paragraph className="lesson-course">
+            Curs: <strong>{lesson?.course?.title}</strong>
+          </Paragraph>
+
+          <Paragraph className="lesson-author">
+            <UserOutlined /> {lesson?.course?.authorName}
+          </Paragraph>
+
+          <Paragraph className="lesson-description">
+            {lesson?.description?.substring(0, 148)}
+            {lesson?.description?.length > 148 && '...'}
+          </Paragraph>
+
+          {!hasAccessToMaterial && (
+            <Paragraph className="no-access-disclaimer">
+              *Pentru a avea acces la această resursă este necesar un abonament activ Somaway
+            </Paragraph>
+          )}
+        </div>
+
+        <div className="card-actions">
+          {hasAccessToMaterial ? (
+            <CustomButton type="primary" href={lessonLink}>
+              {lesson.course.isPractice ? 'Vezi Practica' : 'Vezi lectia'}
+            </CustomButton>
+          ) : (
+            <CustomButton type="primary" href={PATHS.SUBSCRIPTIONS}>
+              Abonează-te!
+            </CustomButton>
+          )}
+
+          <CustomButton
+            type="default"
+            icon={isInShortlist ? <StarFilled /> : <StarOutlined />}
+            onClick={handleShortlistToggle}
+            className="shortlist-btn"
+          />
+        </div>
+      </div>
+    </li>
+  );
+};
+
+export default LessonItem;
+```
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+Location: web/components/pages/courses/LessonItem.vue
+
+```vue
+<template>
+  <li :class="['lesson-item', { 'no-access': !hasAccessToMaterial }]">
+    <div class="lesson-card">
+      <NuxtLink :to="lessonLink" class="lesson-image-link">
+        <NuxtImg
+          :src="imageSrc"
+          :alt="lesson?.title || 'Lesson'"
+          width="350"
+          height="200"
+          format="webp"
+          loading="lazy"
+          fit="cover"
+        />
+      </NuxtLink>
+
+      <div class="material-content">
+        <NuxtLink :to="lessonLink">
+          <h3>{{ lesson?.title }}</h3>
+        </NuxtLink>
+
+        <a-typography-paragraph class="lesson-course">
+          Curs: <strong>{{ lesson?.course?.title }}</strong>
+        </a-typography-paragraph>
+
+        <a-typography-paragraph class="lesson-author">
+          <UserOutlined />
+          {{ lesson?.course?.authorName }}
+        </a-typography-paragraph>
+
+        <a-typography-paragraph class="lesson-description">
+          {{ truncatedDescription }}
+        </a-typography-paragraph>
+
+        <a-typography-paragraph
+          v-if="!hasAccessToMaterial"
+          class="no-access-disclaimer"
+        >
+          *Pentru a avea acces la această resursă este necesar un abonament activ Somaway
+        </a-typography-paragraph>
+      </div>
+
+      <div class="card-actions">
+        <CustomButton
+          v-if="hasAccessToMaterial"
+          type="primary"
+          :href="lessonLink"
+        >
+          {{ lesson.course.isPractice ? 'Vezi Practica' : 'Vezi lectia' }}
+        </CustomButton>
+
+        <CustomButton
+          v-else
+          type="primary"
+          :href="PATHS.SUBSCRIPTIONS"
+        >
+          Abonează-te!
+        </CustomButton>
+
+        <CustomButton
+          type="default"
+          class="shortlist-btn"
+          @click.prevent.stop="handleShortlistToggle"
+        >
+          <template #icon>
+            <StarFilled v-if="isInShortlist" />
+            <StarOutlined v-else />
+          </template>
+        </CustomButton>
+      </div>
+    </div>
+  </li>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { UserOutlined, StarFilled, StarOutlined } from '@ant-design/icons-vue'
+import { useShortlistStore } from '@/stores/shortlist'
+import { PATHS, DEFAULT_LESSON_IMG } from '@/utils/constants'
+import type { LessonEntity } from '@/types/lesson'
+
+interface Props {
+  lesson: LessonEntity
+}
+
+const props = defineProps<Props>()
+const shortlistStore = useShortlistStore()
+
+const hasAccessToMaterial = computed(() => Boolean(props.lesson?.course?.slug))
+
+const lessonLink = computed(() => {
+  if (hasAccessToMaterial.value) {
+    const safeSlug = encodeURIComponent(props.lesson.course.slug)
+    return `${PATHS.COURSE}/${safeSlug}/${props.lesson.id}`
+  }
+  return PATHS.SUBSCRIPTIONS
+})
+
+const imageSrc = computed(() => props.lesson?.imageUrl || DEFAULT_LESSON_IMG)
+
+const isInShortlist = computed(() =>
+  shortlistStore.isLessonInShortlist(props.lesson.id)
+)
+
+const truncatedDescription = computed(() => {
+  const desc = props.lesson?.description || ''
+  return desc.length > 148 ? `${desc.substring(0, 148)}...` : desc
+})
+
+const handleShortlistToggle = () => {
+  shortlistStore.toggleLessonToShortlist(props.lesson.id)
+}
+</script>
+
+<style scoped lang="scss">
+.lesson-item {
+  list-style: none;
+
+  &.no-access {
+    opacity: 0.8;
+
+    .lesson-card {
+      border: 2px dashed #ccc;
+    }
+  }
+
+  .lesson-card {
+    border: 1px solid #f0f0f0;
+    border-radius: 8px;
+    overflow: hidden;
+    transition: all 0.3s ease;
+    background: white;
+
+    &:hover {
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      transform: translateY(-4px);
+    }
+
+    .lesson-image-link {
+      display: block;
+      width: 100%;
+      height: 200px;
+      overflow: hidden;
+
+      img {
+        transition: transform 0.3s ease;
+      }
+
+      &:hover img {
+        transform: scale(1.05);
+      }
+    }
+
+    .material-content {
+      padding: 1rem;
+
+      h3 {
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        color: #333;
+
+        &:hover {
+          color: #1890ff;
+        }
+      }
+
+      .lesson-course {
+        font-size: 0.85rem;
+        color: #888;
+        margin-bottom: 0.25rem;
+
+        strong {
+          color: #555;
+        }
+      }
+
+      .lesson-author {
+        font-size: 0.9rem;
+        color: #666;
+        margin-bottom: 0.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .lesson-description {
+        font-size: 0.9rem;
+        color: #666;
+        line-height: 1.5;
+      }
+
+      .no-access-disclaimer {
+        font-size: 0.8rem;
+        color: #ff4d4f;
+        font-style: italic;
+        margin-top: 0.5rem;
+      }
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 0.5rem;
+      padding: 1rem;
+      border-top: 1px solid #f0f0f0;
+
+      :deep(button) {
+        flex: 1;
+
+        &.shortlist-btn {
+          flex: 0 0 auto;
+          min-width: 40px;
+        }
+      }
+    }
+  }
+}
+</style>
+```
+
+--------------------------------------------------------------------------------
+API REQUEST/RESPONSE
+--------------------------------------------------------------------------------
+
+No direct API calls (data from parent + shortlist via store)
+
+Expected Data Structure:
+```typescript
+lesson: {
+  id: 120,
+  title: "Introducere - Ce este Yoga?",
+  description: "...",
+  imageUrl: "...",
+  videoUrl: "...",
+  course: {
+    id: 15,
+    title: "Introducere în Yoga",
+    slug: "introducere-in-yoga",
+    authorName: "Maria Popescu",
+    isPractice: false
+  }
+}
+```
+
+--------------------------------------------------------------------------------
+DEPENDENCIES
+--------------------------------------------------------------------------------
+
+Current (React/Next.js):
+- react
+- next/link, next/image
+- antd (Typography)
+- @ant-design/icons
+- @/hooks/useShortlist
+- @/components/shared/CustomButton
+- @/utils/constants (PATHS, DEFAULT_LESSON_IMG)
+- @/types/lesson (LessonEntity with nested course)
+
+Target (Vue/Nuxt 3):
+- vue (computed)
+- nuxt/link, nuxt/image
+- ant-design-vue (Typography)
+- @ant-design/icons-vue
+- @/stores/shortlist
+- @/components/shared/CustomButton.vue
+- @/utils/constants (PATHS, DEFAULT_LESSON_IMG)
+- @/types/lesson (LessonEntity)
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+1. **Nested Course Data**: lesson.course include toate info necesare (slug, title, author, isPractice)
+2. **URL Structure**: /curs/{slug}/{lessonId} (not /lesson/{id})
+3. **Access from Parent**: Course slug presence = access to all lessons
+4. **Separate Shortlist**: Lessons have separate shortlist from courses
+5. **Course Context Display**: Shows parent course title pentru context
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+1. **Add Video Duration**: Show lesson length in card
+2. **Add Completion Badge**: Checkmark pentru watched lessons
+3. **Add Progress Indicator**: Time watched / total duration
+4. **Link to Course**: Clickable course title → navigate to course page
+
+Migration Notes:
+- Verify nested course data always present în API response
+- Test URL building cu encoded slugs
+- Separate shortlist storage pentru lessons vs courses
+
+
+================================================================================
+TASK 8: LESSONITEM CARD (WITHIN COURSE) - LESSON IN COURSE LIST
+================================================================================
+
+Title: LessonItem Component - Lesson Card Within Course Lessons List
+
+Priority: High
+Complexity: Medium
+Estimated Time: 4h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+LessonItem (within course version) afișează o lecție în lista de lecții dintr-un curs specific, cu indicatori de completare.
+
+Funcționalități:
+1. **Lesson Image**: Thumbnail pentru lecție
+2. **Lesson Title**: Cu checkmark dacă completată
+3. **Author Info**: De la parent course
+4. **Completion Indicator**: Checkmark icon pentru viewed lessons
+5. **Access Control**: Moștenit de la parent course
+6. **Navigation**: Link la /curs/{slug}/{lessonId}
+7. **Shortlist Toggle**: Star pentru lesson favorites
+
+Flow:
+1. Primește `course` și `lesson` ca props
+2. Check completion: lesson.isCompleted (enriched cu analytics data)
+3. Build URL cu course.slug + lesson.id
+4. Afișare checkmark dacă isCompleted=true
+5. Access check de la course.slug
+
+Business Rules:
+- isCompleted enriched de către LessonsWrapper (din analytics state)
+- Checkmark visible doar dacă isCompleted=true
+- Access moștenit din parent course
+- Same shortlist toggle ca materials list version
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/components/pages/lessons/LessonItem.tsx (within course)
+
+```typescript
+import React from 'react';
+import Link from 'next/link';
+import Image from 'next/image';
+import ImageNext from 'next/image'; // For checkmark
+import { Typography } from 'antd';
+import { UserOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
+
+import CustomButton from '@/components/shared/CustomButton';
+
+import { useShortlist } from '@/hooks/useShortlist';
+import { PATHS, DEFAULT_LESSON_IMG } from '@/utils/constants';
+import type { CourseEntity } from '@/types/course';
+import type { LessonEntity } from '@/types/lesson';
+
+import checkIcon from '@/assets/icons/check.svg';
+import './LessonItem.scss';
+
+const { Paragraph } = Typography;
+
+interface LessonItemProps {
+  course: CourseEntity;
+  lesson: LessonEntity;
+  index?: number;
+}
+
+const LessonItem: React.FC<LessonItemProps> = ({ course, lesson, index }) => {
+  const { toggleLessonToShortlist, isLessonInShortlist } = useShortlist();
+
+  const lessonLink = `${PATHS.COURSE}/${course.slug}/${lesson.id}`;
+  const hasAccessToMaterial = Boolean(course?.slug);
+  const imageSrc = lesson?.imageUrl || DEFAULT_LESSON_IMG;
+  const isInShortlist = isLessonInShortlist(lesson.id);
+
+  const handleShortlistToggle = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleLessonToShortlist(lesson.id);
+  };
+
+  return (
+    <li className={`ant-list-item lesson-item ${!hasAccessToMaterial && 'no-access'}`}>
+      <div className="lesson-card">
+        <Link href={lessonLink}>
+          <a className="lesson-image-link">
+            <Image
+              src={imageSrc}
+              alt={lesson?.title || 'Lesson'}
+              width={150}
+              height={100}
+              objectFit="cover"
+              loading="lazy"
+            />
+          </a>
+        </Link>
+
+        <div className="material-content">
+          <Link href={lessonLink}>
+            <a>
+              <h3>
+                {lesson?.title}
+                {Boolean(lesson.isCompleted) && (
+                  <ImageNext
+                    src={checkIcon}
+                    alt="Lesson Completed"
+                    width={20}
+                    height={20}
+                    className="completion-badge"
+                  />
+                )}
+              </h3>
+            </a>
+          </Link>
+
+          <Paragraph className="lesson-author">
+            <UserOutlined /> {course?.authorName}
+          </Paragraph>
+
+          <Paragraph className="lesson-description">
+            {lesson?.description?.substring(0, 148)}
+            {lesson?.description?.length > 148 && '...'}
+          </Paragraph>
+        </div>
+
+        <div className="card-actions">
+          {hasAccessToMaterial ? (
+            <CustomButton type="primary" href={lessonLink}>
+              {course.isPractice ? 'Vezi Practica' : 'Vezi lectia'}
+            </CustomButton>
+          ) : (
+            <CustomButton type="primary" href={PATHS.SUBSCRIPTIONS}>
+              Abonează-te!
+            </CustomButton>
+          )}
+
+          <CustomButton
+            type="default"
+            icon={isInShortlist ? <StarFilled /> : <StarOutlined />}
+            onClick={handleShortlistToggle}
+            className="shortlist-btn"
+          />
+        </div>
+      </div>
+    </li>
+  );
+};
+
+export default LessonItem;
+```
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+Location: web/components/pages/lessons/LessonItem.vue
+
+```vue
+<template>
+  <li :class="['lesson-item', { 'no-access': !hasAccessToMaterial }]">
+    <div class="lesson-card">
+      <NuxtLink :to="lessonLink" class="lesson-image-link">
+        <NuxtImg
+          :src="imageSrc"
+          :alt="lesson?.title || 'Lesson'"
+          width="150"
+          height="100"
+          format="webp"
+          loading="lazy"
+          fit="cover"
+        />
+      </NuxtLink>
+
+      <div class="material-content">
+        <NuxtLink :to="lessonLink">
+          <h3>
+            {{ lesson?.title }}
+            <NuxtImg
+              v-if="lesson.isCompleted"
+              src="/icons/check.svg"
+              alt="Lesson Completed"
+              width="20"
+              height="20"
+              class="completion-badge"
+            />
+          </h3>
+        </NuxtLink>
+
+        <a-typography-paragraph class="lesson-author">
+          <UserOutlined />
+          {{ course?.authorName }}
+        </a-typography-paragraph>
+
+        <a-typography-paragraph class="lesson-description">
+          {{ truncatedDescription }}
+        </a-typography-paragraph>
+      </div>
+
+      <div class="card-actions">
+        <CustomButton
+          v-if="hasAccessToMaterial"
+          type="primary"
+          :href="lessonLink"
+        >
+          {{ course.isPractice ? 'Vezi Practica' : 'Vezi lectia' }}
+        </CustomButton>
+
+        <CustomButton
+          v-else
+          type="primary"
+          :href="PATHS.SUBSCRIPTIONS"
+        >
+          Abonează-te!
+        </CustomButton>
+
+        <CustomButton
+          type="default"
+          class="shortlist-btn"
+          @click.prevent.stop="handleShortlistToggle"
+        >
+          <template #icon>
+            <StarFilled v-if="isInShortlist" />
+            <StarOutlined v-else />
+          </template>
+        </CustomButton>
+      </div>
+    </div>
+  </li>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { UserOutlined, StarFilled, StarOutlined } from '@ant-design/icons-vue'
+import { useShortlistStore } from '@/stores/shortlist'
+import { PATHS, DEFAULT_LESSON_IMG } from '@/utils/constants'
+import type { CourseEntity } from '@/types/course'
+import type { LessonEntity } from '@/types/lesson'
+
+interface Props {
+  course: CourseEntity
+  lesson: LessonEntity
+  index?: number
+}
+
+const props = defineProps<Props>()
+const shortlistStore = useShortlistStore()
+
+const lessonLink = computed(() => `${PATHS.COURSE}/${props.course.slug}/${props.lesson.id}`)
+const hasAccessToMaterial = computed(() => Boolean(props.course?.slug))
+const imageSrc = computed(() => props.lesson?.imageUrl || DEFAULT_LESSON_IMG)
+const isInShortlist = computed(() => shortlistStore.isLessonInShortlist(props.lesson.id))
+
+const truncatedDescription = computed(() => {
+  const desc = props.lesson?.description || ''
+  return desc.length > 148 ? `${desc.substring(0, 148)}...` : desc
+})
+
+const handleShortlistToggle = () => {
+  shortlistStore.toggleLessonToShortlist(props.lesson.id)
+}
+</script>
+
+<style scoped lang="scss">
+.lesson-item {
+  list-style: none;
+
+  &.no-access {
+    opacity: 0.8;
+  }
+
+  .lesson-card {
+    display: flex;
+    gap: 1rem;
+    border: 1px solid #f0f0f0;
+    border-radius: 8px;
+    padding: 1rem;
+    transition: all 0.3s ease;
+    background: white;
+
+    &:hover {
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      transform: translateX(4px);
+    }
+
+    .lesson-image-link {
+      flex-shrink: 0;
+      width: 150px;
+      height: 100px;
+      border-radius: 4px;
+      overflow: hidden;
+
+      img {
+        transition: transform 0.3s ease;
+      }
+
+      &:hover img {
+        transform: scale(1.05);
+      }
+    }
+
+    .material-content {
+      flex: 1;
+
+      h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        color: #333;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+
+        .completion-badge {
+          filter: invert(48%) sepia(79%) saturate(2476%) hue-rotate(86deg);
+        }
+
+        &:hover {
+          color: #1890ff;
+        }
+      }
+
+      .lesson-author {
+        font-size: 0.85rem;
+        color: #666;
+        margin-bottom: 0.25rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .lesson-description {
+        font-size: 0.85rem;
+        color: #666;
+        line-height: 1.4;
+      }
+    }
+
+    .card-actions {
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      align-items: flex-end;
+
+      :deep(button) {
+        min-width: 120px;
+
+        &.shortlist-btn {
+          min-width: 40px;
+        }
+      }
+    }
+  }
+}
+</style>
+```
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+1. **Completion Badge**: isCompleted property added by LessonsWrapper
+2. **Analytics Integration**: Completion tracked via VIEW_LESSON analytics
+3. **Horizontal Layout**: Different layout vs materials list (horizontal card)
+4. **Smaller Image**: 150x100 vs 350x200 în materials list
+5. **Course Context**: Author și isPractice de la parent course
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+1. **Add Lesson Index**: Display "#1", "#2" pentru lesson order
+2. **Add Duration Display**: Show video length
+3. **Add Progress Bar**: Watched percentage
+4. **Hover Preview**: Video thumbnail preview on hover
+
+Migration Notes:
+- Verify isCompleted enrichment funcționează în LessonsWrapper
+- Test completion badge display
+- Different styling pentru horizontal layout
+
+
+================================================================================
+TASK 9: LESSONS WRAPPER - LESSONS LIST WITHIN COURSE
+================================================================================
+
+Title: LessonsWrapper Component - Course Lessons List Manager
+
+Priority: High
+Complexity: Medium
+Estimated Time: 5h
+
+--------------------------------------------------------------------------------
+BUSINESS LOGIC
+--------------------------------------------------------------------------------
+
+LessonsWrapper gestionează lista de lecții dintr-un curs specific, cu enrichment pentru completion status și pagination.
+
+Funcționalități:
+1. **Lessons Display**: Lista de lecții din curs
+2. **Completion Enrichment**: Adaugă isCompleted flag din analytics
+3. **Pagination**: Load more lessons cu offset
+4. **Analytics Integration**: Cross-reference cu viewed lessons
+5. **Practice/Lesson Title**: Diferențiere text based pe isPractice flag
+
+Flow:
+1. Primește obiect `course` cu lessons array
+2. Fetch analytics state (viewed lessons)
+3. Enrich lessons cu isCompleted property
+4. Render lista cu LessonItem components
+5. "View More" pentru pagination (dacă > PAGE_SIZE)
+
+Business Rules:
+- isCompleted = analytics.some(a => a.type === VIEW_LESSON && a.value === lessonId)
+- Initial lessons din course.lessons (primul batch)
+- Pagination: fetch more cu fetchLessonsByCourseId
+- Title: "Practici" sau "Lecții" based pe course.isPractice
+
+--------------------------------------------------------------------------------
+CURRENT IMPLEMENTATION (REACT + NEXT.JS)
+--------------------------------------------------------------------------------
+
+Location: web/src/components/pages/lessons/LessonsWrapper.tsx
+
+```typescript
+import React, { useEffect, useState } from 'react';
+import { useSelector } from 'react-redux';
+import { Typography, List } from 'antd';
+import type { AxiosResponse } from 'axios';
+
+import LessonItem from '@/components/pages/lessons/LessonItem';
+
+import { fetchLessonsByCourseId } from '@/api/lesson';
+import { AnalyticsTypes, PAGE_SIZE } from '@/utils/constants';
+import type { CourseEntity } from '@/types/course';
+import type { LessonEntity } from '@/types/lesson';
+import type { AnalyticsEntity } from '@/types/analytics';
+
+import './LessonsWrapper.scss';
+
+const { Title } = Typography;
+
+interface LessonWrapperProps {
+  course: CourseEntity;
+}
+
+const LessonsWrapper: React.FC<LessonWrapperProps> = ({ course }) => {
+  const materialsAnalytics = useSelector((state: any) => state.analytics);
+  const [lessonsList, setLessonsList] = useState<LessonEntity[]>([]);
+  const [offsetValue, setOffsetValue] = useState<number>(0);
+  const [canLoadMore, setCanLoadMore] = useState<boolean>(false);
+
+  const enrichWithCompletion = (lessons: LessonEntity[]): LessonEntity[] => {
+    return lessons?.map((lesson) => {
+      lesson.isCompleted = materialsAnalytics?.some(
+        (item: AnalyticsEntity) =>
+          item.type === AnalyticsTypes.VIEW_LESSON &&
+          Number(item.value) === lesson.id
+      );
+      return lesson;
+    }) || [];
+  };
+
+  const handleDataFetching = async (): Promise<void> => {
+    await fetchLessonsByCourseId(
+      course.id,
+      offsetValue,
+      undefined,
+      PAGE_SIZE
+    ).then(async (lessonRes: AxiosResponse) => {
+      let lessonsData = enrichWithCompletion(lessonRes.data?.lessons);
+
+      if (offsetValue === 0) {
+        setLessonsList(lessonsData || []);
+      } else {
+        setLessonsList([...lessonsList, ...lessonsData]);
+      }
+
+      setCanLoadMore(lessonsData.length === PAGE_SIZE);
+    });
+  };
+
+  useEffect(() => {
+    // Initial load from course.lessons prop
+    const enrichedLessons = enrichWithCompletion(course?.lessons || []);
+    setLessonsList(enrichedLessons);
+
+    // Check if need to fetch more
+    if (course?.lessons?.length === PAGE_SIZE) {
+      setCanLoadMore(true);
+    }
+  }, [course.id, materialsAnalytics]);
+
+  useEffect(() => {
+    if (offsetValue > 0) {
+      handleDataFetching();
+    }
+  }, [offsetValue]);
+
+  return (
+    <div className="lessons-bg">
+      <Title level={2}>
+        {course.isPractice ? 'Practici' : 'Lecții'}
+      </Title>
+
+      <List
+        dataSource={lessonsList}
+        renderItem={(lesson, index) => (
+          <LessonItem
+            key={lesson.id}
+            course={course}
+            lesson={lesson}
+            index={index}
+          />
+        )}
+      />
+
+      {canLoadMore && (
+        <div className="load-more">
+          <button onClick={() => setOffsetValue(offsetValue + PAGE_SIZE)}>
+            Încarcă mai multe lecții
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default LessonsWrapper;
+```
+
+API Call:
+```typescript
+// web/src/api/lesson.ts
+export const fetchLessonsByCourseId = async (
+  courseId: number,
+  offset: number = 0,
+  search?: string,
+  limit?: number
+): Promise<AxiosResponse> => {
+  const params = new URLSearchParams();
+
+  if (offset) params.append('offset', offset.toString());
+  if (search) params.append('search', search);
+  if (limit !== undefined) params.append('limit', limit.toString());
+
+  return await axios.get(
+    `${API_URL}/v1/courses/${courseId}/lessons?${params.toString()}`,
+    { headers: getAuthHeaders() }
+  );
+};
+```
+
+--------------------------------------------------------------------------------
+TARGET IMPLEMENTATION (VUE 3 + NUXT 3)
+--------------------------------------------------------------------------------
+
+Location: web/components/pages/lessons/LessonsWrapper.vue
+
+```vue
+<template>
+  <div class="lessons-bg">
+    <a-typography-title :level="2">
+      {{ course.isPractice ? 'Practici' : 'Lecții' }}
+    </a-typography-title>
+
+    <a-list :data-source="lessonsList">
+      <template #renderItem="{ item, index }">
+        <LessonItem
+          :key="item.id"
+          :course="course"
+          :lesson="item"
+          :index="index"
+        />
+      </template>
+    </a-list>
+
+    <div v-if="canLoadMore" class="load-more">
+      <a-button
+        type="primary"
+        size="large"
+        @click="loadMore"
+      >
+        Încarcă mai multe lecții
+      </a-button>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useAnalyticsStore } from '@/stores/analytics'
+import { fetchLessonsByCourseId } from '@/api/lesson'
+import { AnalyticsTypes, PAGE_SIZE } from '@/utils/constants'
+import type { CourseEntity } from '@/types/course'
+import type { LessonEntity } from '@/types/lesson'
+
+interface Props {
+  course: CourseEntity
+}
+
+const props = defineProps<Props>()
+const analyticsStore = useAnalyticsStore()
+const { viewedLessons } = storeToRefs(analyticsStore)
+
+const lessonsList = ref<LessonEntity[]>([])
+const offsetValue = ref<number>(0)
+const canLoadMore = ref<boolean>(false)
+
+const enrichWithCompletion = (lessons: LessonEntity[]): LessonEntity[] => {
+  return lessons?.map((lesson) => {
+    lesson.isCompleted = viewedLessons.value.includes(lesson.id)
+    return lesson
+  }) || []
+}
+
+const handleDataFetching = async (): Promise<void> => {
+  try {
+    const response = await fetchLessonsByCourseId({
+      courseId: props.course.id,
+      offset: offsetValue.value,
+      limit: PAGE_SIZE
+    })
+
+    const lessonsData = enrichWithCompletion(response.data?.lessons || [])
+
+    if (offsetValue.value === 0) {
+      lessonsList.value = lessonsData
+    } else {
+      lessonsList.value = [...lessonsList.value, ...lessonsData]
+    }
+
+    canLoadMore.value = lessonsData.length === PAGE_SIZE
+  } catch (error) {
+    console.error('Error fetching lessons:', error)
+  }
+}
+
+const loadMore = () => {
+  offsetValue.value += PAGE_SIZE
+}
+
+// Watch for analytics changes to update completion status
+watch(viewedLessons, () => {
+  lessonsList.value = enrichWithCompletion(lessonsList.value)
+}, { deep: true })
+
+// Watch for offset changes
+watch(offsetValue, (newOffset) => {
+  if (newOffset > 0) {
+    handleDataFetching()
+  }
+})
+
+onMounted(() => {
+  // Initial load from course.lessons prop
+  const enrichedLessons = enrichWithCompletion(props.course?.lessons || [])
+  lessonsList.value = enrichedLessons
+
+  // Check if need to fetch more
+  if (props.course?.lessons?.length === PAGE_SIZE) {
+    canLoadMore.value = true
+  }
+})
+</script>
+
+<style scoped lang="scss">
+.lessons-bg {
+  background: #f5f5f5;
+  padding: 2rem;
+  margin-top: 3rem;
+  border-radius: 8px;
+
+  .ant-typography-title {
+    margin-bottom: 1.5rem;
+    color: #333;
+  }
+
+  .load-more {
+    text-align: center;
+    margin-top: 2rem;
+
+    button {
+      min-width: 200px;
+    }
+  }
+}
+</style>
+```
+
+API Composable:
+```typescript
+// web/composables/useLessons.ts
+export const useLessons = () => {
+  const { $api } = useNuxtApp()
+
+  const fetchLessonsByCourseId = async (params: {
+    courseId: number
+    offset?: number
+    search?: string
+    limit?: number
+  }) => {
+    const queryParams = new URLSearchParams()
+
+    if (params.offset) queryParams.append('offset', params.offset.toString())
+    if (params.search) queryParams.append('search', params.search)
+    if (params.limit !== undefined) queryParams.append('limit', params.limit.toString())
+
+    return await $api(
+      `/v1/courses/${params.courseId}/lessons?${queryParams.toString()}`,
+      { method: 'GET' }
+    )
+  }
+
+  return {
+    fetchLessonsByCourseId
+  }
+}
+```
+
+--------------------------------------------------------------------------------
+API REQUEST/RESPONSE
+--------------------------------------------------------------------------------
+
+Request: Get Course Lessons
+GET /v1/courses/{courseId}/lessons?offset=0&limit=12
+Headers: Authorization: Bearer {accessToken}
+
+Response Success (200):
+```json
+{
+  "data": {
+    "lessons": [
+      {
+        "id": 120,
+        "title": "Introducere - Ce este Yoga?",
+        "description": "...",
+        "videoUrl": "https://vimeo.com/123456789",
+        "imageUrl": "...",
+        "displayOrder": 1,
+        "courseId": 15
+      }
+    ],
+    "total": 24,
+    "hasMore": true
+  }
+}
+```
+
+--------------------------------------------------------------------------------
+DEPENDENCIES
+--------------------------------------------------------------------------------
+
+Current (React/Next.js):
+- react (useEffect, useState)
+- react-redux (useSelector)
+- antd (Typography, List)
+- @/components/pages/lessons/LessonItem
+- @/api/lesson (fetchLessonsByCourseId)
+- @/utils/constants (AnalyticsTypes, PAGE_SIZE)
+- @/types/course, @/types/lesson, @/types/analytics
+
+Target (Vue/Nuxt 3):
+- vue (ref, computed, watch, onMounted)
+- pinia (storeToRefs, useAnalyticsStore)
+- ant-design-vue (Typography, List, Button)
+- @/components/pages/lessons/LessonItem.vue
+- @/composables/useLessons (fetchLessonsByCourseId)
+- @/utils/constants (AnalyticsTypes, PAGE_SIZE)
+- @/types/course, @/types/lesson
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+1. **Completion Enrichment**: Cross-reference cu analytics.viewedLessons array
+2. **Initial Data**: Uses course.lessons pentru evita extra API call
+3. **Lazy Loading**: Fetch more doar dacă user click "Load More"
+4. **Analytics Sync**: Watch viewedLessons pentru update completion în real-time
+5. **Practice vs Lesson**: Title changes based pe course.isPractice
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+1. **Add Lesson Stats**: "X din Y lecții completate"
+2. **Add Progress Bar**: Visual course progress
+3. **Auto-expand**: Show all lessons (no pagination) pentru short courses
+4. **Add Search**: Filter lessons by title
+5. **Add Sort Options**: By order, completion, duration
+
+Migration Notes:
+- Verify analytics enrichment funcționează corect
+- Test pagination cu multiple loads
+- Ensure real-time completion updates când user watches lesson
+
+
+================================================================================
+SUMMARY - COURSES MODULE DOCUMENTATION COMPLETE
+================================================================================
+
+Total Tasks Documented: 9
+
+1. ✅ Course Detail Page - Dynamic Routing by Slug (~400 lines)
+2. ✅ Lesson Detail Page - Video Player & Time Tracking (~500 lines)
+3. ✅ CourseDetail Component - Course Information Display (~400 lines)
+4. ✅ MaterialsWrapper Component - Advanced Filtering Logic (~800 lines)
+5. ✅ MaterialsList Component - Unified Rendering (~300 lines)
+6. ✅ CourseItem Card - Course Card Display (~350 lines)
+7. ✅ LessonItem Card (Materials List) - Lesson in General List (~300 lines)
+8. ✅ LessonItem Card (Within Course) - Lesson in Course List (~300 lines)
+9. ✅ LessonsWrapper Component - Course Lessons Manager (~350 lines)
+
+Total Documentation: ~3,700 lines
+
+Key Features Covered:
+- Dynamic routing cu slug-based URLs
+- Video playback cu Vimeo embed + ReactPlayer fallback
+- Time tracking cu interval updates + beforeunload cleanup
+- Analytics tracking (VIEW_COURSE, VIEW_LESSON) cu 1s delay
+- Complex filtering (category, practice, tags, favorites)
+- Smart API switching (courses vs lessons endpoints)
+- Pagination cu offset-based loading
+- Access control bazat pe subscription (slug presence)
+- Shortlist/favorites management (separate pentru courses/lessons)
+- Completion tracking cu analytics enrichment
+- Unified materials display (courses + lessons în aceeași listă)
+- Profile version sync pentru subscription updates
+
+Technical Patterns:
+- React Hooks → Vue Composition API
+- Redux → Pinia stores
+- Next.js routing → Nuxt 3 pages
+- Next Image → NuxtImg
+- ReactPlayer → vue3-video-play
+- Ant Design → Ant Design Vue
+- dangerouslySetInnerHTML → v-html (cu security warning)
+- Event handlers cu preventDefault/stopPropagation → @click.prevent.stop
+
+Security Issues Identified:
+- XSS risk: dangerouslySetInnerHTML pentru Vimeo embed (needs DOMPurify)
+- Hardcoded courseId=11 în admin upload page
+
+Recommendations:
+- Implement HTML sanitization (DOMPurify)
+- Add sendBeacon pentru beforeunload analytics
+- Implement URL query params pentru filters
+- Add loading skeletons și error boundaries
+- Optimize cu virtual scrolling pentru long lists
+- Add progress tracking și completion badges
+- Implement course/lesson search functionality
+
+Migration Priority: HIGH
+Estimated Total Migration Time: 43 hours
+
+Status: ✅ DOCUMENTATION COMPLETE - Ready for JIRA import and Vue.js 3 implementation!
+
+================================================================================
+END OF COURSES MODULE DOCUMENTATION
+================================================================================

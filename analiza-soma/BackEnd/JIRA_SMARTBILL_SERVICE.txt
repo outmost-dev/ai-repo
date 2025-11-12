@@ -1,0 +1,496 @@
+================================================================================
+JIRA STORY: SMARTBILL SERVICE (INTEGRATION SERVICE)
+================================================================================
+
+Story Title: SmartBill Service Integration
+
+Story Type: Story (Service Layer - No Direct Endpoints)
+
+Epic: Somaway Backend Migration to .NET
+
+Story Description:
+------------------
+SmartBill Service integrează API-ul SmartBill Cloud pentru generarea automată
+de facturi fiscale conforme legislației române. Serviciul gestionează crearea,
+listarea și descărcarea facturilor PDF, fiind utilizat de InvoiceService și
+PaymentsService pentru facturare automată post-plată.
+
+SmartBill este furnizor de facturare electronică pentru piața din România,
+oferind API REST pentru automatizarea procesului de facturare conform
+legislației fiscale (TVA 21%, Serie BC).
+
+Locație cod sursă: server/src/v1/Smartbill/Services/
+
+Metode implementate: 3 core methods
+- createInvoice() - create invoice in SmartBill Cloud
+- downloadInvoice() - download PDF from SmartBill
+- getUserInvoices() - list invoices for user email
+
+Used by:
+- InvoiceService (invoice generation, download, cron job processing)
+- PaymentsService (via InvoiceService for post-payment invoicing)
+
+External Dependencies:
+- SmartBill Cloud API (https://api.smartbill.ro)
+- Basic Auth: username + token (base64 encoded)
+
+Configuration:
+- Company VAT Code: RO45702099
+- Invoice Series: BC
+- Payment Type: "Ordin plata" (Bank Transfer)
+- Currency: RON (Romanian Leu)
+- Tax Rate: 21% (TVA Normala)
+- Base URL: https://ws.smartbill.ro/SBORO/api
+
+Background Job Integration:
+- processSmartbillInvoicesJob() in InvoiceService runs @EVERY_30_MINUTES
+- Processes batch of 50 pending invoices with 500ms delay between each
+- Creates SmartbillInvoiceEntity → calls SmartBill API → updates status
+
+Entity Flow:
+1. Payment completed → create SmartbillInvoiceEntity (status: PENDING)
+2. Cron job picks up PENDING invoices (batch 50)
+3. For each invoice: call SmartBill API → get external ID
+4. Update SmartbillInvoiceEntity (status: GENERATED, invoiceNumber: BC12345)
+5. Create InvoicesEntity with externalId for customer records
+
+Notes:
+- Romanian market specific integration (VAT compliance)
+- Async invoice generation via cron job (30min interval)
+- Retries commented out (retryGenerateInvoiceCronjob exists but disabled)
+- HTTP client: @nestjs/axios (RxJS firstValueFrom pattern)
+- Error handling: returns status FAILED if SmartBill API error
+
+================================================================================
+TASKS (3 SERVICE METHODS)
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 1: createInvoice() - Create Invoice in SmartBill Cloud
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Creează o factură fiscală în sistemul SmartBill Cloud pentru un abonament plătit.
+Factura conține detalii client (nume, adresă, CIF), produs/serviciu, și plată.
+
+Flow:
+1. Primește parametri:
+   - invoice: { issuedDate, amount, currency }
+   - billingAddress: AddressesEntity (customer name, CIF, address, city, county)
+   - customer: User (email)
+   - product: { name, code, description } sau null (default: "Abonament Somaway")
+2. Construiește payload pentru SmartBill API:
+   - companyVatCode: RO45702099
+   - client details: name, email, CIF (optional), address, city, county, country
+   - invoice settings: isDraft=false, seriesName=BC, currency=RON, language=RO
+   - issueDate: YYYY-MM-DD format
+   - dueDate: issueDate + 1 month
+   - products array: 1 item (subscription/service)
+     - name: "Abonament Somaway" (default) sau product.name
+     - code: product.code sau "abonament-id-{subscriptionId}"
+     - quantity: 1
+     - price: invoice.amount
+     - taxPercentage: 21% (TVA Normala)
+     - isTaxIncluded: true
+   - payment: value, type="Ordin plata", isCash=false
+3. POST către SmartBill API: /invoice
+4. Verifică response:
+   - Success: status 200, data.number exists
+   - Error: data.errorText exists sau status !== 200
+5. Return:
+   - Success: { externalId: invoice number, seriesName: "BC", status: INVOICE_GENERATED }
+   - Error: { status: FAILED }
+
+Cod sursă:
+- Service: src/v1/Smartbill/Services/smartbill.service.ts:114-207
+
+Method Signature:
+async createInvoice(
+  invoice: any,
+  billingAddress: AddressesEntity,
+  customer: User,
+  product: any
+): Promise<{
+  externalId?: number;
+  seriesName?: string;
+  status: number;
+}>
+
+Request to SmartBill API:
+POST https://ws.smartbill.ro/SBORO/api/invoice
+Headers:
+  Content-Type: application/json
+  Authorization: Basic {base64(username:token)}
+Body:
+{
+  "companyVatCode": "RO45702099",
+  "client": {
+    "name": "JOHN DOE",
+    "email": "john@example.com",
+    "vatCode": "RO12345678",
+    "address": "Str. Example 123",
+    "city": "Bucharest",
+    "county": "Bucuresti",
+    "country": "Romania",
+    "saveToDb": false,
+    "isTaxPayer": false
+  },
+  "isDraft": false,
+  "issueDate": "2024-11-02",
+  "seriesName": "BC",
+  "currency": "RON",
+  "language": "RO",
+  "precision": 2,
+  "dueDate": "2024-12-02",
+  "useEstimateDetails": false,
+  "products": [
+    {
+      "name": "Abonament Somaway",
+      "code": "abonament-id-123",
+      "productDescription": "Tip de abonament",
+      "isDiscount": false,
+      "measuringUnitName": "buc",
+      "currency": "RON",
+      "quantity": 1,
+      "price": 99.00,
+      "isTaxIncluded": true,
+      "taxName": "Normala",
+      "taxPercentage": 21,
+      "saveToDb": false,
+      "isService": false
+    }
+  ],
+  "payment": {
+    "value": 99.00,
+    "type": "Ordin plata",
+    "isCash": false
+  }
+}
+
+Response from SmartBill:
+Success:
+{
+  "number": 12345,
+  "series": "BC",
+  ...
+}
+
+Error:
+{
+  "errorText": "Error description"
+}
+
+Dependencies:
+- HttpService (@nestjs/axios)
+- ConfigService (SmartBill credentials and settings)
+- base64MimeEncode() utility
+
+Notes:
+- Client is NOT saved to SmartBill DB (saveToDb: false)
+- Product is NOT saved to SmartBill DB (saveToDb: false)
+- TVA 21% is included in price (isTaxIncluded: true)
+- Invoice series: BC (configurable via config)
+- Payment type: "Ordin plata" (Bank Transfer, hardcoded)
+- Due date: automatically +1 month from issue date
+- If product param is null, uses default product info
+
+Error Handling:
+- Logs error with payload for debugging
+- Returns { status: FAILED } instead of throwing exception
+- Allows caller to handle failed invoice generation gracefully
+
+Recommendations for .NET:
+- Use HttpClient with Polly for retry logic (SmartBill API can be flaky)
+- Create SmartBillInvoiceRequest DTO with validation attributes
+- Use System.Text.Json for serialization
+- Store credentials in Azure Key Vault or AWS Secrets Manager
+- Add idempotency check (don't create duplicate invoice for same order)
+- Log full request/response for audit trail
+- Consider adding invoice preview endpoint (isDraft: true)
+- Add unit tests with mocked SmartBill API responses
+
+--------------------------------------------------------------------------------
+TASK 2: downloadInvoice() - Download Invoice PDF from SmartBill
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Descarcă PDF-ul unei facturi generate anterior din SmartBill Cloud.
+PDF-ul este returnat ca stream pentru a fi trimis direct către client.
+
+Flow:
+1. Primește invoiceId (number/string from externalId)
+2. Construiește URL SmartBill API pentru download PDF:
+   - /invoice/pdf?cif={companyVatCode}&seriesname={invoiceSeries}&number={invoiceId}
+3. GET request cu responseType: 'stream'
+4. Returnează PDF stream sau null dacă eroare
+5. Caller setează Content-Disposition header pentru download
+
+Cod sursă:
+- Service: src/v1/Smartbill/Services/smartbill.service.ts:87-112
+
+Method Signature:
+async downloadInvoice(invoiceId: string)
+
+Request to SmartBill API:
+GET https://ws.smartbill.ro/SBORO/api/invoice/pdf?cif=RO45702099&seriesname=BC&number=12345
+Headers:
+  Authorization: Basic {base64(username:token)}
+  ContentType: application/octet-stream
+  TransferEncoding: chunked
+  Connection: keep-alive
+  ContentDisposition: attachment; filename=invoice.pdf
+Response Type: stream
+
+Response:
+Success: PDF binary stream
+Error: null (logged error with status code)
+
+Dependencies:
+- HttpService (@nestjs/axios)
+- ConfigService (SmartBill credentials)
+
+Notes:
+- Returns stream directly (NOT buffer or base64)
+- Caller must handle stream → response piping
+- Error handling: logs error and returns null (no exception thrown)
+- Invoice must exist in SmartBill (created via createInvoice)
+- Series name and company CIF are hardcoded config values
+
+Error Handling:
+- Logs HTTP status and response data
+- Returns null if error (allows caller to handle gracefully)
+- InvoiceService checks for null and throws NotFoundException
+
+Recommendations for .NET:
+- Use HttpClient with StreamContent
+- Return IActionResult with FileStreamResult
+- Add caching layer (CDN or Redis) for frequently accessed invoices
+- Consider pre-signed URLs for direct SmartBill access (reduce server load)
+- Add rate limiting per user (prevent download abuse)
+- Log download events for audit trail
+- Handle SmartBill API timeouts gracefully (Polly retry policy)
+
+--------------------------------------------------------------------------------
+TASK 3: getUserInvoices() - List Invoices for User Email
+--------------------------------------------------------------------------------
+
+Business Logic:
+---------------
+Listează toate facturile unui utilizator din SmartBill Cloud, filtrate după email.
+Metodă folosită pentru afișare istorică facturi în interfață (deprecated în favor
+of internal InvoicesEntity).
+
+Flow:
+1. Primește userEmail
+2. GET /invoice/list?cif={companyVatCode} din SmartBill API
+3. Primește toate facturile companiei
+4. Filtrează facturi după client.email === userEmail (case-insensitive)
+5. Mapează fiecare factură la format simplificat:
+   - id: invoice.number
+   - serviceName: first product name
+   - price: invoiceTotalAmount
+   - date: issueDate
+   - status: "Plătit" (if unpaidAmount === 0) sau "Neplătit"
+   - downloadUrl: /api/v1/subscription/download-invoice/{number}
+6. Returnează array de facturi sau [] dacă eroare
+
+Cod sursă:
+- Service: src/v1/Smartbill/Services/smartbill.service.ts:48-85
+
+Method Signature:
+async getUserInvoices(userEmail: string)
+
+Request to SmartBill API:
+GET https://ws.smartbill.ro/SBORO/api/invoice/list?cif=RO45702099
+Headers:
+  Authorization: Basic {base64(username:token)}
+  Accept: application/json
+
+Response from SmartBill:
+[
+  {
+    "number": 12345,
+    "client": {
+      "email": "user@example.com",
+      "name": "John Doe"
+    },
+    "products": [
+      { "name": "Abonament Somaway" }
+    ],
+    "invoiceTotalAmount": 99.00,
+    "unpaidAmount": 0,
+    "issueDate": "2024-11-02"
+  },
+  ...
+]
+
+Mapped Response:
+[
+  {
+    "id": 12345,
+    "serviceName": "Abonament Somaway",
+    "price": 99.00,
+    "date": "2024-11-02",
+    "status": "Plătit",
+    "downloadUrl": "/api/v1/subscription/download-invoice/12345"
+  }
+]
+
+Dependencies:
+- HttpService (@nestjs/axios)
+- ConfigService (SmartBill credentials)
+
+Notes:
+- ⚠️ Fetches ALL company invoices, then filters (inefficient for large datasets)
+- ⚠️ No pagination support
+- Case-insensitive email comparison
+- Returns empty array [] on error (no exception thrown)
+- serviceName defaults to "Unknown Service" if no products
+- Status determined by unpaidAmount (0 = Plătit, >0 = Neplătit)
+
+Error Handling:
+- Logs error message
+- Returns [] instead of throwing exception
+- Silent failure (user sees no invoices)
+
+Recommendations for .NET:
+- ⚠️ DO NOT migrate this method as-is
+- Use internal InvoicesEntity instead of SmartBill API for listing
+- SmartBill API should only be called for:
+  1. Creating invoices (createInvoice)
+  2. Downloading PDFs (downloadInvoice)
+- For invoice listing: query local database (InvoicesEntity)
+- Add pagination support (PagedResponse<Invoice>)
+- Add date range filtering
+- Consider SmartBill webhook for invoice status updates (if available)
+
+================================================================================
+BACKGROUND JOB INTEGRATION
+================================================================================
+
+--------------------------------------------------------------------------------
+JOB: processSmartbillInvoicesJob() - Process Pending Invoices
+--------------------------------------------------------------------------------
+
+Location: src/v1/Subscription/Service/invoice.service.ts:55-71
+
+Schedule: @Cron(CronExpression.EVERY_30_MINUTES)
+Timezone: Europe/Bucharest
+
+Business Logic:
+1. Query SmartbillInvoiceEntity where status = PENDING (limit 50)
+2. Join with Order and OrderItem entities
+3. For each pending invoice:
+   - Call processSmartbillInvoices(invoice)
+   - Wait 500ms before next (rate limiting)
+4. Repeat every 30 minutes
+
+processSmartbillInvoices() flow (lines 73-122):
+1. Get billing address for order.userId
+2. Get customer user details
+3. Call SmartbillService.createInvoice() with:
+   - Invoice data from SmartbillInvoiceEntity
+   - Billing address
+   - Customer user
+   - Product: { name: "Abonament Somaway", code: "abonament-id-{subscriptionId}" }
+4. If success (status = INVOICE_GENERATED):
+   - Update SmartbillInvoiceEntity:
+     - invoiceNumber = "{seriesName}{externalId}" (e.g., "BC12345")
+     - status = GENERATED
+   - Create InvoicesEntity with externalId for customer records
+5. If error: log and continue (don't throw)
+
+Rate Limiting:
+- Batch size: 50 invoices per run
+- Delay between invoices: 500ms (2 invoices/second)
+- Run frequency: every 30 minutes
+- Max throughput: 100 invoices/hour
+
+Dependencies:
+- SmartbillService.createInvoice()
+- AddressesRepository.getAddress()
+- UserService.getUserById()
+- InvoicesRepository.createInvoice()
+
+Notes:
+- Async invoice generation (not real-time)
+- Max 50 invoices per batch to avoid overwhelming SmartBill API
+- 500ms delay prevents rate limiting from SmartBill
+- Failed invoices remain PENDING for next run
+- No retry limit (will retry indefinitely every 30min)
+
+Recommendations for .NET:
+- Use Hangfire for background job scheduling
+- Create RecurringJob with 30-minute interval
+- Add retry policy with exponential backoff (Polly)
+- Add max retry count (e.g., 3 attempts, then mark as FAILED)
+- Add admin notification for permanently failed invoices
+- Consider dead letter queue for failed invoices
+- Add monitoring/alerting for job failures
+- Log job execution duration and success rate
+
+--------------------------------------------------------------------------------
+JOB: retryGenerateInvoiceCronjob() - Retry Failed Invoices (COMMENTED OUT)
+--------------------------------------------------------------------------------
+
+Location: src/v1/Subscription/Service/invoice.service.ts:220-266
+
+Status: COMMENTED OUT (not active in production)
+
+Original Business Logic:
+1. Get all unprocessed invoices (status != INVOICE_GENERATED)
+2. Reset status to PENDING
+3. Reprocess in chunks of 25
+4. For each invoice:
+   - Get billing address
+   - Call SmartbillService.createInvoice()
+   - Update status to INVOICE_GENERATED if success
+   - Log error if failure
+
+Schedule: Configurable via config (commented out in cron decorator)
+
+Notes:
+- This job is DISABLED in current implementation
+- Likely replaced by processSmartbillInvoicesJob
+- Chunk size: 25 (smaller than current 50 batch size)
+
+Recommendations for .NET:
+- DO NOT implement this job (redundant with processSmartbillInvoicesJob)
+- Keep only one invoice processing job
+- Add manual retry endpoint for admins if needed
+
+================================================================================
+END OF SMARTBILL SERVICE DOCUMENTATION
+================================================================================
+
+Summary:
+- Service Type: External API Integration (SmartBill Cloud)
+- Core Methods: 3 (createInvoice, downloadInvoice, getUserInvoices)
+- Background Jobs: 1 active (@EVERY_30_MINUTES), 1 commented out
+- Entity Flow: SmartbillInvoiceEntity → SmartBill API → InvoicesEntity
+- Invoice Series: BC (configured)
+- Company VAT: RO45702099
+- Tax Rate: 21% (TVA Normala)
+- Payment Type: "Ordin plata" (Bank Transfer)
+
+Critical Integration Points:
+1. PaymentsService webhook → creates SmartbillInvoiceEntity (PENDING)
+2. Cron job (30min) → processes PENDING → calls SmartBill API → GENERATED
+3. InvoiceService.downloadInvoice() → SmartBillService.downloadInvoice() → PDF stream
+4. Customer downloads invoice from /v1/payments/download-invoice/:invoiceId
+
+Recommendations for .NET:
+1. Use HttpClient with Polly for retry logic and circuit breaker
+2. Create SmartBillClient service with typed DTOs
+3. Use Hangfire for background job scheduling
+4. Store credentials in secure vault (Azure Key Vault / AWS Secrets)
+5. Add comprehensive logging and monitoring
+6. Implement idempotency checks for invoice creation
+7. Add admin dashboard for failed invoice monitoring
+8. Consider SmartBill webhooks if available (for real-time status updates)
+9. DO NOT migrate getUserInvoices() - use internal database instead
+10. Add unit tests with mocked SmartBill API responses
+
+Ready for JIRA import! 🎯
