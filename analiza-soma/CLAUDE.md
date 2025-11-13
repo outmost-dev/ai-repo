@@ -314,6 +314,43 @@ When asked to implement a feature:
 
 ## Common Workflows
 
+### SCA Documentation Review (ASYNC WORKFLOW) ⭐ NEW
+
+**Story Clarity Agent (SCA)** can evaluate JIRA documentation in an **async workflow** when user doesn't have time to answer questions immediately.
+
+```
+STEP 1: User requests SCA analysis
+  Example: "chem agentul sca sa analizeze JIRA_AUTH_MODULE"
+
+STEP 2: Claude runs SCA + creates 2 files
+  - .claude/evaluations/sca-{module}-{date}.md (full report)
+  - BackEnd/{MODULE}_QUESTIONS.md (questionnaire) ⭐ USER COMPLETES THIS
+
+STEP 3: User completes questionnaire (when they have time)
+  - Open {MODULE}_QUESTIONS.md
+  - Answer all MEDIUM priority questions (11-15 questions, ~30-45 min)
+  - Save file
+
+STEP 4: User notifies Claude
+  Example: "Am completat chestionarul pentru JIRA_AUTH_MODULE"
+
+STEP 5: Claude updates documentation
+  - Read user answers from questionnaire
+  - Update BackEnd/{MODULE}.txt with clarifications
+  - Re-run SCA to verify score reaches 95-100/100
+  - Commit to git if score ≥ 95
+```
+
+**Key Files**:
+- **Evaluation Report**: `.claude/evaluations/sca-{module}-{date}.md` (for reference)
+- **Questionnaire**: `BackEnd/{MODULE}_QUESTIONS.md` (user fills this out)
+- **Updated Doc**: `BackEnd/{MODULE}.txt` (Claude updates after user answers)
+
+**When to Use**:
+- User wants SCA analysis but doesn't have time now
+- Multiple modules need review (can be done in batches)
+- Async collaboration workflow
+
 ### Pre-Migration Audit (MANDATORY FIRST STEP)
 
 ```
@@ -393,7 +430,7 @@ For any migration (Backend/Admin/Web Client):
 
 ## Project Status
 
-**Last Updated**: November 12, 2025 21:00
+**Last Updated**: January 13, 2025 (SCA async workflow added)
 
 **Documentation Status**: ✅ Complete (37/37 files analyzed)
 
@@ -480,5 +517,15 @@ For any migration (Backend/Admin/Web Client):
 - **OWASP Coverage**: A01-A10 with detection patterns, exploit scenarios, remediation code, business impact (€)
 - **Somaway-Specific**: Stripe keys, Vimeo OAuth, Zoom API, 4 JWT types, Argon2, CORS, rate limits (20K req/60s)
 - **Integration**: Cross-references with LCAA/BLVA, synergy findings, false positive filtering
+
+**SCA Module Reviews** - 📋 In Progress
+- **JIRA_AUTH_MODULE** (BackEnd):
+  - Status: 🟡 AWAITING USER ANSWERS (92/100)
+  - Evaluation Date: 2025-01-13
+  - Report: `.claude/evaluations/sca-jira-auth-module-20250113.md`
+  - Questionnaire: `BackEnd/JIRA_AUTH_MODULE_QUESTIONS.md` ⭐ **USER FILLS THIS OUT**
+  - Issues Found: 16 total (0 CRITICAL, 0 HIGH, 11 MEDIUM, 5 LOW)
+  - Expected Score After Clarifications: 97-100/100
+  - Next Action: User answers 11 MEDIUM questions → Claude updates doc → Re-evaluate
 
 **Next Step**: Begin TIER 1 - Chief Architect Agent (CAA) - Orchestrator
