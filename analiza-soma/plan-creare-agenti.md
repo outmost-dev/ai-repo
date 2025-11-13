@@ -1,18 +1,40 @@
-# PLAN CREARE AGENȚI AI - PROIECT SOMAWAY
+# PLAN CREARE AGENȚI AI - PROIECT SOMAWAY (OPTIMIZAT)
 
 ## Prezentare Generală
 
-Acest document trackează procesul de creare a tuturor cei 27 de agenți AI necesari pentru migrarea platformei Somaway.
+Acest document trackează procesul de creare a tuturor cei **15 agenți AI** necesari pentru migrarea platformei Somaway (arhitectură optimizată de la 27→15 agenți, **-44% complexitate**).
 
-**Status general**: 9/27 agenți creați (33.3%) - 8 approved, 1 rejected
+**Status general**: 8/15 agenți approved (53.3%) + 1 rejected
 - ✅ WAVE 0: Meta Quality - 1/1 complete (Gandalf 99/100)
 - ✅ WAVE 0.5: Requirements - 1/1 complete (SCA 96/100)
-- ✅ WAVE 1: Audit & Orchestrare - 5/5 complete (LCAA 96/100 ✅, BLVA 96/100 ✅, SVSA 95/100 ✅, CAA 95.2/100 ✅, **PMA 97/100 ✅ 🏆 TIED 2nd PLACE**)
-- ⏳ WAVE 2: Backend Core - 3/8 created (PIA 96/100 ✅, **BMA 97/100 ✅ 🏆 TIED 2nd PLACE**, ASA 88/100 🔴 REJECTED, next: ASA v2.0 fixes)
+- ✅ TIER 0: Audit - 3/3 complete (LCAA 96/100, BLVA 96/100, SVSA 95/100)
+- ✅ TIER 1: Orchestration - 1/1 complete (CAA 95.2/100)
+- ⏳ TIER 2: Backend - 3/5 created (BMA 97/100 ✅, PIA 96/100 ✅, ASA 88/100 🔴 REJECTED, 2 TO DO)
+- ⏳ TIER 3: Frontend - 0/2 (TO DO)
+- ⏳ TIER 4: QA & DevOps - 0/2 (TO DO)
 
 **Data start**: 11 Ianuarie 2025
-**Ultima actualizare**: 12 Noiembrie 2025 23:46
-**Timp investit până acum**: ~16.7 hours (Gandalf 2h + SCA 6h + LCAA 2h + BLVA 2h + SVSA 0.8h + CAA 0.4h + PIA 1h + BMA 0.4h + ASA 1.3h + PMA 0.8h)
+**Ultima actualizare**: 13 Noiembrie 2025
+**Timp investit până acum**: ~16.7 hours
+**Timp estimat rămas**: ~10.5 hours (vs 17h în arhitectura veche)
+
+---
+
+## 🎯 DE CE 15 AGENȚI (NU 27)?
+
+### Analiza Critică a Arhitecturii Vechi:
+După crearea primilor 9 agenți, am descoperit că:
+- **PMA redundant**: CAA poate prelua orchestrare + timeline tracking
+- **Frontend fragmentat**: 7 agenți pentru pattern-uri identice (React→Vue)
+- **Backend over-specialized**: VLSA, EMA, ARA pot fi consolidați (integrări externe)
+- **QA duplicat**: SAA redundant cu SVSA, TAA/MVA/POA pot fi un singur agent
+
+### Beneficii Arhitectură Optimizată:
+- ✅ **-44% complexitate** (15 vs 27 agenți)
+- ✅ **-40% timp implementare** (~20h vs ~32h)
+- ✅ **Consistență crescută** (2 frontend agents vs 7)
+- ✅ **Mai puține handoff-uri** între agenți
+- ✅ **Orchestrare simplificată** (CAA gestionează 15 vs 27)
 
 ---
 
@@ -20,213 +42,110 @@ Acest document trackează procesul de creare a tuturor cei 27 de agenți AI nece
 
 ### Ordinea de Prioritate
 
-Creăm agenții în **4 WAVE-uri**, prioritizând cei mai critici:
+Creăm agenții în **4 TIERS**, prioritizând cei mai critici:
 
 **WAVE 0 - META QUALITY (1 agent)** ⭐ CREAT PRIMUL!
-- Gandalf 🧙‍♂️ - wizardul care evaluează TOȚI ceilalți agenți
-- MUST be created FIRST - evaluează fiecare agent înainte să fie marcat DONE
-- Standard: 95%+ pentru producție ("You shall not pass!")
-- Motto: *"You shall not pass... unless you score 95%+"*
+- Gandalf 🧙‍♂️ - evaluează TOȚI ceilalți agenți
+- Standard: 95%+ pentru producție
 
-**WAVE 1 - AUDIT & ORCHESTRARE (5 agenți)** - Săptămâna 1
-- Trebuie creați PRIMII pentru că blochează tot
-- Fără aceștia, nu putem începe niciun fel de implementare
-- Fiecare evaluat de Gandalf înainte de DONE
+**WAVE 0.5 - REQUIREMENTS CLARITY (1 agent)** ⭐ CRITICAL FOUNDATION
+- SCA - clarificare cerințe 100% înainte de implementare
 
-**WAVE 2 - BACKEND CORE (8 agenți)** - Săptămâna 2
-- Backend-ul este fundația pentru frontend
-- Fără API-uri, frontend-ul nu poate fi testat
-- Fiecare evaluat de Gandalf înainte de DONE
+**TIER 0 - AUDIT (3 agenți)** - MANDATORY FIRST
+- Audit-First Strategy: scană bug-uri ÎN codul vechi
+- GATE: Nu migrăm până când auditul nu e complet
 
-**WAVE 3 - FRONTEND & QA (13 agenți)** - Săptămâna 3
-- Depind de backend-ul finalizat
-- QA poate rula în paralel cu development
-- Fiecare evaluat de Gandalf înainte de DONE
+**TIER 1 - ORCHESTRATION (1 agent)** - Coordonează totul
+- CAA - Chief Architect (preluează și responsabilități PM)
+
+**TIER 2 - BACKEND (5 agenți)** - Fundație
+- Backend-ul trebuie gata pentru frontend
+
+**TIER 3 - FRONTEND (2 agenți)** - Consolidați
+- Admin Dashboard + Web Client (pattern-uri omogene)
+
+**TIER 4 - QA & DEVOPS (2 agenți)** - Validare finală
+- Testing + deployment automation
 
 ---
 
-## WAVE 0: META QUALITY (1 agent) ⭐ PRIORITATE ABSOLUTĂ
+## WAVE 0: META QUALITY (1 agent) ⭐
 
 ### 🔴 Agent 0: Gandalf - The Quality Wizard 🧙‍♂️
 
-**Status**: ✅ DONE
-**Prioritate**: META-CRITICAL (Primul creat!)
+**Status**: ✅ DONE (v5.0)
+**Score**: 🎯 **99/100** (HIGHEST SCORE - META)
 **Locație**: `.claude/agents/meta-quality/gandalf.md`
-**Durată**: 60 minute (creare completă)
+**Durată**: 2 hours (creare + self-evaluation)
 **Data finalizare**: 11 Ianuarie 2025
 
 **Ce face**:
-- Wizardul care păzește podul calității
-- Evaluează FIECARE agent creat înainte să treacă
-- Scorează pe 5 dimensiuni (Clarity, Completeness, Correctness, Actionability, Robustness)
-- Standard: 95%+ pentru producție
+- Evaluează FIECARE agent pe 5 dimensiuni (Clarity, Completeness, Correctness, Actionability, Robustness)
 - Battle cry: *"You shall not pass... unless you score 95%+"*
-- Final guardian la podul către producție
+- Threshold: 95%+ pentru producție (el însuși la 99%)
+- Final guardian pentru calitate
 
-**Framework de evaluare**:
-- [ ] Clarity & Specificity (20%) - Zero ambiguități
-- [ ] Completeness (25%) - Toate edge cases
-- [ ] Correctness (25%) - Tehnic corect
-- [ ] Actionability (15%) - Executabil autonom
-- [ ] Robustness (15%) - Error handling complet
+**Framework**:
+- Clarity & Specificity (20%)
+- Completeness (25%)
+- Correctness (25%)
+- Actionability (15%)
+- Robustness (15%)
 
-**Output**:
-- Raport detaliat cu score per dimensiune
-- Status: ✅ PRODUCTION READY (95+) | 🟡 CONDITIONAL (90-94) | 🔴 REJECT (<90)
-- Liste puncte tari/slabe
-- Blocker-e critice
-- Recomandări îmbunătățire
-- Verdic final: APPROVE / FIX / REJECT
+**Output**: Raport detaliat cu score, blockers, recommendations
 
-**Dependențe**: Niciunul (primul agent creat!)
-
-**Testare**: Va fi testat pe el însuși (meta-evaluation) și pe primul agent din WAVE 1
-
-**Reguli CRITICE**:
-- ❌ NICIUN agent nu poate fi marcat DONE fără evaluare Gandalf
-- ❌ Score <95 = "You shall NOT pass!"
-- ❌ Nu se trece la următorul agent până când cel curent are 95+
-- ✅ Gandalf trebuie invocat după crearea FIECĂRUI agent
-- 🧙‍♂️ Gandalf păzește podul cu toiagul său de putere
+**Evaluation Report**: `.claude/evaluations/gandalf-evaluation-v5-20250111-170000.md`
 
 ---
 
-## Template Standard pentru Fiecare Agent
-
-Pentru fiecare agent creăm:
-
-```
-📁 .claude/agents/{category}/{agent-name}.md
-
-Structură fișier:
-1. Header (Nume, Role, Activation)
-2. STRICT RULES (MUST DO / MUST NOT DO)
-3. Input Requirements
-4. Output Format (cu exemple concrete)
-5. Validation Checklist
-6. Success Criteria
-7. Examples (2-3 concrete)
-8. Error Handling
-```
-
----
-
-## WAVE 0.5: REQUIREMENTS CLARITY (1 agent) ⭐ CRITICAL FOUNDATION
+## WAVE 0.5: REQUIREMENTS CLARITY (1 agent) ⭐
 
 ### 🔴 Agent 0.5: Story Clarity Agent (SCA)
 
 **Status**: ✅ DONE (v2.2 - PRODUCTION READY)
-**Prioritate**: CRITICAL (feeds all other agents)
+**Score**: 🎯 **96/100** (APPROVED)
 **Locație**: `.claude/agents/requirements/story-clarity-agent.md`
-**Durată totală**: 6 hours (creare + 2 iterations de repair)
+**Durată totală**: 6 hours (4 iterations)
 **Data finalizare**: 12 Noiembrie 2025
 
-**Final Score**: 🎯 **96/100** (APPROVED FOR PRODUCTION) ✅
-
-**Evaluation History**:
-- v1.0: 87/100 (REJECTED - 5 blockers: tool failure, scoring, multi-stakeholder, session persistence, quota)
-- v2.0: +560 lines added (comprehensive fixes for all 5 blockers)
-- v2.0 First Eval: 97/100 (APPROVED - but too lenient given agent criticality)
-- v2.0 Ultra-Critical Re-Eval: 87/100 (NEEDS WORK - 8 new blockers found under maximum scrutiny)
-- v2.1: 92/100 (CONDITIONAL APPROVAL - 8 blockers fixed, 5 new issues found)
-- **v2.2**: **96/100** ✅ (PRODUCTION APPROVED - all 5 issues fixed)
-
-**Quality Progression**: 87 → 87 → 92 → **96** (+9 points in 2 iterations)
-
-**v2.2 Fixes (5 issues, +478 lines)**:
-- ✅ **Issue 3 (MEDIUM)**: Added "Circuit Breaker Deployment Options" (+209 lines)
-  - 3 deployment models: per-instance (simple), per-user (balanced), global (production)
-  - Pros/cons, implementation examples, Redis code, monitoring requirements
-- ✅ **Issue 4 (MEDIUM)**: Added "Alert Response Playbook" (+149 lines)
-  - 10 detailed alerts with automated responses, manual actions, recovery times
-  - Automation examples, Grafana queries, incident report template, severity definitions
-- ✅ **Issue 5 (LOW)**: Fixed example notation consistency (× 20% → × 20 / 10)
-- ✅ **Issue 1 (LOW)**: Added "Edge Case Selection Algorithm" (+96 lines)
-  - Decision tree with 10 IF-THEN rules (DATE/TIME → timezone, EXTERNAL API → retry, etc.)
-  - Example application: Zoom meeting story → 5 mandatory + 5 domain-specific = 10 edge cases
-- ✅ **Circuit Breaker Scope**: Explicitly defined for all 3 deployment models
-
-**Final Stats**:
-- **Total lines**: 2,726 (started at 1,687 in v1.0)
-- **Comprehensive coverage**: 10-dimension clarity scoring, 6 tool failure scenarios, circuit breaker, resource limits, multi-stakeholder conflicts, regression detection, alert playbook
-- **Production readiness**: 100% (zero blockers, all ZERO-TOLERANCE rules passed)
+**Evolution**: 87 → 87 → 92 → **96** (+9 points)
 
 **Ce face**:
-- Clarifies EVERY user story to 100% clarity before implementation
-- 10-dimension scoring: Actor, Action, Input, Output, Error Handling, Business Rules, Edge Cases, Acceptance, Dependencies, Technical
-- Risk-weighted scoring (Error Handling 20%, Business Rules 15%, etc.)
-- Multi-stakeholder conflict resolution protocol
-- Session persistence with auto-save and resume
-- Tool failure resilience (6 scenarios: timeout, disconnect, error, fallback, unavailable, partial)
-- Circuit breaker pattern (3 deployment models: per-instance, per-user, global)
-- Resource limits with alert playbook (10 alerts with automated responses)
-- Iterative Q&A until score = 100/100 (max 5 iterations, then escalate to CAA)
+- Clarificare 100% a fiecărei user story înainte de implementare
+- 10-dimension scoring (Actor, Action, Input, Output, Error Handling, Business Rules, Edge Cases, etc.)
+- Iterative Q&A până la 100/100 clarity (max 5 iterations)
+- Multi-stakeholder conflict resolution
+- Circuit breaker pattern (3 deployment models)
 
-**Why CRITICAL**:
-- Feeds requirements to ALL 26 implementation agents
-- Any ambiguity cascades catastrophically through 4.5-month migration
-- Standard bar: 95%+ for production (achieved 96%)
-- One unclear requirement → multiple agents implement differently → rework
+**Why CRITICAL**: Orice ambiguitate → 27 agenți implementează diferit → catastrofă
 
-**Gandalf's Verdict**:
-> *"You shall pass... and you did."*
->
-> Story Clarity Agent v2.2 is **production-ready** as the requirements gatekeeper for the €500K+ Somaway migration. All 27 downstream agents can now depend on it.
+**Gandalf's Verdict**: *"You shall pass... and you did."*
 
-**Dependențe**: Gandalf (for evaluation), Chief Architect Agent (for escalations)
 **Evaluation Report**: `.claude/evaluations/story-clarity-agent-evaluation-v2.2-20251112-154004.md`
 
 ---
 
-## WAVE 1: AUDIT & ORCHESTRARE (5 agenți) ⭐ PRIORITATE CRITICĂ
+## TIER 0: PRE-MIGRATION AUDIT (3 agenți) ⭐ AUDIT-FIRST STRATEGY
 
 ### 🔴 Agent 1: Legacy Code Auditor Agent (LCAA)
 
 **Status**: ✅ DONE (v2.0 - PRODUCTION READY)
-**Prioritate**: CRITICAL
+**Score**: 🎯 **96/100** (APPROVED)
 **Locație**: `.claude/agents/audit/legacy-code-auditor.md`
-**Durată totală**: ~2 hours (creare + 1 iteration de repair)
+**Durată totală**: ~2 hours
 **Data finalizare**: 11 Ianuarie 2025
-
-**Final Score**: 🎯 **96/100** (APPROVED FOR PRODUCTION) ✅
-
-**Evaluation History**:
-- v1.0: Score unknown (REJECTED - 5 blockers: timeout, verification, scope, TypeScript, madge)
-- v2.0: 96/100 ✅ (PRODUCTION APPROVED - all 5 blockers fixed)
-
-**Score Breakdown (v2.0)**:
-- Clarity & Specificity: 97/100 (20%)
-- Completeness: 96/100 (25%)
-- Correctness: 95/100 (25%)
-- Actionability: 96/100 (15%)
-- Robustness: 95/100 (15%)
-
-**v2.0 Fixes**:
-- ✅ Added 120-minute timeout protection
-- ✅ Added autonomous verification algorithm (3-step confidence scoring)
-- ✅ Added file inclusion rules (72+ patterns, INCLUDE/EXCLUDE logic)
-- ✅ Added TypeScript pre-check (compilation + dependency graph)
-- ✅ Added madge tool integration (circular dependencies detection)
 
 **Ce face**:
 - Scanează cod vechi (Node.js/NestJS/React/Next.js) pentru bug-uri
-- Detectează 6 categorii: anti-patterns, race conditions, memory leaks, logic errors, error handling gaps, type safety issues
-- Generează raport Markdown cu categorizare CRITICAL/MEDIUM/LOW
+- 6 categorii: anti-patterns, race conditions, memory leaks, logic errors, error handling gaps, type safety
 - Pre-audit validation: TypeScript compilation + dependency graph
 - Autonomous verification cu confidence scoring
-- Integrare cu BLVA, SVSA, CAA
+- 72+ file patterns coverage
 
-**Coverage**:
-- 72+ file patterns (include/exclude)
-- 6 error scenarios handled
-- 4 edge cases covered (large codebases, third-party libs, generated code, test files)
-- 14-section Markdown report
-- Validation checklist cu 8 criterii
+**Raport**: 14 secțiuni Markdown cu CRITICAL/MEDIUM/LOW bugs
 
-**Gandalf's Verdict**:
-> *"Exceptionally well-crafted agent that demonstrates production-grade quality across all evaluation dimensions. Fully autonomous, technically sound, and ready for production use."*
+**Gandalf's Verdict**: *"Exceptionally well-crafted, production-grade quality."*
 
-**Dependențe**: Niciunul (primul agent din TIER 0!)
 **Evaluation Report**: `.claude/evaluations/lcaa-v2-evaluation-20251111-234915.md`
 
 ---
@@ -234,46 +153,21 @@ Structură fișier:
 ### 🔴 Agent 2: Business Logic Validator Agent (BLVA)
 
 **Status**: ✅ DONE (v1.0 - PRODUCTION READY)
-**Prioritate**: CRITICAL
+**Score**: 🎯 **96/100** (APPROVED) - **Correctness: 25/25 (100%)** ⭐
 **Locație**: `.claude/agents/audit/business-logic-validator.md`
-**Durată totală**: ~2 hours (creare v1.0 + evaluare)
+**Durată totală**: ~2 hours
 **Data finalizare**: 12 Noiembrie 2025
 
-**Final Score**: 🎯 **96/100** (APPROVED FOR PRODUCTION) ✅
-
-**Score Breakdown (v1.0)**:
-- Clarity & Specificity: 19/20 (95%)
-- Completeness: 24/25 (96%)
-- **Correctness: 25/25 (100%)** ⭐ PERFECT
-- Actionability: 14/15 (93%)
-- Robustness: 14/15 (93%)
-
 **Ce face**:
-- Compară cod vechi cu documentația JIRA (BackEnd/, Admin/, Web - Client/)
-- Validează business logic pe 7 dimensiuni: correctness, edge cases, data flow, integrations, errors, state, calculations
-- Identifică discrepanțe: CRITICAL (logic wrong), MEDIUM (incomplete), LOW (unclear)
-- Generează raport detaliat cu quotes, line numbers, recommendations
-- Calculează correctness score per modul (0-100%)
+- Compară cod vechi cu documentația JIRA (37 fișiere)
+- 7-dimensional validation: business logic, edge cases, data flow, integrations, errors, state, calculations
+- **400-line example report template** (GOLD STANDARD)
+- Somaway-specific: Stripe subscriptions, JWT tokens, analytics
 
-**Features Exceptionale**:
-- ✅ **400-line example report template** (GOLD STANDARD - arată exact cum să formateze findings)
-- ✅ **7-dimensional validation framework** (industry best practice)
-- ✅ **6-step workflow** cu timings (80-145 min per module)
-- ✅ **Somaway-specific validations** (Stripe subscriptions, JWT tokens, analytics)
-- ✅ **6 error scenarios** cu recovery strategies
-- ✅ **Complementary to LCAA** (LCAA → technical bugs, BLVA → business logic bugs)
+**Complementary**: LCAA → technical bugs, BLVA → business logic bugs
 
-**Coverage**:
-- 7 validation dimensions
-- 6 error scenarios handled
-- 4 performance metrics tracked
-- 1024 lines total
-- Integration cu LCAA, SVSA, CAA
+**Gandalf's Verdict**: *"EXCEPTIONAL quality. 400-line example is a masterclass. Together with LCAA, unstoppable duo."*
 
-**Gandalf's Verdict**:
-> *"BLVA v1.0, you have demonstrated EXCEPTIONAL quality. Your 400-line example report is a masterclass in specification. Your 7-dimensional framework is industry best practice. Together with LCAA, you form an unstoppable duo. YOU SHALL PASS INTO PRODUCTION."*
-
-**Dependențe**: LCAA (complementary - LCAA finds technical bugs, BLVA finds business logic bugs)
 **Evaluation Report**: `.claude/evaluations/blva-evaluation-20251112-204513.md`
 
 ---
@@ -281,1037 +175,809 @@ Structură fișier:
 ### 🔴 Agent 3: Security Vulnerability Scanner Agent (SVSA)
 
 **Status**: ✅ DONE (v1.0 - PRODUCTION READY)
-**Prioritate**: CRITICAL
+**Score**: 🎯 **95/100** (APPROVED - at threshold)
 **Locație**: `.claude/agents/audit/security-vulnerability-scanner.md`
-**Durată totală**: ~50 minute (creare v1.0 + evaluare)
+**Durată totală**: ~50 minutes
 **Data finalizare**: 12 Noiembrie 2025
 
-**Final Score**: 🎯 **95/100** (APPROVED FOR PRODUCTION) ✅
-
-**Score Breakdown (v1.0)**:
-- Clarity & Specificity: 19/20 (95%)
-- Completeness: 24/25 (96%)
-- Correctness: 24/25 (96%)
-- Actionability: 14/15 (93%)
-- Robustness: 14/15 (93%)
-
 **Ce face**:
-- Scanează OWASP Top 10 (2021) vulnerabilities - toate cele 10 categorii
-- Detectează hardcoded secrets (regex + entropy analysis)
-- Validează JWT security (4 token types pentru Somaway)
-- Identifică SQL injection, NoSQL, Command injection, XSS, CSRF
-- Verifică CORS configuration și rate limiting
+- OWASP Top 10 (2021) - toate cele 10 categorii cu detection patterns + exploits + remediation
+- Hardcoded secrets (regex + entropy analysis + git history)
+- JWT security (4 token types: Access, Refresh, Email Validation, Subscription Validation)
+- SQL/NoSQL/Command injection, XSS, CSRF detection
+- CORS configuration + rate limiting validation
 - Webhook signature validation (Stripe, Vimeo, Zoom)
-- Git history scanning pentru secrets
-- CVSS v3.1 scoring pentru toate findings
-- Generează raport Markdown cu exploit scenarios și remediation
+- CVSS v3.1 scoring + business impact (€)
 
-**Features Exceptionale**:
-- ✅ **7-phase autonomous framework** (Pre-scan → OWASP → Secrets → JWT → CORS → Verification → Report)
-- ✅ **OWASP Top 10 - 960 lines coverage** (detection patterns + examples + exploits + remediation)
-- ✅ **Somaway-specific validations** (Stripe keys, Vimeo OAuth, Zoom API, 4 JWT types, Argon2, CORS, rate limits)
-- ✅ **Integration with LCAA/BLVA** (Audit Trinity - cross-referencing, synergy findings)
-- ✅ **12 success criteria + 28-item validation checklist**
-- ✅ **False positive filtering with confidence scoring** (HIGH/MEDIUM/LOW)
-- ✅ **Exploit scenarios for CRITICAL/HIGH** (actual curl commands!)
-- ✅ **Business impact quantified** (€ revenue loss, GDPR fines)
+**7-phase autonomous execution**: Pre-scan → OWASP → Secrets → JWT → CORS → Verification → Report (118 min)
 
-**Instrucțiuni cheie definite**:
-- [x] Checklist OWASP Top 10 complet (A01-A10, toate cu bash patterns)
-- [x] Patterns pentru hardcoded secrets (regex + entropy analysis + git history)
-- [x] Validări JWT și token management (4 types: access, refresh, email, subscription)
-- [x] Detectare SQL injection patterns (TypeORM + raw queries + string concatenation)
-- [x] Verificare CORS și rate limiting (origin validation + throttling per endpoint)
-- [x] Format raport vulnerabilități cu CVSS v3.1 scoring (vector strings + severity ranges)
+**Audit Trinity Complete**: LCAA (technical) + BLVA (business) + SVSA (security)
 
-**Coverage**:
-- 10 OWASP categories (each with detection patterns + example + exploit + remediation)
-- 7 execution phases (118 min estimated)
-- 5 error scenarios handled (timeout, tool failure, no findings, git unavailable, integration failure)
-- 4 edge cases covered (no findings, timeout, false positives, non-Somaway codebase)
-- 2,314 lines total
+**Gandalf's Verdict**: *"Top 1% of security scanners. You form the Audit Trinity."*
 
-**Gandalf's Verdict**:
-> *"YOU SHALL PASS... and secure the bridge. Your 2,314-line definition is a masterclass in security automation. Top 1% of security scanners I've evaluated. Together with LCAA and BLVA, you form the Audit Trinity that will ensure ZERO vulnerabilities are migrated."*
-
-**Dependențe**: LCAA (bază de scanare), BLVA (pentru synergy findings)
 **Evaluation Report**: `.claude/evaluations/svsa-evaluation-20251112-221606.md`
 
 ---
 
+## TIER 1: ORCHESTRATION (1 agent) - PMA ELIMINAT ✂️
+
 ### 🟢 Agent 4: Chief Architect Agent (CAA)
 
 **Status**: ✅ DONE (v1.0 - PRODUCTION READY)
-**Prioritate**: HIGH
+**Score**: 🎯 **95.2/100** (APPROVED)
 **Locație**: `.claude/agents/orchestration/chief-architect.md`
-**Durată totală**: ~25 minute (evaluare Gandalf)
-**Data finalizare**: 12 Noiembrie 2025 23:00
-
-**Final Score**: 🎯 **95.2/100** (APPROVED FOR PRODUCTION) ✅
-
-**Score Breakdown (v1.0)**:
-- Clarity & Specificity: 19/20 (95%)
-- Completeness: 23.5/25 (94%)
-- **Correctness: 24.5/25 (98%)** ⭐ EXCEPTIONAL
-- Actionability: 14.4/15 (96%)
-- Robustness: 13.8/15 (92%)
+**Durată totală**: ~25 minutes
+**Data finalizare**: 12 Noiembrie 2025
 
 **Ce face**:
-- Master orchestrator pentru toți cei 26 de agenți specializați
+- Master orchestrator pentru toți cei 14 agenți
 - Ia decizii arhitecturale finale (FINAL SAY)
-- Rezolvă conflicte între agenți (evidence-based arbitration)
-- Evaluează opțiuni folosind weighted scoring (Business Value 30%, Cost 20%, Timeline 20%, Risk 15%, Maintainability 10%, Scalability 5%)
-- Escalează către stakeholderi (CTO/CFO/CEO) când e necesar
-- Gestionează buget €500K și timeline 18 săptămâni
+- Rezolvă conflicte evidence-based
+- **PRELUEAZĂ RESPONSABILITĂȚI PM**: timeline tracking, blocker escalation, resource allocation
+- Weighted scoring: Business Value 30%, Cost 20%, Timeline 20%, Risk 15%, Maintainability 10%, Scalability 5%
+- Escalation chain: CAA → CTO → CFO → CEO
 
-**Features Exceptionale**:
-- ✅ **1,219 lines** de orchestration logic production-grade
-- ✅ **4-phase decision framework** (Context Gathering → Trade-Off Analysis → Decision → Communication & Monitoring)
-- ✅ **Comprehensive conflict resolution** (4-step protocol: Evidence → Framework → Decision → Close)
-- ✅ **Technology stack expertise** (NestJS→.NET, React→Vue, Redux→Pinia mapping tables)
-- ✅ **98/100 correctness** - toate calculele verificate matematic ⭐
-- ✅ **2 exemple complete end-to-end** (Monolith vs Microservices, Race Condition Conflict)
-- ✅ **Escalation paths către CTO/CFO/CEO** cu templates și trigger conditions
-- ✅ **Real-world constraints** (€500K budget, 18 weeks, 100K users, Stripe/Vimeo/Zoom integrations)
+**Features**:
+- 1,219 lines orchestration logic
+- 4-phase decision framework
+- Technology stack expertise (NestJS→.NET, React→Vue mapping tables)
+- **Correctness: 24.5/25 (98%)** ⭐
+- Budget €500K + timeline 18 săptămâni management
 
-**Instrucțiuni cheie implementate**:
-- [x] Framework de luare decizii cu 4 faze (5-10 min context, 15-20 min analysis, 5 min decision, 5-10 min communication)
-- [x] Proces de rezolvare conflicte evidence-based (10 min gather, 5 min framework, instant decision)
-- [x] Criterii pentru aprobare/rejecție (7 approval criteria, 7 rejection triggers)
-- [x] Template review arhitectural (decision ID, rationale, rejected alternatives, implementation requirements, success criteria, risks & mitigation)
-- [x] Protocol comunicare cu agenți (notify affected parties, update PMA, track decisions)
-- [x] Raportare către PMA (timeline impact, budget impact, blockers)
-- [x] **15 MUST rules** și **10 MUST NOT rules** (evidence-based, budget-conscious, risk-aware, etc.)
+**DE CE PMA ELIMINAT**:
+- ❌ PMA avea 97/100 dar multe responsabilități se suprapuneau cu CAA
+- ✅ CAA poate gestiona timeline, dependencies, blockers pentru proiect 18 săptămâni
+- ✅ Simplificare: 1 orchestrator vs 2
+- ✅ Decizii coerente (CAA ia decizii + trackează execuția)
 
-**Gandalf's Verdict**:
-> *"You shall pass... and I'd trust you with €500K+ decisions."*
->
-> CAA demonstrates production-grade architecture with mathematically sound decision frameworks, comprehensive conflict resolution, clear escalation paths, and 1,219 lines of battle-tested thinking. One of the **highest-quality orchestrator agents** I've evaluated.
+**Gandalf's Verdict**: *"I'd trust you with €500K+ decisions. One of the highest-quality orchestrator agents."*
 
-**Minor Gaps (pentru 98+ score)**:
-1. Missing "no good options" edge case (what if ALL options fail criteria?) - 10 min fix
-2. Missing tiebreaker criteria (identical scores) - 8 min fix
-3. Missing decision log error recovery - 12 min fix
-**Total time to 98+**: 30 minutes
-
-**Dependențe**: LCAA, BLVA, SVSA (audit inputs), PMA (timeline tracking)
 **Evaluation Report**: `.claude/evaluations/caa-evaluation-20251112-230000.md`
 
 ---
 
-### 🟢 Agent 5: Project Manager Agent (PMA)
+## TIER 2: BACKEND (5 agenți) - Consolidat de la 8
 
-**Status**: ✅ DONE (v2.0 - PRODUCTION READY)
-**Prioritate**: HIGH
-**Locație**: `.claude/agents/orchestration/project-manager.md`
-**Durată totală**: ~50 minutes (creare v1.0 + evaluare + fixes v2.0 + re-evaluare)
-**Data finalizare**: 12 Noiembrie 2025 23:46
-
-**Final Score**: 🎯 **97/100** (APPROVED FOR PRODUCTION) ✅ **← TIED FOR 2nd PLACE WITH BMA**
-
-**Evaluation History**:
-- v1.0: 93/100 (CONDITIONAL APPROVAL - 5 blockers, 2 points below threshold)
-- v2.0: 97/100 ✅ (PRODUCTION APPROVED - all 5 blockers fixed, +414 lines)
-
-**Score Breakdown (v2.0)**:
-- Clarity & Specificity: 19.5/20 (97.5%)
-- Completeness: 24.5/25 (98%)
-- Correctness: 24.5/25 (98%)
-- **Actionability: 15/15 (100%)** ⭐ PERFECT
-- Robustness: 14.5/15 (96.7%)
-
-**Ce face**:
-- Master coordinator pentru toți cei 26+ agenți
-- Trackează progres cu Kanban board complet (7 coloane, WIP limits)
-- Gestionează dependențe cu critical path algorithm (forward/backward pass)
-- Detectează circular dependencies (DFS-based cycle detection)
-- Identifică și escalează blockers (4-step resolution protocol)
-- Generează rapoarte (daily standup, weekly status, milestone reports)
-- Alocă resurse eficient (skills matrix, load balancing)
-- Protejează budget €500K (pause-before-exceed protocol)
-- Escalation chain cu timeouts (CAA → CTO → CEO → autonomous)
-
-**v2.0 Fixes (+414 lines)**:
-- ✅ **FIX #1 (CRITICAL)**: Added STORAGE PROTOCOL section (+114 lines)
-  - Kanban board storage (project-status.yaml)
-  - Notification system (notifications.md)
-  - Report storage (.claude/reports/)
-  - Tool usage summary table (Read, Write, Bash, Grep)
-- ✅ **FIX #4 (CRITICAL)**: Added circular dependency detection (+48 lines)
-  - DFS-based cycle detection function
-  - Validation before topological sort
-  - Error response with cycle path
-- ✅ **FIX #2 (HIGH)**: Added Protocol #1 - Multiple Concurrent Blockers (+67 lines)
-  - Override WIP limit in emergencies
-  - 5-step emergency triage protocol
-  - Post-incident analysis
-- ✅ **FIX #3 (HIGH)**: Added Protocol #2 - Budget Overrun Mid-Task (+99 lines)
-  - Pause work immediately protocol
-  - CFO escalation with 3 options (approve/cancel/reallocate)
-  - Decision execution procedures
-- ✅ **FIX #5 (MEDIUM)**: Added Protocol #3 - Escalation Chain with Timeouts (+93 lines)
-  - Multi-level escalation (CAA 2h → CTO 1h → CEO 30min)
-  - Autonomous decision rules (last resort)
-  - Audit trail requirements
-
-**Features Exceptionale**:
-- ✅ **1,877 lines** de orchestration logic production-grade (v1.0: 1,463 + v2.0: +414)
-- ✅ **100/100 actionability** - Fully executable avec storage protocol complet ⭐
-- ✅ **3 emergency protocols** pentru crisis scenarios (multiple blockers, budget overrun, escalation timeouts)
-- ✅ **16 KPIs** tracked across 4 categories (timeline, budget, quality, team)
-- ✅ **3 report types** with complete templates (daily, weekly, milestone - 200+ lines each)
-- ✅ **7-column Kanban board** with WIP limits and lifecycle
-- ✅ **Critical path algorithm** with circular dependency detection (DFS-based)
-- ✅ **Skills matrix** pentru resource allocation
-- ✅ **2 complete end-to-end examples** (task completion, blocker escalation)
-
-**Instrucțiuni cheie implementate**:
-- [x] Format tracking progress - Kanban board cu 7 coloane (Backlog, Ready, In Progress, In Review, Blocked, Completed, Deployed)
-- [x] Algoritm detectare dependențe - Critical path cu forward/backward pass + circular dependency detection (DFS)
-- [x] Template rapoarte status - Daily standup, Weekly status, Milestone reports (toate cu exemple complete)
-- [x] Criterii identificare blockers - Automatic detection cu 5 rules + severity matrix (CRITICAL/HIGH/MEDIUM/LOW)
-- [x] Metrici de urmărit - 16 KPIs (velocity, burn rate, test coverage, bug density, blocker resolution time, etc.)
-- [x] Escalation protocol - Multi-level chain cu timeouts (CAA → CTO → CEO → autonomous decision)
-- [x] Storage protocol - project-status.yaml (Kanban), notifications.md (alerts), .claude/reports/ (reports)
-- [x] Emergency protocols - 3 crisis scenarios (multiple blockers, budget overrun, escalation timeouts)
-
-**Gandalf's Verdict**:
-> *"You shall pass... and orchestrate brilliantly."*
->
-> PMA v2.0 demonstrates **production-grade project management automation** with 97/100 score - **TIED FOR 2nd PLACE WITH BMA**. All 5 blockers from v1.0 resolved comprehensively: storage protocol (+114 lines) makes agent fully executable, circular dependency detection prevents critical path failures, 3 emergency protocols handle crisis scenarios with autonomous workflows. The agent is ready for production use.
-
-**Comparative Quality**:
-- **v1.0 → v2.0**: 93 → 97 (+4 points, +414 lines, 0 blockers remaining)
-- **vs BMA**: Tied at 97/100 (2nd place)
-- **vs Average (96.4)**: Above average by +0.6 points
-
-**Dependențe**: CAA (pentru decizii strategice)
-**Testare**: Initialize storage files (project-status.yaml, notifications.md) + simulate emergency scenarios
-**Evaluation Report**: `.claude/evaluations/pma-v2-evaluation-20251112-234605.md`
-
----
-
-## WAVE 2: BACKEND CORE (8 agenți)
-
-### 🟢 Agent 6: Backend Migration Architect (BMA)
+### 🟢 Agent 5: Backend Migration Architect (BMA)
 
 **Status**: ✅ DONE (v1.0 - PRODUCTION READY)
-**Prioritate**: HIGH
+**Score**: 🎯 **97/100** (APPROVED) - **🏆 HIGHEST IMPLEMENTATION AGENT SCORE**
 **Locație**: `.claude/agents/backend/backend-migration-architect.md`
-**Durată totală**: ~25 minutes (evaluation time)
+**Durată totală**: ~25 minutes
 **Data finalizare**: 12 Noiembrie 2025
 
-**Final Score**: 🎯 **97/100** (APPROVED FOR PRODUCTION) ✅ **← HIGHEST SCORE TO DATE**
-
-**Score Breakdown (v1.0)**:
-- Clarity & Specificity: 98/100 (20%) - Crystal-clear workflows and mapping tables
-- Completeness: 96/100 (25%) - Comprehensive edge cases and error scenarios
-- Correctness: 98/100 (25%) - Technically accurate with valid code examples
-- Actionability: 97/100 (15%) - Nearly fully autonomous with structured outputs
-- Robustness: 96/100 (15%) - Excellent error handling and recovery procedures
-
 **Ce face**:
-- Convertește NestJS → .NET Core architecture cu 10-phase autonomous workflow (80-130 min per module)
-- 7 comprehensive mapping tables (decorators, TypeORM, guards, interceptors, pipes, exceptions, DI)
-- 1,200+ line example migration report (gold standard specification)
-- Preserves API contracts exactly (zero breaking changes for frontend)
-- Integrates with audit agents (LCAA, BLVA, SVSA) to fix bugs during migration
+- Convertește NestJS → .NET Core cu 10-phase autonomous workflow (80-130 min/module)
+- **7 comprehensive mapping tables**: decorators, TypeORM, guards, interceptors, pipes, exceptions, DI
+- **1,200+ line example migration report** (gold standard)
+- Preserves API contracts exactly (zero breaking changes)
+- Integrates cu Audit Trinity (LCAA, BLVA, SVSA) → fix bugs during migration
 
-**Key Features Implemented**:
-- [x] Mapping table: NestJS decorators → .NET attributes (7 comprehensive tables)
-- [x] Pattern-uri pentru middleware NestJS → .NET middleware (guards, interceptors, pipes)
-- [x] Structură folder .NET solution (Controllers, Services, Entities, DTOs, Middleware, Filters)
-- [x] Naming conventions .NET vs TypeScript (PascalCase, camelCase JSON serialization)
-- [x] API versioning strategy (preserve exact routes)
-- [x] Dependency injection NestJS → .NET DI (scope mapping: DEFAULT→Singleton, REQUEST→Scoped)
-- [x] 6 error scenarios with recovery procedures
-- [x] 4 edge cases documented (large modules, monorepo, mixed JS/TS, generated code)
-- [x] Complete Auth Module migration example (end-to-end, 110 minutes)
+**Features**:
+- 2,394 lines total
+- Clarity: 98/100, Correctness: 98/100 ⭐
+- Complete Auth Module example (110 min end-to-end)
+- Folder structure .NET (Controllers, Services, Entities, DTOs, Middleware)
+- Naming conventions (PascalCase → camelCase JSON)
 
-**Gandalf's Verdict**:
-> *"You shall pass... and migrate backends with excellence."*
->
-> BMA v1.0 demonstrates EXCEPTIONAL quality with a 97/100 score - the **HIGHEST SCORE TO DATE**. The agent provides comprehensive migration workflows, accurate technical mappings, and robust error handling. With 2,394 lines including 7 mapping tables, 10 autonomous phases, 6 error scenarios, and a 1,200-line example report, BMA represents production-grade work that **matches or exceeds Google/Amazon standards**.
+**Gandalf's Verdict**: *"Matches or exceeds Google/Amazon standards. HIGHEST SCORE TO DATE."*
 
-**Dependențe**: LCAA (audit backend), BLVA (business logic validation), SVSA (security audit)
-**Testare**: Conversie modul Auth complet (example included in agent definition)
 **Evaluation Report**: `.claude/evaluations/bma-evaluation-20251112-230000.md`
 
 ---
 
-### 🔴 Agent 7: Authentication & Security Agent (ASA)
+### 🔴 Agent 6: Authentication & Security Agent (ASA)
 
 **Status**: 🔴 REJECTED (v1.0 - needs rework)
-**Prioritate**: CRITICAL
+**Score**: 🔴 **88/100** (BELOW THRESHOLD - 7 CRITICAL BLOCKERS)
 **Locație**: `.claude/agents/backend/authentication-security.md`
-**Durată totală**: ~3.5 hours (creation 50min + evaluation 20min + fixes needed 2.5h)
+**Durată totală**: ~1.3 hours (v1.0)
 **Data creație**: 12 Noiembrie 2025
 
-**Final Score**: 🔴 **88/100** (REJECTED - below 95% threshold)
-
-**Evaluation History**:
-- v1.0: 88/100 🔴 (REJECTED - 7 CRITICAL blockers)
-
-**Score Breakdown (v1.0)**:
-- Clarity & Specificity: 16/20 (80%)
-- Completeness: 20/25 (80%)
-- Correctness: 22/25 (88%)
-- Actionability: 11/15 (73%)
-- Robustness: 19/25 (76%)
-
-**CRITICAL BLOCKERS (7 issues)**:
-1. ⚠️ **BLOCKER #1 (SECURITY)**: Weak PRNG - uses `new Random()` for recovery keys (must use `RandomNumberGenerator.Create()`)
-2. ⚠️ **BLOCKER #2**: Ambiguous Redis failure handling (contradictory "fail open" vs "circuit breaker")
-3. ⚠️ **BLOCKER #3**: Missing verification steps for external services (Stripe, Postmark, MailerLite)
-4. ⚠️ **BLOCKER #4**: Subjective language ("difficult to test" - non-deterministic)
-5. ⚠️ **BLOCKER #5**: Undefined Stripe failure behavior (ambiguous null customer ID handling)
-6. ⚠️ **BLOCKER #6**: Missing timeout specifications (external services can hang indefinitely)
-7. ⚠️ **BLOCKER #7**: Non-deterministic email retry (ambiguous intervals and failure handling)
-
-**Ce face**:
-- Implementează 9 auth endpoints (signin, admin-signin, signup, signout, recovery, verification, check-token, refresh)
-- 4 tipuri JWT tokens (Access, Refresh, Email Validation, Subscription Validation)
+**Ce face** (după fix):
+- 9 auth endpoints (signin, admin-signin, signup, signout, recovery, verification, check-token, refresh)
+- 4 JWT token types (Access 8h, Refresh 30d, Email Validation 90d, Subscription Validation 365d)
 - Argon2id password hashing
 - Redis token blacklist
 - Rate limiting (200K req/60s signin, 2K req/60s admin)
 - CORS strict configuration
-- 9 security fixes (from SVSA, BLVA, LCAA reports)
 
-**Features Implemented (v1.0)**:
-- [x] All 9 endpoints specified with complete implementation code
-- [x] All 4 JWT token types documented (Access 8h, Refresh 30d, EmailValidation 90d, SubscriptionValidation 365d)
-- [x] Argon2id password hashing implementation
-- [x] Redis blacklist for logout
-- [x] Rate limiting configuration (signin 200K/60s, admin 2K/60s)
-- [x] CORS policy (strict whitelist, no '*')
-- [x] 7-phase implementation workflow (145 minutes)
-- [x] 15+ integration tests specified (>70% coverage target)
-- [x] 6 error scenarios with recovery strategies
-- [x] 4 edge cases documented
-- [x] 2 complete end-to-end examples
-- [x] 14-section implementation report template
-- [x] Security fixes from SVSA (9 vulnerabilities addressed)
-- [x] Business logic from BLVA validated
-- [x] Legacy bugs from LCAA fixed (signout cookie bug)
+**7 CRITICAL BLOCKERS v1.0**:
+1. ⚠️ **SECURITY**: Weak PRNG (`new Random()` → must use `RandomNumberGenerator.Create()`)
+2. ⚠️ Ambiguous Redis failure handling (contradictory)
+3. ⚠️ Missing verification steps (Stripe, Postmark, MailerLite)
+4. ⚠️ Subjective language ("difficult to test")
+5. ⚠️ Undefined Stripe failure behavior
+6. ⚠️ Missing timeout specifications
+7. ⚠️ Non-deterministic email retry
 
-**Issues to Fix for v2.0**:
-- [ ] Replace `new Random()` with `RandomNumberGenerator.Create()` for recovery keys (BLOCKER #1 - 30 min)
-- [ ] Add timeout specifications table (10s Stripe, 5s Postmark, etc.) (BLOCKER #6 - 20 min)
-- [ ] Specify hybrid Redis failure strategy with deterministic decision tree (BLOCKER #2 - 25 min)
-- [ ] Define deterministic email retry schedule (5min, 15min, 45min) (BLOCKER #7 - 20 min)
-- [ ] Document explicit Stripe failure behavior + subscription handling (BLOCKER #5 - 20 min)
-- [ ] Add external service verification checklist (PHASE 1.5) (BLOCKER #3 - 20 min)
-- [ ] Replace subjective language with specific uncovered paths + line numbers (BLOCKER #4 - 15 min)
+**Estimated Fix Time**: 2.5 hours → Expected v2.0 score: 95-97/100
 
-**Estimated Fix Time**: 2.5 hours → Expected score after fixes: 95-97/100
+**Key Lesson**: Comprehensive ≠ Correct. Disciplined simplicity > verbose ambiguity.
 
-**Gandalf's Verdict**:
-> *"Young wizard, you have crafted an impressive tome of 2,847 lines, covering the breadth of authentication with admirable detail. But in your pursuit of comprehensiveness, you have stumbled into the trap of ambiguity. A single line—`new Random()`—undermines your entire security posture. Fix your 7 blockers, eliminate ALL ambiguities, and return to me. Until then... YOU SHALL NOT PASS."*
+**Gandalf's Verdict**: *"Fix your 7 blockers, eliminate ALL ambiguities. YOU SHALL NOT PASS... yet."*
 
-**Key Lesson**: Comprehensive ≠ Correct. Disciplined simplicity trumps verbose ambiguity (SVSA: 2,314 lines, 95/100, 0 blockers vs ASA v1.0: 2,847 lines, 88/100, 7 blockers).
-
-**Dependențe**: BMA (structură backend), DEA (User entity), LCAA/BLVA/SVSA (audit reports)
 **Evaluation Report**: `.claude/evaluations/asa-evaluation-20251112-232306.md`
 
 ---
 
----
-
-### 🟢 Agent 8: Payment Integration Agent (PIA)
+### 🟢 Agent 7: Payment Integration Agent (PIA)
 
 **Status**: ✅ DONE (v1.0 - PRODUCTION READY)
-**Prioritate**: HIGH
+**Score**: 🎯 **96/100** (APPROVED)
 **Locație**: `.claude/agents/backend/payment-integration.md`
-**Durată totală**: ~60 minute (creare + evaluare)
-**Data finalizare**: 12 Noiembrie 2025 23:45
-
-**Final Score**: 🎯 **96.15/100** (APPROVED FOR PRODUCTION) ✅
-
-**Score Breakdown (v1.0)**:
-- **Clarity & Specificity: 19.4/20 (97%)** ⭐ EXCELLENT
-- **Completeness: 23.75/25 (95%)** ✅ EXCELLENT
-- **Correctness: 24.5/25 (98%)** ⭐⭐ EXCEPTIONAL
-- **Actionability: 14.4/15 (96%)** ✅ EXCELLENT
-- **Robustness: 14.1/15 (94%)** ✅ VERY GOOD
+**Durată totală**: ~60 minutes
+**Data finalizare**: 12 Noiembrie 2025
 
 **Ce face**:
-- Integrează **Stripe API** (11 metode core: PaymentIntent, Subscription, Customer, Webhook)
-- **Subscription scheduling** pentru 3 tipuri: AA1 (monthly €19), AA2 (annual €199), BB (lifetime €599)
-- **Webhook security** cu signature validation (previne replay attacks)
-- **SmartBill integration** pentru facturi românești (19% TVA, format SOMA-YYYY-#####)
-- **15 tipuri erori Stripe** cu retry strategies (exponential backoff)
-- **7 edge cases** handled: webhook idempotency, 3D Secure, currency conversion, proration, retry logic, double-charge prevention
-- **Circuit breaker** pattern pentru resilience (open după 5 failures, auto-close după 10 min)
-- **Idempotency keys** pentru toate payment mutations (previne double-charging)
+- Stripe API integration (11 metode: PaymentIntent, Subscription, Customer, Webhook)
+- Subscription scheduling (AA1 monthly €19, AA2 annual €199, BB lifetime €599)
+- Webhook security cu signature validation (prevent replay attacks)
+- SmartBill integration (facturi românești, 19% TVA, format SOMA-YYYY-#####)
+- 15 tipuri erori Stripe cu retry strategies (exponential backoff)
+- Circuit breaker pattern (open după 5 failures, auto-close după 10 min)
+- Idempotency keys pentru toate mutations (prevent double-charging)
 
-**Features Exceptionale**:
-- ✅ **1,492 lines** de payment integration logic production-grade
-- ✅ **98/100 correctness** - All Stripe.net SDK usage accurate, currency math correct
-- ✅ **Zero-tolerance policy** pentru payment bugs (explicitly stated în agent definition)
-- ✅ **3 complete C# examples** cu compile-ready code:
-  1. Create Monthly Subscription (AA1) - full flow cu webhooks
-  2. Handle Failed Payment Webhook - retry logic cu email notifications
-  3. Validate Webhook Signature - security implementation
-- ✅ **Webhook events: 11 types** handled (payment_intent.succeeded, invoice.payment_failed, subscription.deleted, etc.)
-- ✅ **Romanian law compliance** - SmartBill invoice generation mandatory pentru toate plățile
-- ✅ **PSD2 compliance** - 3D Secure implementation pentru carduri europene
-- ✅ **Monitoring metrics: 6 defined** cu alert thresholds (success rate >95%, latency P95 <500ms, webhook <1s)
-- ✅ **Transaction atomicity** - Database operations wrapped în EF Core transactions (rollback on failure)
-- ✅ **Comprehensive validation checklist: 40+ items** across 7 categories
-
-**Instrucțiuni cheie implementate**:
-- [x] Stripe API wrapper în .NET (Stripe.net SDK 43.0.0+)
-- [x] Implementare webhook signature validation (EventUtility.ConstructEvent cu Stripe-Signature header)
-- [x] Scenarii subscription scheduling detailate (AA1/AA2/BB cu proration, trials, cancellations)
-- [x] SmartBill integration pentru facturi RON (API Basic Auth, 19% TVA, invoice series SOMA)
-- [x] Error handling 15 Stripe error types (card_declined, insufficient_funds, rate_limit, etc.)
-- [x] Idempotency keys pentru retry safety (format: `{userId}_{subscriptionTypeId}_{timestamp}`)
-- [x] **15 MUST rules** și **10 MUST NOT rules** (use Stripe.net SDK, validate signatures, log financial events, NEVER hardcode keys, NEVER skip signature validation, etc.)
-
-**Gandalf's Verdict**:
-> *"You shall pass... and I'd trust you with €500K+ in annual subscription revenue."*
->
-> PIA demonstrates **exceptional payment systems engineering** with 98/100 correctness (mathematically accurate, technically sound), bulletproof webhook security (signature validation prevents replay attacks), Romanian law compliance (SmartBill invoicing), 7 edge cases handled, and circuit breaker resilience. **Exceeds industry standard** în 3 arii: error handling (+3 types vs Stripe best practices), automated invoicing (vs manual), și circuit breaker (vs none).
-
-**Minor Enhancements (pentru 98+ score)**:
-1. Integrate ECB Currency Conversion API - 20 min
-2. Add Webhook Reconciliation Cron Job - 25 min
-3. Add Admin Invoice Regeneration Endpoint - 15 min
-**Total time to 98+**: 60 minutes (optional pentru v1.1)
-
-**Comparative Analysis**:
-- **vs Stripe Best Practices**: Matches în webhook security, idempotency, 3D Secure | Exceeds în error handling (15 vs 12 types), circuit breaker
-- **vs Shopify Payments**: Matches în invoicing, 3D Secure | Exceeds în retry logic (exponential vs fixed), circuit breaker
-- **Overall**: **At or above industry standard** for payment integrations ✅
-
-**Coverage**:
-- 11 Stripe API methods (create/confirm PaymentIntent, CRUD Subscription, CRUD Customer, webhook handling)
+**Features**:
+- 1,492 lines production-grade
+- **Correctness: 24.5/25 (98%)** ⭐
+- Zero-tolerance policy pentru payment bugs
+- 3 complete C# examples (compile-ready)
 - 11 webhook event types handled
-- 15 error types cu retry strategies
-- 7 edge cases documented
-- 3 complete C# examples
-- 40+ validation checklist items
-- 6 monitoring metrics
-- 1,492 lines total
+- Romanian law compliance (SmartBill mandatory)
+- PSD2 compliance (3D Secure pentru EU cards)
 
-**Dependențe**: ASA (auth pentru API calls), DEA (Subscription, Order, Invoice entities), EmailService (notifications)
+**Gandalf's Verdict**: *"I'd trust you with €500K+ annual subscription revenue. Exceeds industry standard."*
+
 **Evaluation Report**: `.claude/evaluations/pia-evaluation-20251112-233000.md`
 
 ---
 
----
-
-### 🟢 Agent 9: Video & Live Services Agent (VLSA)
+### 🟢 Agent 8: Database & Entity Agent (DEA)
 
 **Status**: ⏳ TO DO
-**Prioritate**: MEDIUM
-**Locație**: `.claude/agents/backend/video-live-services.md`
-**Durată estimată**: 50 minute
-
-**Ce face**:
-- Vimeo OAuth 2.0 integration
-- Zoom SDK pentru meetings/webinars
-- Video upload pipeline
-
-**Instrucțiuni cheie de definit**:
-- [ ] Vimeo OAuth flow în .NET
-- [ ] Video upload chunking strategy (large files)
-- [ ] Zoom JWT generation pentru SDK
-- [ ] Webhook handling pentru Vimeo/Zoom events
-- [ ] Video encoding status polling
-- [ ] Error handling (quota exceeded, upload failed)
-
-**Dependențe**: ASA (auth), DEA (Course/Lesson entities)
-**Testare**: Upload video test + create Zoom meeting
-
----
-
-### 🟢 Agent 10: Email & Marketing Agent (EMA)
-
-**Status**: ⏳ TO DO
-**Prioritate**: MEDIUM
-**Locație**: `.claude/agents/backend/email-marketing.md`
-**Durată estimată**: 40 minute
-
-**Ce face**:
-- Postmark transactional emails
-- MailerLite marketing automation
-- Email template management
-
-**Instrucțiuni cheie de definit**:
-- [ ] Postmark API integration (.NET client)
-- [ ] Email templates în HTML (Razor views)
-- [ ] MailerLite API pentru campaigns
-- [ ] Queue system pentru email batches
-- [ ] Tracking email delivery/opens (Postmark webhooks)
-- [ ] Unsubscribe link management
-
-**Dependențe**: ASA (auth), DEA (User entity)
-**Testare**: Send test email prin Postmark
-
----
-
-### 🟢 Agent 11: Database & Entity Agent (DEA)
-
-**Status**: ⏳ TO DO
-**Prioritate**: CRITICAL
+**Prioritate**: CRITICAL (blocker pentru toți backend agents)
 **Locație**: `.claude/agents/backend/database-entity.md`
-**Durată estimată**: 60 minute
+**Durată estimată**: 60 minutes
 
 **Ce face**:
 - Migrează 20+ entities TypeORM → EF Core
-- Configurează relationships și indexuri
-- Database migrations
+- Configurează relationships: OneToMany, ManyToMany, OneToOne
+- Database migrations + seeding strategy
+- Index strategy pentru performance
+- Query optimization patterns (Include, ThenInclude)
+
+**Entities key**:
+- User, Subscription, Course, Lesson, Category
+- Invoice, Order, Campaign, Analytics, AnalyticsTime
+- Shortlist, Address, Payment, SubscriptionType
+- ZoomMeeting, ZoomWebinar
 
 **Instrucțiuni cheie de definit**:
-- [ ] Mapping TypeORM decorators → EF Core annotations
-- [ ] Relationship patterns (OneToMany, ManyToMany)
-- [ ] Index strategy pentru performance
+- [ ] Mapping TypeORM decorators → EF Core FluentAPI
+- [ ] Relationship patterns cu navigation properties
 - [ ] Migration naming conventions
-- [ ] Seeding data strategy
-- [ ] Query optimization patterns (Include, ThenInclude)
+- [ ] Seeding data strategy (admin users, subscription types)
+- [ ] Index strategy (composite indexes pentru queries frecvente)
+- [ ] Query optimization (eager loading vs lazy loading)
 
 **Dependențe**: BMA (structură .NET)
-**Testare**: Creare entities + migration pentru User, Course
+**Testare**: Creare User + Course entities + migration
 
 ---
 
-### 🟢 Agent 12: Analytics & Reporting Agent (ARA)
+### 🟢 Agent 9: External Integrations Agent (EIA) ⭐ NOU - CONSOLIDAT
 
 **Status**: ⏳ TO DO
 **Prioritate**: MEDIUM
-**Locație**: `.claude/agents/backend/analytics-reporting.md`
-**Durată estimată**: 45 minute
+**Locație**: `.claude/agents/backend/external-integrations.md`
+**Durată estimată**: 90 minutes (consolidează 3 agenți)
+
+**CONSOLIDEAZĂ**:
+- ❌ Video & Live Services Agent (VLSA) - 50 min
+- ❌ Email & Marketing Agent (EMA) - 40 min
+- ❌ Analytics & Reporting Agent (ARA) - 45 min
+- ✅ **Total consolidat**: 135 min → 90 min (**-33% timp**)
 
 **Ce face**:
-- Analytics tracking (VIEW_COURSE, VIEW_LESSON, TIME_SPENT)
-- Dashboard statistics
-- Cron jobs pentru agregare
+
+**1. Video & Live Services** (Vimeo + Zoom):
+- Vimeo OAuth 2.0 + video upload pipeline (chunking pentru large files)
+- Vimeo privacy settings + embedding configuration
+- Zoom SDK pentru meetings/webinars (JWT generation)
+- Zoom signature generation pentru live sessions
+- Webhook handling (Vimeo/Zoom events)
+
+**2. Email & Marketing** (Postmark + MailerLite):
+- Postmark transactional emails (.NET client)
+- Email templates HTML (Razor views)
+- MailerLite API pentru campaigns + automation
+- Queue system pentru email batches (Hangfire/RabbitMQ)
+- Tracking delivery/opens (Postmark webhooks)
+- Unsubscribe link management (GDPR compliance)
+
+**3. Analytics & Reporting** (FirstPromoter + Custom):
+- FirstPromoter affiliate tracking integration
+- Custom analytics events (VIEW_COURSE, VIEW_LESSON, TIME_SPENT)
+- Dashboard statistics aggregation
+- Cron jobs pentru agregare (Hangfire/Quartz.NET)
+- Query optimization (materialized views)
+- Export rapoarte (CSV, Excel)
+
+**4. Facebook Pixel**:
+- Lead tracking integration
+- Event tracking pentru conversions
 
 **Instrucțiuni cheie de definit**:
-- [ ] Schema analytics events
-- [ ] Aggregation queries pentru dashboard
-- [ ] Hangfire/Quartz.NET pentru cron jobs
-- [ ] Performance optimization (materialized views)
-- [ ] Data retention policy
-- [ ] Export rapoarte (CSV, Excel)
+- [ ] Vimeo OAuth flow în .NET (3-legged OAuth)
+- [ ] Video upload chunking strategy (10MB chunks, resume capability)
+- [ ] Zoom JWT generation + SDK initialization
+- [ ] Postmark API integration cu retry logic
+- [ ] MailerLite API pentru subscriber management
+- [ ] Analytics event schema (JSON structure)
+- [ ] Hangfire setup pentru cron jobs + email batches
+- [ ] Materialized views pentru dashboard performance
+- [ ] Error handling pentru toate external APIs (circuit breaker, fallback)
 
-**Dependențe**: DEA (Analytics entities)
-**Testare**: Track events + generat raport
+**Raționament consolidare**:
+- Toate sunt **external API integrations** cu pattern-uri similare
+- Același error handling (circuit breaker, retry logic, timeout)
+- Evităm handoff între 3 agenți separați
+- Consistență în logging și monitoring
+
+**Dependențe**: ASA (auth), DEA (entities)
+**Testare**: Upload video Vimeo + send email Postmark + track analytics event
 
 ---
 
-### 🟢 Agent 13: API Testing & Documentation Agent (ATDA)
+## TIER 3: FRONTEND (2 agenți) - Consolidat de la 7 ✂️
+
+### 🔵 Agent 10: Admin Dashboard Agent (ADA) ⭐ NOU - CONSOLIDAT
 
 **Status**: ⏳ TO DO
 **Prioritate**: HIGH
-**Locație**: `.claude/agents/backend/api-testing-documentation.md`
-**Durată estimată**: 50 minute
+**Locație**: `.claude/agents/frontend/admin-dashboard.md`
+**Durată estimată**: 90 minutes (consolidează ADMA + components)
+
+**CONSOLIDEAZĂ**:
+- ❌ Admin Dashboard Migration Agent (ADMA) - 55 min
+- ❌ Shared Components Agent (partea admin) - 25 min
+- ✅ **Total consolidat**: 80 min → 90 min (**creștere 10 min pentru integrare**)
 
 **Ce face**:
-- xUnit/NUnit tests pentru controllers
-- Integration tests
-- Swagger/OpenAPI documentation
+- Migrează **7 pagini admin**: Users, Courses, Lessons, Categories, Subscriptions, Analytics, Settings
+- **React 18 → Vue 3 Composition API** (conversion patterns)
+- **Redux Toolkit → Pinia** (state management migration)
+- **Ant Design 5.20.1 → Ant Design Vue 4.x** (component mapping)
+- **React Router 6 → Vue Router 4** (navigation patterns)
+- Shared components library (Header, Sidebar, Table, Form, Modal, etc.)
+- Form handling patterns (validation, submission, error display)
+- Table pagination + filtering + sorting
+- State persistence (localStorage → Pinia persist plugin)
 
 **Instrucțiuni cheie de definit**:
-- [ ] Test structure (unit vs integration vs E2E)
-- [ ] Mock setup pentru dependencies
-- [ ] Test data builders pattern
-- [ ] Swagger annotations pentru endpoints
-- [ ] Postman collection generation
-- [ ] Code coverage target (>70%)
+- [ ] Mapping table React hooks → Vue Composition API (useState → ref, useEffect → onMounted)
+- [ ] Redux patterns → Pinia patterns (actions, getters, mutations → actions + computed)
+- [ ] Ant Design components → Ant Design Vue (API differences)
+- [ ] Form handling (Formik/React Hook Form → Vuelidate/VeeValidate)
+- [ ] Table patterns (pagination, filters, sorting cu server-side)
+- [ ] Component library structure (composables, utils)
+- [ ] Props interface standards (TypeScript)
+- [ ] Event emitting patterns (emit vs callbacks)
+- [ ] Slot usage guidelines (named slots, scoped slots)
 
-**Dependențe**: Toți agenții backend (testează tot)
-**Testare**: Test suite pentru Auth module
+**Raționament consolidare**:
+- Admin dashboard = **pattern-uri omogene** (CRUD operations)
+- Toate paginile folosesc aceleași componente (Table, Form, Modal)
+- Evităm fragmentare (7 agenți cu micro-diferențe)
+- Consistență styling și UX
+
+**Dependențe**: Backend APIs (BMA endpoints)
+**Testare**: Migrare completă pagina Users (list + create + edit + delete)
 
 ---
 
-## WAVE 3: FRONTEND & QA (13 agenți)
-
-### 🔵 Agent 14: Admin Dashboard Migration Agent (ADMA)
+### 🔵 Agent 11: Web Client Agent (WCA) ⭐ NOU - CONSOLIDAT
 
 **Status**: ⏳ TO DO
 **Prioritate**: HIGH
-**Locație**: `.claude/agents/frontend/admin-dashboard-migration.md`
-**Durată estimată**: 55 minute
+**Locație**: `.claude/agents/frontend/web-client.md`
+**Durată estimată**: 120 minutes (consolidează 6 agenți UI)
+
+**CONSOLIDEAZĂ**:
+- ❌ Web Client Migration Agent (WCMA) - 60 min
+- ❌ Authentication UI Agent (AUIA) - 45 min
+- ❌ Course & Video Player Agent (CVPA) - 50 min
+- ❌ Subscription & Payment UI Agent (SPUA) - 55 min
+- ❌ Dashboard & Profile Agent (DPA) - 45 min
+- ❌ Shared Components Agent (partea web client) - 25 min
+- ✅ **Total consolidat**: 280 min → 120 min (**-57% timp!**)
 
 **Ce face**:
-- React 18 → Vue 3 pentru 7 pagini admin
-- Redux → Pinia migration
-- Ant Design → Ant Design Vue
+
+**1. Core Migration** (Next.js 15 → Nuxt 3):
+- **21 pagini**: Home, Courses, Course Detail, Lesson Player, Auth (Sign In, Sign Up, Recovery), Subscription Plans, Checkout, Payment Success/Failure, Dashboard, Profile, Settings, About, Contact, Terms, Privacy, etc.
+- **Next.js Pages Router → Nuxt 3 file-based routing**
+- **getServerSideProps → Nuxt server API** (useFetch, useAsyncData)
+- **next/image → Nuxt Image** (optimization)
+- **next/router → useRouter** (navigation)
+- SEO meta tags management (useHead, useSeoMeta)
+- Dynamic routing patterns ([id].vue)
+
+**2. Authentication UI**:
+- Sign In / Sign Up forms cu validation (Vuelidate/VeeValidate)
+- Password recovery flow (multi-step)
+- Email verification UI
+- Token storage (cookies vs localStorage - secure strategy)
+- Auto-redirect logic (authenticated users)
+- Remember me functionality
+
+**3. Course & Video Player**:
+- Course catalog cu filters (category, price, rating, search)
+- Vimeo player component Vue 3 (embed API)
+- Video analytics tracking (play, pause, progress, completion)
+- Materials download UI
+- Voting/rating system
+- Progress tracking visual (progress bar, completion %)
+- Course outline sidebar (lessons list)
+
+**4. Subscription & Payment UI**:
+- Stripe Elements Vue 3 integration (@stripe/stripe-js)
+- Payment form validation
+- 3D Secure handling (redirect flow)
+- Billing address form (Romanian validation: județ, localitate)
+- Campaign-based pricing display (AA1, AA2, BB)
+- Success/failure pages (order confirmation)
+- Invoice download links
+
+**5. Dashboard & Profile**:
+- User dashboard cu statistics (courses enrolled, hours watched, certificates)
+- Statistics cards layout (Ant Design Vue Cards)
+- Profile edit form (avatar upload, personal info)
+- Avatar upload component (crop/resize - vue-advanced-cropper)
+- Subscription display (active/inactive status, expiration date)
+- Live sessions calendar integration (Zoom meetings list)
+- Invoice history table
+
+**6. Shared Components Library**:
+- Layout components (Header, Footer, Navbar, Breadcrumbs)
+- Form components (Input, Select, Checkbox, Radio, DatePicker)
+- UI components (Button, Card, Modal, Drawer, Notification)
+- Video player wrapper (Vimeo embed cu controls)
+- Composables (useAuth, useCourse, usePayment, useAnalytics)
 
 **Instrucțiuni cheie de definit**:
-- [ ] Mapping React hooks → Vue Composition API
-- [ ] Redux patterns → Pinia patterns
-- [ ] Component lifecycle React → Vue
-- [ ] Form handling Ant Design → Ant Design Vue
-- [ ] Table pagination patterns
-- [ ] State persistence localStorage → Pinia persist
+- [ ] Next.js patterns → Nuxt 3 patterns (comprehensive mapping table)
+- [ ] getServerSideProps → useFetch/useAsyncData (data fetching strategies)
+- [ ] next/image → Nuxt Image (optimization config)
+- [ ] SEO meta tags (useHead vs useSeoMeta - când folosim fiecare)
+- [ ] Stripe Elements integration (setup intent, payment intent flow)
+- [ ] Form validation patterns (Vuelidate vs VeeValidate - recomandare)
+- [ ] Vimeo player API (events: play, pause, progress, ended)
+- [ ] Avatar upload + crop (vue-advanced-cropper setup)
+- [ ] Component library structure (auto-import config)
+- [ ] Composables patterns (reusable logic)
+- [ ] Error handling UI (toast notifications, error pages)
+- [ ] Loading states (skeletons, spinners)
 
-**Dependențe**: Agenții backend (API contracts)
-**Testare**: Migrare pagina Users completă
+**Raționament consolidare**:
+- Web client = **21 pagini cu pattern-uri IDENTICE** (React→Vue conversion)
+- Toate folosesc aceleași pattern-uri (forms, API calls, state management)
+- **-57% timp** prin eliminare handoff între 6 agenți
+- Consistență UX și code style
+
+**Dependențe**: Backend APIs (toate endpoints), External Integrations (Vimeo, Stripe)
+**Testare**:
+- Complete user journey: Sign Up → Browse Courses → Subscribe → Watch Video → Complete Course
+- Payment flow end-to-end cu Stripe test cards
+- Responsive testing (mobile, tablet, desktop)
 
 ---
 
-### 🔵 Agent 15: Web Client Migration Agent (WCMA)
+## TIER 4: QA & DEVOPS (2 agenți) - Consolidat de la 6 ✂️
+
+### 🟣 Agent 12: QA & Testing Agent (QTA) ⭐ NOU - CONSOLIDAT
 
 **Status**: ⏳ TO DO
 **Prioritate**: HIGH
-**Locație**: `.claude/agents/frontend/web-client-migration.md`
-**Durată estimată**: 60 minute
+**Locație**: `.claude/agents/qa/qa-testing.md`
+**Durată estimată**: 90 minutes (consolidează 3 agenți)
+
+**CONSOLIDEAZĂ**:
+- ❌ Testing Automation Agent (TAA) - 60 min
+- ❌ Migration Validator Agent (MVA) - 50 min
+- ❌ Performance Optimization Agent (POA) - 50 min
+- ❌ Security Audit Agent (SAA) - **ELIMINAT** (redundant cu SVSA din TIER 0!)
+- ✅ **Total consolidat**: 160 min → 90 min (**-44% timp**)
 
 **Ce face**:
-- Next.js 15 → Nuxt 3 pentru 21 pagini
-- Pages Router → file-based routing
-- SSR/CSR strategy
+
+**1. E2E Testing** (Playwright/Cypress):
+- Test structure (Page Object Model pattern)
+- Critical flows priority:
+  - Auth flow (sign up, sign in, password recovery)
+  - Payment flow (subscribe, payment success, invoice generation)
+  - Video flow (browse courses, watch lesson, track progress)
+  - Admin flow (CRUD operations pe Users, Courses)
+- Cross-browser testing matrix (Chrome, Firefox, Safari, Edge)
+- Mobile responsive tests (iPhone, iPad, Android)
+- Accessibility testing (WCAG 2.1 Level AA - axe-core integration)
+- Visual regression testing (Percy/Chromatic - optional)
+
+**2. Migration Validation**:
+- Side-by-side comparison React vs Vue implementations
+- API contract validation (request/response format identic)
+- Behavior equivalence checks (business logic identică)
+- Data flow verification (state management consistency)
+- Performance comparison benchmarks (load time, bundle size)
+- Regression test suite (ensure old features work în new platform)
+
+**3. Performance Optimization**:
+- Lighthouse audit checklist (target: >90 score on all metrics)
+- Bundle analyzer setup (Nuxt analyze, webpack-bundle-analyzer)
+- Code splitting strategy (route-based, component-based)
+- Image optimization (WebP, AVIF, lazy loading, responsive images)
+- Caching headers configuration (static assets, API responses)
+- Core Web Vitals tracking (LCP <2.5s, FID <100ms, CLS <0.1)
+- Performance budget enforcement (bundle size limits)
+- Database query optimization (N+1 queries, missing indexes)
+- API response time benchmarks (P50, P95, P99 latency)
 
 **Instrucțiuni cheie de definit**:
-- [ ] Next.js patterns → Nuxt 3 patterns
-- [ ] getServerSideProps → Nuxt server API
-- [ ] Image optimization Next → Nuxt
-- [ ] SEO meta tags management
-- [ ] Dynamic routing patterns
-- [ ] API routes migration
+- [ ] Playwright test structure (fixtures, page objects, helpers)
+- [ ] Critical test scenarios (20+ high-priority tests)
+- [ ] Cross-browser configuration (browsers matrix, parallel execution)
+- [ ] Accessibility testing setup (axe-core rules, reporting)
+- [ ] Migration validation protocol (comparison checklist)
+- [ ] Lighthouse CI setup (automated audits în pipeline)
+- [ ] Bundle size limits (main bundle <500KB, route chunks <200KB)
+- [ ] Image optimization strategy (formats, sizes, lazy loading)
+- [ ] Caching strategy (CDN, browser cache, service worker)
+- [ ] Performance monitoring (Sentry, New Relic, custom metrics)
 
-**Dependențe**: Agenții backend (API contracts)
-**Testare**: Migrare pagina Courses
-
----
-
-### 🔵 Agent 16: Authentication UI Agent (AUIA)
-
-**Status**: ⏳ TO DO
-**Prioritate**: HIGH
-**Locație**: `.claude/agents/frontend/authentication-ui.md`
-**Durată estimată**: 45 minute
-
-**Ce face**:
-- Pagini Sign In/Sign Up/Password Recovery
-- Form validation
-- Session management frontend
-
-**Instrucțiuni cheie de definit**:
-- [ ] Form validation patterns (Vuelidate/VeeValidate)
-- [ ] Token storage (cookies vs localStorage)
-- [ ] Auto-redirect logic authenticated users
-- [ ] Multi-step forms (registration flow)
-- [ ] Error messages user-friendly
-- [ ] Remember me functionality
-
-**Dependențe**: ASA (backend auth), WCMA/ADMA (structure)
-**Testare**: Complete auth flow user journey
-
----
-
-### 🔵 Agent 17: Course & Video Player Agent (CVPA)
-
-**Status**: ⏳ TO DO
-**Prioritate**: MEDIUM
-**Locație**: `.claude/agents/frontend/course-video-player.md`
-**Durată estimată**: 50 minute
-
-**Ce face**:
-- Course catalog cu filters
-- Vimeo player integration
-- Video analytics tracking
-
-**Instrucțiuni cheie de definit**:
-- [ ] Vimeo player component Vue 3
-- [ ] Video playback analytics tracking
-- [ ] Course filters (category, price, rating)
-- [ ] Materials download UI
-- [ ] Voting/rating system UI
-- [ ] Progress tracking visual
-
-**Dependențe**: VLSA (backend video), WCMA (structure)
-**Testare**: Player video + tracking events
-
----
-
-### 🔵 Agent 18: Subscription & Payment UI Agent (SPUA)
-
-**Status**: ⏳ TO DO
-**Prioritate**: HIGH
-**Locație**: `.claude/agents/frontend/subscription-payment-ui.md`
-**Durată estimată**: 55 minute
-
-**Ce face**:
-- Stripe Elements integration
-- Payment flow UI
-- Billing address forms
-
-**Instrucțiuni cheie de definit**:
-- [ ] Stripe Elements Vue 3 integration
-- [ ] Payment form validation
-- [ ] 3D Secure handling
-- [ ] Success/failure pages
-- [ ] Campaign-based pricing display
-- [ ] Romanian billing address validation
-
-**Dependențe**: PIA (backend payments), WCMA (structure)
-**Testare**: Complete payment flow (test cards)
-
----
-
-### 🔵 Agent 19: Dashboard & Profile Agent (DPA)
-
-**Status**: ⏳ TO DO
-**Prioritate**: MEDIUM
-**Locație**: `.claude/agents/frontend/dashboard-profile.md`
-**Durată estimată**: 45 minute
-
-**Ce face**:
-- User dashboard cu statistics
-- Profile edit pages
-- Avatar upload
-
-**Instrucțiuni cheie de definit**:
-- [ ] Avatar upload component (crop/resize)
-- [ ] Statistics cards layout
-- [ ] Profile form validation
-- [ ] Subscription display active/inactive
-- [ ] Live sessions calendar integration
-- [ ] Invoice download links
-
-**Dependențe**: ARA (analytics), WCMA (structure)
-**Testare**: Dashboard load + profile edit
-
----
-
-### 🔵 Agent 20: Shared Components Agent (SCA)
-
-**Status**: ⏳ TO DO
-**Prioritate**: HIGH
-**Locație**: `.claude/agents/frontend/shared-components.md`
-**Durată estimată**: 50 minute
-
-**Ce face**:
-- Layout components (Header, Footer, Sidebar)
-- Form components reusable
-- Design system consistency
-
-**Instrucțiuni cheie de definit**:
-- [ ] Component library structure
-- [ ] Props interface standards
-- [ ] Event emitting patterns
-- [ ] Slot usage guidelines
-- [ ] Styling approach (scoped vs global)
-- [ ] Storybook setup (optional)
-
-**Dependențe**: WCMA, ADMA (need structure first)
-**Testare**: Use component în 3 pages diferite
-
----
-
-### 🟣 Agent 21: Testing Automation Agent (TAA)
-
-**Status**: ⏳ TO DO
-**Prioritate**: HIGH
-**Locație**: `.claude/agents/qa/testing-automation.md`
-**Durată estimată**: 60 minute
-
-**Ce face**:
-- Playwright/Cypress E2E tests
-- Cross-browser testing
-- Accessibility testing WCAG 2.1
-
-**Instrucțiuni cheie de definit**:
-- [ ] Test structure (Page Object Model)
-- [ ] Critical flows priority (auth, payment, video)
-- [ ] Cross-browser matrix (Chrome, Firefox, Safari)
-- [ ] Mobile responsive tests
-- [ ] Accessibility checks (axe-core)
-- [ ] CI/CD integration
+**Raționament consolidare**:
+- Toate 3 sunt **QA activities** cu pattern-uri similare
+- TAA + MVA = același scope (validare implementare)
+- POA = parte din QA (performance = quality metric)
+- SAA **ELIMINAT** - SVSA din TIER 0 deja face security audit complet!
 
 **Dependențe**: Toți agenții (testează totul)
-**Testare**: E2E test pentru auth flow
+**Testare**:
+- E2E test pentru auth flow (sign up → verify email → sign in)
+- Lighthouse audit pe 5 pagini reprezentative
+- Cross-browser test pe Chrome + Firefox + Safari
 
 ---
 
-### 🟣 Agent 22: Performance Optimization Agent (POA)
-
-**Status**: ⏳ TO DO
-**Prioritate**: MEDIUM
-**Locație**: `.claude/agents/qa/performance-optimization.md`
-**Durată estimată**: 50 minute
-
-**Ce face**:
-- Lighthouse score >90
-- Bundle size optimization
-- Core Web Vitals
-
-**Instrucțiuni cheie de definit**:
-- [ ] Lighthouse audit checklist
-- [ ] Bundle analyzer setup
-- [ ] Code splitting strategy
-- [ ] Image optimization (WebP, lazy load)
-- [ ] Caching headers configuration
-- [ ] Performance budget enforcement
-
-**Dependențe**: Frontend agenți (optimizează after build)
-**Testare**: Lighthouse audit pe 5 pages
-
----
-
-### 🟣 Agent 23: DevOps & CI/CD Agent (DCA)
+### 🟣 Agent 13: DevOps & CI/CD Agent (DCA)
 
 **Status**: ⏳ TO DO
 **Prioritate**: HIGH
 **Locație**: `.claude/agents/devops/cicd-deployment.md`
-**Durată estimată**: 60 minute
+**Durată estimată**: 60 minutes
 
 **Ce face**:
-- GitHub Actions pipelines
-- Docker containerization
-- Deployment automation
+- GitHub Actions pipelines (CI/CD automation)
+- Docker containerization (backend .NET + frontend Nuxt)
+- Deployment automation (staging + production)
+- Environment variables management (secrets, config)
+- Database migrations în CD pipeline
+- Rollback strategy (blue-green deployment)
+- Monitoring + alerting setup (Sentry, Grafana, Prometheus)
 
 **Instrucțiuni cheie de definit**:
-- [ ] GitHub Actions workflow structure
-- [ ] Dockerfile pentru backend .NET
-- [ ] Dockerfile pentru frontend Nuxt
-- [ ] Environment variables management
-- [ ] Database migrations în CD pipeline
-- [ ] Rollback strategy
+- [ ] GitHub Actions workflow structure:
+  - CI: lint, test, build on every PR
+  - CD: deploy to staging on merge to develop, production on merge to main
+- [ ] Dockerfile pentru backend .NET:
+  - Multi-stage build (build → publish → runtime)
+  - Optimizare layer caching
+  - Health check endpoint
+- [ ] Dockerfile pentru frontend Nuxt:
+  - SSR vs static generation decision
+  - Environment variables injection
+  - Nginx configuration (optional)
+- [ ] Environment variables management:
+  - GitHub Secrets pentru sensitive data
+  - .env.example template
+  - Validation script (ensure all vars defined)
+- [ ] Database migrations în pipeline:
+  - Run EF Core migrations automatically
+  - Backup before migration (safety)
+  - Rollback procedure if migration fails
+- [ ] Deployment strategy:
+  - Blue-green deployment (zero downtime)
+  - Smoke tests post-deployment
+  - Auto-rollback on failure
+- [ ] Monitoring setup:
+  - Sentry pentru error tracking (.NET + Vue)
+  - Grafana dashboards (API latency, error rate, user activity)
+  - Alerting rules (Slack/email notifications)
 
 **Dependențe**: Toți agenții (deployează totul)
-**Testare**: Deploy pe staging environment
+**Testare**:
+- Deploy pe staging environment (DigitalOcean/AWS/Azure)
+- Trigger CI/CD pipeline + verify successful deployment
+- Simulate failure + verify rollback
 
 ---
 
-### 🟣 Agent 24: Documentation Agent (DA)
+## 📊 Progress Overview
 
-**Status**: ⏳ TO DO
-**Prioritate**: MEDIUM
-**Locație**: `.claude/agents/documentation/documentation-generator.md`
-**Durată estimată**: 40 minute
-
-**Ce face**:
-- API documentation Swagger
-- Component documentation
-- README files
-
-**Instrucțiuni cheie de definit**:
-- [ ] Swagger annotations standards
-- [ ] Component documentation template
-- [ ] README structure (per-repo)
-- [ ] Architecture diagrams (C4 model)
-- [ ] Onboarding guide structure
-- [ ] Changelog maintenance
-
-**Dependențe**: Toți agenții (documentează totul)
-**Testare**: Generate docs pentru Auth module
+| Tier | Total | Created | Approved | Rejected | % Complete | Status |
+|------|-------|---------|----------|----------|------------|--------|
+| WAVE 0 (Meta) | 1 | 1 | 1 | 0 | 100% | ✅ |
+| WAVE 0.5 (Requirements) | 1 | 1 | 1 | 0 | 100% | ✅ |
+| TIER 0 (Audit) | 3 | 3 | 3 | 0 | 100% | ✅ |
+| TIER 1 (Orchestration) | 1 | 1 | 1 | 0 | 100% | ✅ |
+| TIER 2 (Backend) | 5 | 3 | 2 | 1 | 40% | ⏳ |
+| TIER 3 (Frontend) | 2 | 0 | 0 | 0 | 0% | ⏳ |
+| TIER 4 (QA & DevOps) | 2 | 0 | 0 | 0 | 0% | ⏳ |
+| **TOTAL** | **15** | **9** | **8** | **1** | **53%** | ⏳ |
 
 ---
 
-### 🟣 Agent 25: Migration Validator Agent (MVA)
+## ⏱️ Time Tracking
 
-**Status**: ⏳ TO DO
-**Prioritate**: HIGH
-**Locație**: `.claude/agents/validation/migration-validator.md`
-**Durată estimată**: 50 minute
+| Tier | Estimated | Actual | Remaining | Status |
+|------|-----------|--------|-----------|--------|
+| WAVE 0 | 1h | 2h | 0h | ✅ |
+| WAVE 0.5 | 1h | 6h | 0h | ✅ |
+| TIER 0 | 4h | 5.2h | 0h | ✅ |
+| TIER 1 | 0.5h | 0.4h | 0h | ✅ (CAA only, PMA eliminated) |
+| TIER 2 | 5h | 1.9h | 3.1h | ⏳ (ASA fix 2.5h + DEA 1h + EIA 1.5h = 5h total) |
+| TIER 3 | 3.5h | 0h | 3.5h | ⏳ (ADA 1.5h + WCA 2h) |
+| TIER 4 | 2.5h | 0h | 2.5h | ⏳ (QTA 1.5h + DCA 1h) |
+| **TOTAL** | **~18h** | **~15.5h** | **~9.1h** | ⏳ |
 
-**Ce face**:
-- Compară React vs Vue implementations
-- Validează API contracts
-- Regression testing
-
-**Instrucțiuni cheie de definit**:
-- [ ] Side-by-side comparison strategy
-- [ ] API contract validation rules
-- [ ] Behavior equivalence checks
-- [ ] Data flow verification
-- [ ] Performance comparison benchmarks
-- [ ] Regression test suite
-
-**Dependențe**: Frontend + Backend agenți
-**Testare**: Validate Auth migration
+**Economie vs arhitectură veche**: ~32h → ~24h (**-25% timp**)
 
 ---
 
-### 🟣 Agent 26: Security Audit Agent (SAA)
-
-**Status**: ⏳ TO DO
-**Prioritate**: HIGH
-**Locație**: `.claude/agents/security/security-audit.md`
-**Durată estimată**: 55 minute
-
-**Ce face**:
-- OWASP Top 10 post-migration
-- Dependency scanning
-- Penetration testing
-
-**Instrucțiuni cheie de definit**:
-- [ ] OWASP checklist pentru .NET + Vue
-- [ ] Dependency scanner setup (Snyk, OWASP Dependency-Check)
-- [ ] Security headers validation
-- [ ] Penetration testing scenarios
-- [ ] Secret scanning în git history
-- [ ] Security report template
-
-**Dependențe**: Toți agenții (auditează totul)
-**Testare**: Security audit pe Auth + Payment modules
-
----
-
-## Tracking & Metrics
-
-### Progress Overview
-
-| Wave | Total | Creați | %   | Status |
-|------|-------|--------|-----|--------|
-| WAVE 0 (Meta Quality) | 1 | 1 | 100% | ✅ |
-| WAVE 0.5 (Requirements) | 1 | 1 | 100% | ✅ |
-| WAVE 1 (Audit & Orchestrare) | 5 | 5 | 100%  | ✅ |
-| WAVE 2 (Backend Core) | 8 | 3 | 37.5%  | ⏳ (1 rejected - ASA 88/100) |
-| WAVE 3 (Frontend & QA) | 13 | 0 | 0%  | ⏳ |
-| **TOTAL** | **27** | **9** | **33.3%** | ⏳ (8 approved, 1 rejected) |
-
-### Time Estimates
-
-| Wave | Timp estimat | Timp real | Status |
-|------|--------------|-----------|--------|
-| WAVE 0 | ~1 oră | 2 ore | ✅ |
-| WAVE 0.5 | ~1 oră | 6 ore | ✅ |
-| WAVE 1 | ~4 ore | ~5.2 ore | ✅ (100% done) |
-| WAVE 2 | ~7 ore | ~1.4 ore | ⏳ (25% done - PIA, BMA) |
-| WAVE 3 | ~11 ore | - | ⏳ |
-| **TOTAL** | **~24 ore** | **~16.7 ore** | ⏳ |
-
----
-
-## Process de Creare pentru Fiecare Agent
-
-### Pas 1: Discuție & Design (15-20 min)
-- Analizăm ce face agentul
-- Definim instrucțiuni MUST DO / MUST NOT DO
-- Stabilim format input/output
-- Alegem exemple concrete
-
-### Pas 2: Creare Fișier Agent (20-30 min)
-- Scriem fișierul `.md` complet
-- Includem toate secțiunile
-- Adăugăm exemple și validări
-
-### Pas 3: Review & Validare (10-15 min)
-- Verificăm completitudine
-- Testăm pe un caz simplu
-- Ajustăm dacă e nevoie
-
-### Pas 4: Update Tracking (2 min)
-- Marcăm agent ca finalizat în acest fișier
-- Actualizăm progress percentage
-- Comitem în git
-
-**Timp total per agent**: ~45-60 minute
-
----
-
-## Regulă de Update
-
-**DUPĂ FIECARE AGENT CREAT**:
-1. Schimbă status din `⏳ TO DO` în `✅ DONE`
-2. Adaugă data finalizării
-3. Adaugă link către fișierul agentului
-4. Actualizează Progress Overview
-5. Comit în git cu mesaj descriptiv
-
----
-
-## Notes & Observații
-
-- Unii agenți sunt mai complecși (60 min) vs altii mai simpli (40 min)
-- WAVE 1 este CRITICĂ - fără ea nu putem testa ceilalți
-- Backend (WAVE 2) trebuie terminat înainte de Frontend (WAVE 3)
-- Testarea fiecărui agent este OBLIGATORIE
-
----
-
-**Ultimă actualizare**: 12 Noiembrie 2025 23:50
-**Versiune document**: 1.4
-**Status**: WAVE 1 - 80% (4/5) | WAVE 2 - 25% (2/8)!
-**Latest**: BMA v1.0 ✅ DONE (97/100) - HIGHEST SCORE TO DATE! 🏆
-**Next**: PMA (complete WAVE 1) sau continue WAVE 2 (ASA/DEA/VLSA/EMA/ARA/ATDA)
-
----
-
-## 📊 Agent Creation History (Chronological)
+## 📈 Agent Creation History (Chronological)
 
 | # | Agent | Version | Score | Status | Date | Time | Rank |
 |---|-------|---------|-------|--------|------|------|------|
-| 0 | Gandalf 🧙‍♂️ | v5.0 | 99/100 | ✅ | 2025-01-11 | 2h | 1st (meta) |
-| 0.5 | SCA | v2.2 | 96/100 | ✅ | 2025-11-12 | 6h | 4th |
-| 1 | LCAA | v2.0 | 96/100 | ✅ | 2025-01-11 | 2h | 4th |
-| 2 | BLVA | v1.0 | 96/100 | ✅ | 2025-11-12 | 2h | 4th |
-| 3 | SVSA | v1.0 | 95/100 | ✅ | 2025-11-12 | 0.8h | 8th |
-| 4 | CAA | v1.0 | 95.2/100 | ✅ | 2025-11-12 | 0.4h | 7th |
-| 5 | PIA | v1.0 | 96/100 | ✅ | 2025-11-12 | 1h | 4th |
-| 6 | **BMA** | **v1.0** | **97/100** | **✅** | **2025-11-12** | **0.4h** | **🏆 TIED 2nd** |
-| **7** | **PMA** | **v2.0** | **97/100** | **✅** | **2025-11-12** | **0.8h** | **🏆 TIED 2nd** |
+| 0 | Gandalf 🧙‍♂️ | v5.0 | 99/100 | ✅ | 2025-01-11 | 2h | 🥇 META |
+| 0.5 | SCA | v2.2 | 96/100 | ✅ | 2025-11-12 | 6h | 🥉 Tied |
+| 1 | LCAA | v2.0 | 96/100 | ✅ | 2025-01-11 | 2h | 🥉 Tied |
+| 2 | BLVA | v1.0 | 96/100 | ✅ | 2025-11-12 | 2h | 🥉 Tied |
+| 3 | SVSA | v1.0 | 95/100 | ✅ | 2025-11-12 | 0.8h | - |
+| 4 | CAA | v1.0 | 95.2/100 | ✅ | 2025-11-12 | 0.4h | - |
+| 5 | BMA | v1.0 | **97/100** | ✅ | 2025-11-12 | 0.4h | 🥈 **HIGHEST** |
+| 6 | PIA | v1.0 | 96/100 | ✅ | 2025-11-12 | 1h | 🥉 Tied |
+| 7 | ASA | v1.0 | 88/100 | 🔴 | 2025-11-12 | 1.3h | REJECTED |
+| ~~PMA~~ | ~~v2.0~~ | ~~97/100~~ | ❌ | ~~2025-11-12~~ | ~~0.8h~~ | **ELIMINATED** |
 
 **Metrics**:
-- **Total**: 9 agents in ~16.7 hours
-- **Pass Rate**: 100% (9/9 approved - excluding ASA rejection)
-- **Avg Score**: 96.5/100
+- **Total approved**: 8 agents
+- **Pass Rate**: 89% (8/9 excluding eliminated PMA)
+- **Avg Score**: 96.3/100 (approved only)
 - **Avg Time**: ~1.85h per agent
-- **Quality**: INCREASING ↗️ (2 agents at 97/100)
-- **Efficiency**: IMPROVING ↗️
+- **Quality Trend**: INCREASING ↗️ (BMA at 97/100)
 
 ---
 
-## 🎯 Quality Analysis
+## 🎯 Quality Distribution
 
-### Score Distribution
-- **99-100**: 1 agent (Gandalf meta)
-- **97-98**: 1 agent (BMA 🏆)
-- **95-96**: 6 agents (75%)
-- **<95**: 0 agents
+### Score Breakdown:
+- **99-100**: 1 agent (Gandalf meta) 🥇
+- **97-98**: 1 agent (BMA) 🥈
+- **95-96**: 5 agents (SCA, LCAA, BLVA, CAA, PIA) 🥉
+- **<95**: 1 agent (SVSA at 95 - at threshold)
+- **Rejected**: 1 agent (ASA at 88)
 
-### First-Try Success: 50%
-✅ BLVA, SVSA, CAA, PIA, BMA (5/8 passed first try)
-❌ Gandalf, SCA, LCAA (needed iterations)
+### First-Try Success Rate: 56% (5/9)
+- ✅ **Passed first try**: BLVA, SVSA, CAA, PIA, BMA
+- ❌ **Needed iterations**: Gandalf, SCA, LCAA, ASA
 
-**Key Factor**: Detailed mapping tables + comprehensive examples = first-try success
-
----
-
-## 🚀 Next Steps Recommendations
-
-### Option A: Complete WAVE 1 ⭐
-- **PMA** (Project Manager) - 45 min
-- Benefit: Full orchestration ready
-
-### Option B: Continue WAVE 2
-- **DEA** (Database & Entity) - 60 min (CRITICAL)
-- **ASA** (Authentication) - 55 min (HIGH)
-- **ATDA** (API Testing) - 50 min (HIGH)
-- Benefit: Backend foundation complete
-
-### Option C: Hybrid ⚡ RECOMMENDED
-1. PMA (45 min)
-2. DEA (60 min)
-3. ASA (55 min)
-**Total**: 160 min for 3 critical agents
+**Key Success Factor**: Detailed mapping tables + comprehensive examples = first-try approval
 
 ---
 
-## 📈 Remaining Work
+## 🚀 Next Steps - Prioritized Roadmap
 
-| Wave | Agents Left | Est. Time | Priority |
-|------|-------------|-----------|----------|
-| WAVE 1 | 1 (PMA) | 0.75h | Complete orchestration |
-| WAVE 2 | 6 (ASA, DEA, etc.) | 5h | Backend foundation |
-| WAVE 3 | 13 (Frontend, QA) | 11h | Frontend & testing |
-| **TOTAL** | **19** | **~17h** | - |
+### Phase 1: Complete TIER 2 Backend (Critical) - 5h
+1. **ASA v2.0** (2.5h) - Fix 7 blockers → 95-97/100 expected
+2. **DEA** (1h) - CRITICAL - 20+ entities TypeORM→EF Core
+3. **EIA** (1.5h) - External Integrations (Vimeo, Zoom, Postmark, MailerLite, Analytics)
 
-**Grand Total**: 14.6h (done) + 17h (remaining) = **~32 hours**
+### Phase 2: TIER 3 Frontend - 3.5h
+4. **ADA** (1.5h) - Admin Dashboard (7 pages + components)
+5. **WCA** (2h) - Web Client (21 pages + all UI)
 
-**Confidence**: HIGH ✅
-- 100% pass rate
-- Quality increasing (97/100 latest)
-- Time decreasing (25 min for BMA)
+### Phase 3: TIER 4 QA & DevOps - 2.5h
+6. **QTA** (1.5h) - E2E tests + migration validation + performance
+7. **DCA** (1h) - CI/CD + Docker + deployment
+
+**Total Remaining**: ~11h (Phase 1: 5h + Phase 2: 3.5h + Phase 3: 2.5h)
+
+**Grand Total**: 15.5h (done) + 11h (remaining) = **~26.5 hours** (vs 32h arhitectură veche)
 
 ---
 
-**Document Version**: 1.5
-**Last Updated**: 2025-11-12 23:55
-**Status**: 8/27 agents (29.6%) - WAVE 1 (80%), WAVE 2 (25%)
+## 📋 Agenți Eliminați din Arhitectura Veche (27→15)
+
+### Eliminați complet (12 agenți):
+1. ❌ **PMA** (97/100) → Responsibilities merged into CAA
+2. ❌ **VLSA** → Merged into EIA (External Integrations Agent)
+3. ❌ **EMA** → Merged into EIA
+4. ❌ **ARA** → Merged into EIA
+5. ❌ **ATDA** → Testing responsibilities merged into QTA
+6. ❌ **ADMA** → Merged into ADA (Admin Dashboard Agent)
+7. ❌ **WCMA** → Merged into WCA (Web Client Agent)
+8. ❌ **AUIA** → Merged into WCA
+9. ❌ **CVPA** → Merged into WCA
+10. ❌ **SPUA** → Merged into WCA
+11. ❌ **DPA** → Merged into WCA
+12. ❌ **SCA** (Shared Components) → Merged into ADA + WCA
+13. ❌ **TAA** → Merged into QTA
+14. ❌ **MVA** → Merged into QTA
+15. ❌ **POA** → Merged into QTA
+16. ❌ **SAA** → REDUNDANT cu SVSA (already in TIER 0)
+17. ❌ **DA** (Documentation Agent) → MANUAL (Swagger auto-generated)
+
+### Agenți noi consolidați (3 agenți):
+- ✅ **EIA** (External Integrations Agent) - consolidează VLSA + EMA + ARA
+- ✅ **ADA** (Admin Dashboard Agent) - consolidează ADMA + Shared Components (admin)
+- ✅ **WCA** (Web Client Agent) - consolidează WCMA + AUIA + CVPA + SPUA + DPA + Shared Components (web)
+- ✅ **QTA** (QA & Testing Agent) - consolidează TAA + MVA + POA
+
+---
+
+## 💡 Lecții învățate din primii 9 agenți
+
+### ✅ Ce funcționează:
+1. **Mapping tables comprehensive** → First-try success (BMA 97/100 în 25 min)
+2. **Example reports 400-1200 lines** → Gold standard specification (BLVA, BMA)
+3. **Autonomous workflows multi-phase** → Fully executable (LCAA, BMA, SVSA)
+4. **Integration cross-referencing** → Synergy findings (SVSA references LCAA+BLVA)
+
+### ❌ Ce NU funcționează:
+1. **Ambiguity în security code** → INSTANT REJECT (ASA: `new Random()` instead of crypto-safe)
+2. **Comprehensive ≠ Correct** → 2,847 lines cu 7 blockers (ASA) vs 2,314 lines cu 0 blockers (SVSA)
+3. **Too many specialized agents** → Handoff overhead (7 frontend agents eliminated)
+
+### 🎯 Optimizations Applied:
+1. **Consolidare agenți omogeni** → Frontend de la 7→2 agents (-71%)
+2. **Eliminate PM redundancy** → CAA preia orchestration + timeline tracking
+3. **Merge external integrations** → Backend de la 8→5 agents (-37%)
+4. **Remove security duplication** → SAA eliminat (SVSA deja face audit)
+
+---
+
+## 📖 Template Standard pentru Fiecare Agent
+
+Pentru fiecare agent creăm:
+
+```
+📁 .claude/agents/{category}/{agent-name}.md
+
+Structură fișier:
+1. Header (Nume, Role, Activation Criteria)
+2. STRICT RULES (15 MUST DO / 10 MUST NOT DO)
+3. Input Requirements (format, validări)
+4. Output Format (structured, cu exemple concrete)
+5. Workflow (autonomous execution phases cu timings)
+6. Validation Checklist (success criteria)
+7. Examples (2-3 complete end-to-end)
+8. Error Handling (6+ scenarios cu recovery)
+9. Edge Cases (4+ documented)
+10. Integration Points (dependencies, handoffs)
+```
+
+**Critical**: Fiecare agent MUST be evaluated by Gandalf before marking DONE (threshold: 95%+)
+
+---
+
+## 🔄 Process de Creare
+
+### Pas 1: Design & Planning (15-20 min)
+- Analizăm responsabilități agent
+- Definim MUST DO / MUST NOT DO rules (strict)
+- Stabilim format input/output (structured)
+- Alegem 2-3 exemple complete
+
+### Pas 2: Implementation (30-60 min)
+- Scriem fișierul `.md` complet
+- Includem toate secțiunile (10 sections minimum)
+- Adăugăm mapping tables (dacă aplicabil)
+- Scriem exemple comprehensive (400-1200 lines)
+
+### Pas 3: Gandalf Evaluation (20-30 min)
+- Invocăm Gandalf cu "Gandalf, evaluate agent {agent-name}"
+- Analizăm raportul detaliat
+- Identificăm blockers (dacă score <95)
+
+### Pas 4: Fixes & Re-evaluation (optional, 30-120 min)
+- Dacă score <95: Fix ALL blockers
+- Re-submit pentru evaluare
+- Iterăm până la 95%+
+
+### Pas 5: Finalization (5 min)
+- Marcăm agent ca ✅ DONE în plan-creare-agenti.md
+- Comitem în git cu evaluation report
+- Update progress metrics
+
+**Timp mediu per agent**: ~2h (design 20min + implementation 60min + evaluation 25min + fixes 15min optional)
+
+---
+
+## 🎯 Success Criteria
+
+### La nivel de agent:
+- ✅ Score Gandalf ≥ 95/100
+- ✅ Zero CRITICAL blockers
+- ✅ Autonomous execution (no manual intervention)
+- ✅ Comprehensive examples (2-3 end-to-end)
+- ✅ Error handling (6+ scenarios)
+- ✅ Edge cases documented (4+)
+
+### La nivel de proiect:
+- ✅ Toate cele 15 agenți created & approved
+- ✅ Average score ≥ 96/100
+- ✅ First-try success rate ≥ 50%
+- ✅ Total time ≤ 24 hours
+- ✅ Integration verified (cross-agent handoffs)
+
+---
+
+## 🔐 Quality Assurance
+
+### Gandalf Rules (ZERO TOLERANCE):
+1. ❌ Production-breaking bugs → Score = 0
+2. ❌ Undefined critical behavior → Score = 0
+3. ❌ Non-deterministic instructions → -20 points
+4. ❌ Missing verification → -15 points
+5. ❌ Circular dependencies → Score = 0
+6. ❌ Token limit violations → -10 points
+7. ❌ Unverifiable claims → -5 points per claim
+
+### Mandatory Edge Cases (ALL agents):
+1. Empty/null/undefined input
+2. Maximum size/length input (boundary)
+3. Concurrent access (if applicable)
+4. External dependency failure (API down)
+5. Timeout scenarios (10x normal time)
+
+---
+
+## 📝 Regulă de Update
+
+**DUPĂ FIECARE AGENT**:
+1. Actualizează status: `⏳ TO DO` → `✅ DONE` sau `🔴 REJECTED`
+2. Adaugă score + date finalizare
+3. Link către evaluation report
+4. Update Progress Overview table
+5. Update Time Tracking
+6. Commit în git: `git commit -m "Agent {name} v{version}: {status} ({score}/100)"`
+
+---
+
+## 🚨 Blockers & Risks
+
+### Current Blockers:
+1. **ASA v1.0 rejected** (88/100) - 7 CRITICAL blockers
+   - Impact: Auth module delayed
+   - Mitigation: Fix all 7 blockers în v2.0 (estimated 2.5h)
+   - Priority: HIGH
+
+### Risks Identified:
+1. **Frontend consolidation** (7→2 agents)
+   - Risk: Agenți prea mari (WCA = 21 pages)
+   - Mitigation: Detailed section breakdown, comprehensive mapping tables
+   - Probability: LOW (BMA success cu 2,394 lines demonstrează scalability)
+
+2. **External Integrations consolidation** (3→1 agent)
+   - Risk: Prea multe API-uri diferite (Vimeo, Zoom, Postmark, MailerLite)
+   - Mitigation: Separate sections per integration, common error handling patterns
+   - Probability: MEDIUM
+
+---
+
+**Document Version**: 2.0 (OPTIMIZED ARCHITECTURE)
+**Last Updated**: 2025-11-13
+**Architecture**: 15 agents (optimized from 27, -44% complexity)
+**Status**: 8/15 approved (53%), 1 rejected (ASA), 6 TO DO
+**Next Agent**: ASA v2.0 (fix 7 blockers) or DEA (critical dependency)
+**Estimated Completion**: 15.5h done + 11h remaining = **~26.5h total**
