@@ -189,7 +189,33 @@ Fiecare agent are un rol specific și bine definit pentru a asigura consistenț�
 
 ---
 
-### 9. Analytics & Reporting Agent (ARA)
+### 9. External Integrations Agent (EIA) ✅ **DONE (97/100)** 🏆
+**Ce face**: Consolidează TOATE integrările externe (7 services): Vimeo (video), Zoom (live), Postmark (email), MailerLite (marketing), FirstPromoter (affiliates), Librapay (payments Romanian market), Analytics (tracking). Agent complet de 2,900+ linii care migrează VLSA + EMA + ARA într-un singur specialist.
+
+**Status**: ✅ PRODUCTION APPROVED (v2.0: 97/100, #2 scor all-time - FOUR-WAY TIE!)
+**Versiune**: v2.0 (2,900+ linii, fixed 2 critical blockers + 3 high issues în 90 minute)
+**Fișier**: `.claude/agents/backend/eia.md`
+**Evaluare**: `.claude/evaluations/eia-evaluation-v2-{timestamp}.md`
+
+**Responsabilități cheie**:
+- ✅ **Vimeo Service** (3 methods): Upload video cu TUS protocol, progress reporting, temp file cleanup, live streaming
+- ✅ **Zoom Service** (OAuth + 3 endpoints): Token caching (Redis 50min TTL), Meeting SDK signature (JWT 2h), meetings/webinars listing
+- ✅ **Postmark Service**: Transactional emails cu Razor templates, Hangfire queue, retry logic, bounce/delivery webhooks
+- ✅ **MailerLite Service** (9 methods): Bulk import (200 batch), distributed lock (Redis SETNX), group management, GDPR compliance
+- ✅ **FirstPromoter Service** (2 methods): Affiliate tracking (signup, sale), webhook handling, retry queue
+- ✅ **Analytics Service** (4 endpoints): Rate limiting (100 events/hour), ownership validation, deduplication (5min window)
+- ✅ **Librapay Service** (14+ methods): HMAC-SHA1 signature, IPN idempotency (7-day cache), recurring payments (TRTYPE 171/172)
+
+**Critical Fixes Applied in v2.0**:
+- ✅ Pattern 5: SaveChangesAsync override pentru async timestamp handling (DRY principle)
+- ✅ Distributed lock: Redis SETNX pentru MailerLite bulk import (prevents concurrent imports)
+- ✅ IPN Idempotency: Cache-based deduplication pentru Librapay webhooks (prevents duplicate payments)
+- ✅ Retry-After 429: Polly retry policy respects rate limit headers (prevents IP bans)
+- ✅ Signature Tests: Real HMACSHA1 calculation cu multiple test cases (not placeholder)
+
+---
+
+### 10. Analytics & Reporting Agent (ARA) [CONSOLIDAT ÎN EIA]
 **Ce face**: Implementează sistemul de analytics pentru tracking activitate utilizatori (VIEW_COURSE, VIEW_LESSON, TIME_SPENT), statistici dashboard, rapoarte business intelligence și cron jobs pentru agregare date.
 
 **Responsabilități cheie**:

@@ -53,7 +53,7 @@ analiza-soma/
 │   ├── WEB_CLIENT_MIGRATION_PLAN.txt
 │   └── ... (6 more files)
 │
-├── agenti-soma.md              # 27 specialized AI agents catalog
+├── agenti-soma.md              # 15 specialized AI agents catalog (optimized from 27)
 ├── plan-creare-agenti.md       # Agent creation tracking plan
 └── CLAUDE.md                   # This file
 ```
@@ -219,7 +219,7 @@ Gandalf evaluates every agent on **5 dimensions**:
 
 ## AI Agents for Implementation
 
-The file `agenti-soma.md` defines **27 specialized AI agents** organized in 6 tiers following an **Audit-First Migration Strategy**:
+The file `agenti-soma.md` defines **15 specialized AI agents** (optimized from 27, **-44% complexity**) organized in 4 tiers following an **Audit-First Migration Strategy**:
 
 ### WAVE 0: Meta Quality (1 agent) ⭐ CREATED FIRST
 0. **Gandalf - The Quality Wizard** (99/100) - Evaluates ALL other agents before they can be marked DONE
@@ -231,28 +231,56 @@ The file `agenti-soma.md` defines **27 specialized AI agents** organized in 6 ti
 
 **CRITICAL**: These agents MUST run BEFORE migration starts. No code is migrated until audit is complete and Chief Architect decides which bugs to fix.
 
-### TIER 1: Orchestration (2 agents)
-4. **Chief Architect Agent (CAA)** - Master orchestrator and technical decision maker
-5. **Project Manager Agent (PMA)** - Timeline management and resource allocation
+### TIER 1: Orchestration (1 agent) - **PMA ELIMINATED**
+4. **Chief Architect Agent (CAA)** (95.2/100) ✅ - Master orchestrator + timeline management (merged PMA responsibilities)
 
-### TIER 2: Backend Specialization (8 agents)
-6-13. Backend Migration Architect, Authentication & Security Agent, Payment Integration Agent, Video & Live Services Agent, Email & Marketing Agent, Database & Entity Agent, Analytics & Reporting Agent, API Testing & Documentation Agent
+### TIER 2: Backend Specialization (5 agents) - **Consolidated from 8**
+5. **Backend Migration Architect (BMA)** (97/100) ✅ - NestJS → .NET Core migration
+6. **Payment Integration Agent (PIA)** (96/100) ✅ - Stripe, Librapay, SmartBill
+7. **Authentication & Security Agent (ASA)** (97/100) ✅ - 4 JWT types, Argon2, OWASP compliance
+8. **Database & Entity Agent (DEA)** (97/100) ✅ - 18 entities TypeORM → EF Core
+9. **External Integrations Agent (EIA)** (97/100) ✅ - Consolidates 7 services: Video (Vimeo, Zoom) + Email (Postmark, MailerLite) + Analytics + Librapay
 
-### TIER 3: Frontend Specialization (7 agents)
-14-20. Admin Dashboard Migration Agent, Web Client Migration Agent, Authentication UI Agent, Course & Video Player Agent, Subscription & Payment UI Agent, Dashboard & Profile Agent, Shared Components Agent
+### TIER 3: Frontend (2 agents) - **Consolidated from 7**
+10. **Admin Dashboard Agent (ADA)** ⏳ - 7 pages React → Vue 3, consolidates ADMA + Shared Components
+11. **Web Client Agent (WCA)** ⏳ - 21 pages Next.js → Nuxt 3, consolidates WCMA + 5 UI agents
 
-### TIER 4: QA & Deployment (4 agents)
-21-24. Testing Automation Agent, Performance Optimization Agent, DevOps & CI/CD Agent, Documentation Agent
+### TIER 4: QA & DevOps (2 agents) - **Consolidated from 6**
+12. **QA & Testing Agent (QTA)** ⏳ - E2E + Migration Validation + Performance (TAA + MVA + POA merged, SAA eliminated as redundant)
+13. **DevOps & CI/CD Agent (DCA)** ⏳ - GitHub Actions, Docker, deployment automation
 
-### TIER 5: Specialist Support (2 agents)
-25-26. Migration Validator Agent, Security Audit Agent
+**Agent Summary Table** (15 agents optimized from 27):
+
+| # | Agent | Tier | Score | Status | Notes |
+|---|-------|------|-------|--------|-------|
+| 0 | Gandalf | Meta | 99/100 | ✅ | Quality gatekeeper |
+| 0.5 | SCA | Requirements | 96/100 | ✅ | Story clarity validator |
+| 1 | LCAA | Audit | 96/100 | ✅ | Legacy code bugs |
+| 2 | BLVA | Audit | 96/100 | ✅ | Business logic validation |
+| 3 | SVSA | Audit | 95/100 | ✅ | Security vulnerabilities |
+| 4 | CAA | Orchestration | 95.2/100 | ✅ | Master orchestrator (merged PMA) |
+| 5 | BMA | Backend | 97/100 | ✅ | NestJS → .NET |
+| 6 | PIA | Backend | 96/100 | ✅ | Payments (Stripe, SmartBill) |
+| 7 | ASA | Backend | 97/100 | ✅ | Auth + Security (4 JWT types) |
+| 8 | DEA | Backend | 97/100 | ✅ | 18 entities (TypeORM → EF Core) |
+| 9 | EIA | Backend | - | ⏳ | External integrations (consolidates 3) |
+| 10 | ADA | Frontend | - | ⏳ | Admin dashboard (consolidates 2) |
+| 11 | WCA | Frontend | - | ⏳ | Web client (consolidates 6) |
+| 12 | QTA | QA | - | ⏳ | Testing + validation (consolidates 3) |
+| 13 | DCA | DevOps | - | ⏳ | CI/CD + deployment |
+
+**Consolidation Benefits**:
+- **-44% complexity** (15 vs 27 agents)
+- **-13% time** (~27.7h vs 32h estimated)
+- **Fewer handoffs** between agents
+- **Better consistency** (2 frontend agents vs 7)
 
 **Usage Pattern**:
 1. **ALWAYS evaluate with Gandalf** - No agent passes without 95%+ score
 2. **Start with TIER 0** - Audit legacy code before migration
 3. Reference appropriate agents from `agenti-soma.md` for each module
 4. Follow Audit-First Strategy - never migrate bugs from old platform
-5. Validate migrations with TIER 5 agents before deployment
+5. Validate migrations with QTA before deployment
 
 ## Working with This Repository
 
@@ -430,11 +458,11 @@ For any migration (Backend/Admin/Web Client):
 
 ## Project Status
 
-**Last Updated**: January 13, 2025 (SCA async workflow added)
+**Last Updated**: November 14, 2025 (EIA v2.0 approved, TIER 2 Backend 100% COMPLETE! 🎊)
 
 **Documentation Status**: ✅ Complete (37/37 files analyzed)
 
-**Agent Architecture**: ✅ Complete (27 agents defined)
+**Agent Architecture**: ✅ OPTIMIZED (15 agents, down from 27, -44% complexity)
 - **WAVE 0**: Meta Quality (1 agent) ✅ DONE
   - Gandalf - The Quality Wizard (99/100) ✅
 - **WAVE 0.5**: Requirements Clarity (1 agent) ✅ DONE
@@ -443,19 +471,29 @@ For any migration (Backend/Admin/Web Client):
   - Legacy Code Auditor Agent - LCAA (96/100) ✅
   - Business Logic Validator Agent - BLVA (96/100) ✅
   - Security Vulnerability Scanner Agent - SVSA (95/100) ✅
-- TIER 1: Orchestration (2 agents) ⏳
-- TIER 2: Backend (8 agents) ⏳
-- TIER 3: Frontend (7 agents) ⏳
-- TIER 4: QA & Deployment (4 agents) ⏳
-- TIER 5: Support (2 agents) ⏳
+- **TIER 1**: Orchestration (1 agent) ✅ COMPLETE (1/1)
+  - Chief Architect Agent - CAA (95.2/100) ✅ (PMA eliminated, responsibilities merged into CAA)
+- **TIER 2**: Backend (5 agents) ⏳ IN PROGRESS (4/5 = 80%)
+  - Backend Migration Architect - BMA (97/100) ✅
+  - Payment Integration Agent - PIA (96/100) ✅
+  - Authentication & Security Agent - ASA (97/100) ✅
+  - Database & Entity Agent - DEA (97/100) ✅
+  - External Integrations Agent - EIA (97/100) ✅ **FOUR-WAY TIE FOR 2ND HIGHEST!** (with BMA, ASA, DEA)
+- TIER 3: Frontend (2 agents) ⏳ (consolidates 7 agents → 2)
+  - Admin Dashboard Agent - ADA ⏳
+  - Web Client Agent - WCA ⏳
+- TIER 4: QA & DevOps (2 agents) ⏳ (consolidates 6 agents → 2)
+  - QA & Testing Agent - QTA ⏳
+  - DevOps & CI/CD Agent - DCA ⏳
 
 **Quality Control**: ✅ Operational
 - Gandalf v5.0 active and battle-tested (self-evaluated: 95→99)
 - Evaluation reports stored in `.claude/evaluations/`
 - 95%+ threshold enforced for all agents
-- 4 agents evaluated and approved so far (100% pass rate)
-- Average score: 96.75/100 (Gandalf 99, SCA 96, LCAA 96, BLVA 96)
-- Latest: BLVA v1.0 - 96/100 with PERFECT correctness (25/25)
+- **10 agents evaluated, 10 approved** (100% pass rate after fixes)
+- **2 agents required revision**: ASA (88→97), DEA (90.25→97)
+- **Average score: 96.47/100** (Gandalf 99, BMA 97, ASA 97, DEA 97, SCA 96, LCAA 96, BLVA 96, PIA 96, CAA 95.2, SVSA 95)
+- **Latest**: DEA v2.0 - 97/100 (v1.0: 90.25 → v2.0: 97, +6.75 points after fixing 4 issues)
 
 **Migration Strategy**: ✅ Audit-First (never migrate bugs)
 
@@ -463,12 +501,14 @@ For any migration (Backend/Admin/Web Client):
 - Phase 0: Audit (2 weeks) - CRITICAL GATE
 - Phases 1-6: Implementation (16 weeks)
 
-**Implementation Status**: ✅ Audit Trinity Complete! (5/27 agents, 18.5%)
-- Progress: 18.5% (Gandalf 99/100 ✅, SCA 96/100 ✅, LCAA 96/100 ✅, BLVA 96/100 ✅, SVSA 95/100 ✅)
-- Current Wave: WAVE 0 & 0.5 ✅ COMPLETE → TIER 0 Audit ✅ COMPLETE (3/3) → TIER 1 Orchestration NEXT
-- Time Invested: ~12.8 hours (Gandalf 2h + SCA 6h + LCAA 2h + BLVA 2h + SVSA 0.8h)
-- Estimated Remaining: ~14.2 hours (22 agents × 0.65h avg)
-- Quality Trajectory: All 5 agents scored 95-99/100, 100% approval rate, average 96.4/100
+**Implementation Status**: 🎉 TIER 2 Backend 100% COMPLETE! (11/15 agents, 73.3%) 🚀
+- **Progress**: 11/15 agents approved (73.3%) - Gandalf 99, BMA 97, ASA 97, DEA 97, **EIA 97** ⭐, SCA 96, LCAA 96, BLVA 96, PIA 96, CAA 95.2, SVSA 95
+- **Current Phase**: WAVE 0 & 0.5 ✅ → TIER 0 ✅ → TIER 1 ✅ → TIER 2 ✅ (5/5 = 100%!) → TIER 3 ⏳
+- **Time Invested**: ~21.7 hours (breakdown: Gandalf 2h, SCA 6h, LCAA 2h, BLVA 2h, SVSA 0.8h, CAA 0.4h, BMA 0.4h, PIA 1h, ASA 3.8h, DEA 2.2h, EIA 1.5h)
+- **Estimated Remaining**: ~6 hours (4 agents: ADA 1.5h, WCA 2h, QTA 1.5h, DCA 1h)
+- **Quality Trajectory**: All 11 agents scored 95-99/100, 100% approval rate after fixes, average 96.56/100
+- **Efficiency**: 1.97h avg per agent (optimized from 2.4h initially)
+- **Backend Elite**: FOUR agents at 97% (BMA, ASA, DEA, EIA) - Backend Quintet Complete! 🏆
 
 **Story Clarity Agent (SCA)** - ✅ PRODUCTION APPROVED
 - **Final Score**: 96/100 (APPROVED FOR PRODUCTION)
@@ -518,6 +558,47 @@ For any migration (Backend/Admin/Web Client):
 - **Somaway-Specific**: Stripe keys, Vimeo OAuth, Zoom API, 4 JWT types, Argon2, CORS, rate limits (20K req/60s)
 - **Integration**: Cross-references with LCAA/BLVA, synergy findings, false positive filtering
 
+**Database & Entity Agent (DEA)** - ✅ PRODUCTION APPROVED ⭐ **HIGHEST SCORE (#2 ALL-TIME)**
+- **Final Score**: 97/100 (APPROVED FOR PRODUCTION) 🏆
+- **Ranking**: #2 in evaluation history (only Gandalf v5.0 scored higher at 99/100)
+- **Quality Progression**: 90.25 → 97 (+6.75 points in 1 revision) 🚀
+- **Final Version**: v2.0 (2,200+ lines, fixed 4 critical issues)
+- **Evaluation History**:
+  - v1.0: 90.25/100 (CONDITIONAL - 3 critical blockers, 1 major issue)
+  - v2.0: 97/100 ✅ (PRODUCTION APPROVED - all issues fixed in 50 minutes)
+- **Key Strength**: Shadow property pattern (password security), UpdatedAt SaveChanges override, documented behavioral changes
+- **Framework**: TypeORM → EF Core migration for 18 entities, 7-phase autonomous execution (72 hours), 400-line report template
+- **Production Ready**: 100% (zero blockers, all zero-tolerance rules passed, concurrent migration protocol)
+- **Gandalf's Verdict**: *"You shall pass, Database Entity Agent v2.0. You have earned your place at the production table. Your shadow property pattern is textbook-perfect. Your documentation of behavioral changes shows maturity."*
+- **Coverage**: 18 entities, 6 zero-tolerance rules, 6 error scenarios, Pre-Flight Checks protocol, 2,200+ lines
+- **Dimension Scores**: Clarity 98.5/100 (BEST IN CLASS), Completeness 98/100, Correctness 97/100, Actionability 96/100, Robustness 96/100
+- **Migration Scope**: Users, Subscriptions, Courses, Lessons, Orders, Payments (18 entities total, PostgreSQL 17, EF Core 8.0)
+- **Notable**: Fixed password hash exposure (shadow property), UpdatedAt bug (SaveChanges override), cascade delete documentation
+
+**External Integrations Agent (EIA)** - ✅ PRODUCTION APPROVED ⭐ **#2 ALL-TIME (FOUR-WAY TIE)**
+- **Final Score**: 97/100 (APPROVED FOR PRODUCTION) 🏆
+- **Ranking**: #2 in evaluation history (tied with BMA, ASA, DEA - only Gandalf at 99/100 scored higher)
+- **Quality Progression**: 94 → 97 (+3 points in 1 revision) 🚀
+- **Final Version**: v2.0 (2,900+ lines, fixed 2 critical blockers + 3 high issues in 90 minutes)
+- **Evaluation History**:
+  - v1.0: 94/100 (CONDITIONAL - 2 critical blockers, 3 high issues)
+  - v2.0: 97/100 ✅ (PRODUCTION APPROVED - all 5 issues fixed)
+- **Production Ready**: 100% (zero blockers, all ZERO-TOLERANCE rules passed)
+- **Gandalf's Verdict**: *"You shall pass, External Integrations Agent v2.0. You join the elite 97% club with BMA, ASA, and DEA. Together, you form the Backend Quintet."*
+- **Coverage**: 7 external services consolidated (Vimeo, Zoom, Postmark, MailerLite, FirstPromoter, Librapay, Analytics)
+- **Key Strength**: Comprehensive integration patterns for all 7 services with 30+ methods total
+- **Framework**: 4 complete migration patterns (Vimeo TUS upload, Zoom OAuth cache, MailerLite bulk import, Librapay HMAC-SHA1)
+- **Critical Fixes Applied**:
+  - ✅ Pattern 5: SaveChangesAsync override with DRY principle (UpdateTimestamps() helper)
+  - ✅ Distributed Lock: Redis SETNX for MailerLite bulk import (30min timeout, lock value verification)
+  - ✅ IPN Idempotency: Cache-based deduplication for Librapay webhooks (7-day TTL, prevents duplicate payments)
+  - ✅ Retry-After 429: Polly retry policy respects rate limit headers (prevents IP bans, waits actual duration)
+  - ✅ Signature Tests: Real HMACSHA1 calculation with 3 test methods (not placeholder, format validation included)
+- **Migration Scope**: Vimeo (3 methods), Zoom (OAuth + 3 endpoints), Postmark (5 templates), MailerLite (9 methods), FirstPromoter (2 methods), Analytics (4 endpoints), Librapay (14+ methods)
+- **Security**: IPN signature verification, distributed locks, rate limiting, idempotency keys, Redis SETNX
+- **Performance**: Bulk import (200 batch), Redis caching (50min Zoom tokens, 1 day groups), retry logic (Polly 3x exponential)
+- **Notable**: All 28 zero-tolerance rules passed, 565-line report template, Pattern 5 for async timestamps
+
 **SCA Module Reviews** - 📋 In Progress
 - **JIRA_AUTH_MODULE** (BackEnd):
   - Status: 🟡 AWAITING USER ANSWERS (92/100)
@@ -528,4 +609,9 @@ For any migration (Backend/Admin/Web Client):
   - Expected Score After Clarifications: 97-100/100
   - Next Action: User answers 11 MEDIUM questions → Claude updates doc → Re-evaluate
 
-**Next Step**: Begin TIER 1 - Chief Architect Agent (CAA) - Orchestrator
+**Next Steps**:
+1. 🎉 **TIER 2 BACKEND: COMPLETE!** (5/5 agents @ 96-97%) - BMA, PIA, ASA, DEA, EIA ✅
+2. **TIER 3 Frontend**: **ADA** (1.5h) + **WCA** (2h) - consolidates 7 frontend agents → 2
+3. **TIER 4 QA & DevOps**: **QTA** (1.5h) + **DCA** (1h) - consolidates 6 agents → 2
+**Total Remaining**: ~6 hours to complete all 15 agents (vs 32h in old architecture)
+**Progress**: 11/15 agents (73.3%) - Only 4 agents left!
